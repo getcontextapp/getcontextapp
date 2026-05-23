@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase'
+import { createServiceClient } from '@/lib/supabase-server'
 import { generateReentryCard } from '@/lib/anthropic'
 import { sendSMS, buildReentryMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'

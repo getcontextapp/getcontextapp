@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerClient } from '@/lib/supabase'
-import { createServiceClient } from '@/lib/supabase'
+import { createServerClient } from '@/lib/supabase-server'
+import { createServiceClient } from '@/lib/supabase-server'
 import { sendSMS, buildReentryMessage } from '@/lib/twilio'
 import type { LogActivityPayload } from '@/types'
 
