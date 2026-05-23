@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/reminders",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/daily-summary",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

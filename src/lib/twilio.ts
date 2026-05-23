@@ -1,0 +1,70 @@
+import twilio from 'twilio'
+
+const accountSid = process.env.TWILIO_ACCOUNT_SID!
+const authToken  = process.env.TWILIO_AUTH_TOKEN!
+const fromNumber = process.env.TWILIO_PHONE_NUMBER!  // E.164, e.g. +18005550100
+
+let _client: ReturnType<typeof twilio> | null = null
+
+function getClient() {
+  if (!_client) _client = twilio(accountSid, authToken)
+  return _client
+}
+
+export async function sendSMS(to: string, body: string) {
+  const client = getClient()
+  try {
+    const message = await client.messages.create({ to, from: fromNumber, body })
+    return { sid: message.sid, status: message.status, error: null }
+  } catch (err: any) {
+    console.error('[Twilio] SMS failed:', err.message)
+    return { sid: null, status: 'failed', error: err.message }
+  }
+}
+
+export function buildReentryMessage(
+  displayName: string,
+  recentActivities: string[],
+  cardTitle: string,
+  cardBody: string,
+  appUrl: string,
+): string {
+  const actList = recentActivities.slice(0, 3).join(', ')
+  return [
+    `Hi ${displayName} 👋 Context here.`,
+    ``,
+    `Before you stepped away you were: ${actList}.`,
+    ``,
+    `📌 ${cardTitle}`,
+    cardBody.slice(0, 240),
+    ``,
+    `Open the app to see your full day: ${appUrl}`,
+  ].join('\n')
+}
+
+export function buildDailySummaryMessage(
+  carePartnerName: string,
+  memberName: string,
+  date: string,
+  activities: Array<{ icon: string; label: string; occurred_at: string }>,
+  appUrl: string,
+): string {
+  const lines = activities.slice(0, 8).map(a => {
+    const t = new Date(a.occurred_at).toLocaleTimeString('en-US', {
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    })
+    return `  ${a.icon} ${a.label} (${t})`
+  })
+
+  return [
+    `Hi ${carePartnerName}, here's ${memberName}'s day — ${date}:`,
+    ``,
+    ...lines,
+    ``,
+    activities.length === 0
+      ? 'No activities were logged today.'
+      : `${activities.length} activity${activities.length !== 1 ? 'ies' : 'y'} logged in total.`,
+    ``,
+    `Full view: ${appUrl}/care-partner`,
+  ].join('\n')
+}
