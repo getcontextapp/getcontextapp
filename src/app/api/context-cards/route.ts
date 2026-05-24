@@ -37,17 +37,26 @@ export async function POST(request: NextRequest) {
 
   let generated: { title: string; body: string }
 
-  if (type === 'reentry') {
-    const triggerActivity = recentActivities.find(a => a.id === activity_log_id) ?? recentActivities[0]
-    const gapMinutes = profile.reminder_gap_minutes ?? 90
-    generated = await generateReentryCard({
-      displayName: profile.display_name,
-      recentActivities,
-      triggerActivity,
-      gapMinutes,
-    })
-  } else {
-    generated = await generateOpenContextCard(profile.display_name, recentActivities)
+  try {
+    if (type === 'reentry') {
+      const triggerActivity = recentActivities.find(a => a.id === activity_log_id) ?? recentActivities[0]
+      const gapMinutes = profile.reminder_gap_minutes ?? 90
+      generated = await generateReentryCard({
+        displayName: profile.display_name,
+        recentActivities,
+        triggerActivity,
+        gapMinutes,
+      })
+    } else {
+      generated = await generateOpenContextCard(profile.display_name, recentActivities)
+    }
+  } catch (error) {
+    console.error('[Context Cards] AI generation failed:', error)
+    const labels = recentActivities.slice(0, 3).map(a => a.label).join(', ')
+    generated = {
+      title: 'Your day so far',
+      body: `${profile.display_name}, you have logged ${labels}. This is a good place to keep building your day.`,
+    }
   }
 
   // Deactivate old active cards of same type

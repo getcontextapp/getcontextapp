@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const MODEL = 'claude-3-5-haiku-latest'
 
 interface ReentryCardInput {
   displayName: string
@@ -48,7 +49,7 @@ Write a brief, grounding re-entry card to help orient them back to their day. Th
 Respond ONLY with a JSON object with keys "title" (short, 4–6 words) and "body" (the card text). No markdown, no explanation.`
 
   const message = await client.messages.create({
-    model: 'claude-opus-4-5',
+    model: MODEL,
     max_tokens: 400,
     messages: [{ role: 'user', content: prompt }],
   })
@@ -85,7 +86,7 @@ This card appears at the top of their home screen to help orient them. Write 2�
 Respond ONLY with JSON: {"title": "4–6 word title", "body": "the summary text"}`
 
   const message = await client.messages.create({
-    model: 'claude-opus-4-5',
+    model: MODEL,
     max_tokens: 300,
     messages: [{ role: 'user', content: prompt }],
   })

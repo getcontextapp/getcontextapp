@@ -51,25 +51,25 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
     setSelectedTile(null)
 
     // Generate/refresh open context card after logging
-    if (activities.length >= 1) {
-      setGeneratingCard(true)
-      try {
-        const res = await fetch('/api/context-cards', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            activity_log_id: activity.id,
-            type: 'open',
-          }),
-        })
-        if (res.ok) {
-          const card = await res.json()
-          setContextCard(card)
-        }
-      } catch {}
+    setGeneratingCard(true)
+    try {
+      const res = await fetch('/api/context-cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          activity_log_id: activity.id,
+          type: 'open',
+        }),
+      })
+      if (res.ok) {
+        const card = await res.json()
+        setContextCard(card)
+      }
+    } catch {
+    } finally {
       setGeneratingCard(false)
     }
-  }, [activities.length])
+  }, [])
 
   async function handleSignOut() {
     await supabase.auth.signOut()
