@@ -30,17 +30,24 @@ export default async function CarePartnerPage() {
   const sevenDaysAgo = new Date()
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
 
-  const { data: activities } = await serviceSupabase
+  const { data: activities } = await supabase
     .from('activity_logs')
-    .select('*, logger:profiles!activity_logs_logged_by_fkey(*)')
+    .select('*')
     .eq('household_id', profile.household_id)
     .gte('occurred_at', sevenDaysAgo.toISOString())
     .order('occurred_at', { ascending: false })
     .limit(100)
 
   let linkedProfile = mciProfile ?? null
-  if (!linkedProfile && activities && activities.length > 0) {
-    linkedProfile = activities.find(a => a.logger?.id !== profile.id)?.logger ?? null
+  if (!linkedProfile) {
+    const { data: householdProfiles } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('household_id', profile.household_id)
+      .neq('id', profile.id)
+      .limit(1)
+
+    linkedProfile = householdProfiles?.[0] ?? null
   }
 
   // Fetch household
@@ -54,7 +61,7 @@ export default async function CarePartnerPage() {
     <CarePartnerClient
       careProfile={profile}
       mciProfile={linkedProfile}
-      initialActivities={(activities ?? []).map(({ logger, ...activity }) => activity)}
+      initialActivities={activities ?? []}
       household={household ?? null}
     />
   )
