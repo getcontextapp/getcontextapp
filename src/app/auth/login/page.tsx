@@ -1,33 +1,61 @@
 'use client'
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
+  const router = useRouter()
+  const [phone, setPhone] = useState('')
+  const [code, setCode] = useState('')
+  const [codeSent, setCodeSent] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const supabase = createClient()
 
-  async function handleMagicLink(e: React.FormEvent) {
+  function formatPhone(value: string) {
+    const digits = value.replace(/\D/g, '')
+    if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+    if (digits.length === 10) return `+1${digits}`
+    return value.trim()
+  }
+
+  async function handleSendCode(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError(null)
 
     const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${location.origin}/auth/callback`,
-      },
+      phone: formatPhone(phone),
     })
 
     if (error) {
       setError(error.message)
     } else {
-      setSent(true)
+      setCodeSent(true)
     }
     setLoading(false)
+  }
+
+  async function handleVerifyCode(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+
+    const { error } = await supabase.auth.verifyOtp({
+      phone: formatPhone(phone),
+      token: code.replace(/\D/g, ''),
+      type: 'sms',
+    })
+
+    if (error) {
+      setError(error.message)
+      setLoading(false)
+      return
+    }
+
+    router.push('/')
+    router.refresh()
   }
 
   return (
@@ -42,29 +70,74 @@ export default function LoginPage() {
       </div>
 
       <div className="w-full max-w-sm animate-fade-up delay-100">
-        {!sent ? (
-          <form onSubmit={handleMagicLink} className="card p-8 space-y-5">
+        {!codeSent ? (
+          <form onSubmit={handleSendCode} className="card p-8 space-y-5">
             <div>
               <h2 className="font-serif text-xl font-semibold text-warm-900 mb-1">Sign in</h2>
-              <p className="text-warm-400 text-sm">We'll send you a link — no password needed.</p>
+              <p className="text-warm-400 text-sm">We&apos;ll text you a code — no password needed.</p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-warm-600 mb-1.5" htmlFor="email">
-                Email address
+              <label className="block text-sm font-medium text-warm-600 mb-1.5" htmlFor="phone">
+                Mobile phone
               </label>
               <input
-                id="email"
-                type="email"
+                id="phone"
+                type="tel"
                 required
-                value={email}
-                onChange={e => setEmail(e.target.value)}
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900 text-base
                            focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100
                            placeholder:text-warm-300 transition-colors"
-                placeholder="you@example.com"
-                autoComplete="email"
-                inputMode="email"
+                placeholder="(555) 555-0100"
+                autoComplete="tel"
+                inputMode="tel"
+              />
+              <p className="text-xs text-warm-300 mt-1">US numbers only during beta.</p>
+            </div>
+
+            {error && (
+              <p className="text-terracotta-500 text-sm bg-terracotta-50 px-3 py-2 rounded-lg">{error}</p>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || phone.replace(/\D/g, '').length < 10}
+              className="w-full py-3.5 rounded-xl bg-warm-700 text-cream-100 font-medium text-base
+                         hover:bg-warm-900 active:scale-[0.98] transition-all
+                         disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Sending...' : 'Text me a code'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleVerifyCode} className="card p-8 space-y-5">
+            <div className="text-center space-y-2">
+              <div className="text-4xl">💬</div>
+              <h2 className="font-serif text-xl font-semibold text-warm-900">Enter your code</h2>
+              <p className="text-warm-500 text-sm leading-relaxed">
+                We texted a 6-digit code to <strong className="text-warm-700">{phone}</strong>.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-warm-600 mb-1.5" htmlFor="code">
+                Text code
+              </label>
+              <input
+                id="code"
+                type="text"
+                required
+                value={code}
+                onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900 text-2xl
+                           font-mono tracking-[0.3em] text-center
+                           focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100
+                           placeholder:text-warm-300 transition-colors"
+                placeholder="123456"
+                autoComplete="one-time-code"
+                inputMode="numeric"
               />
             </div>
 
@@ -74,29 +147,22 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={loading || !email}
+              disabled={loading || code.length !== 6}
               className="w-full py-3.5 rounded-xl bg-warm-700 text-cream-100 font-medium text-base
                          hover:bg-warm-900 active:scale-[0.98] transition-all
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Sending…' : 'Send sign-in link'}
+              {loading ? 'Checking...' : 'Continue'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setCodeSent(false); setCode(''); setError(null) }}
+              className="w-full text-sm text-terracotta-500 underline underline-offset-2"
+            >
+              Use a different phone number
             </button>
           </form>
-        ) : (
-          <div className="card p-8 text-center space-y-4">
-            <div className="text-4xl">📬</div>
-            <h2 className="font-serif text-xl font-semibold text-warm-900">Check your email</h2>
-            <p className="text-warm-500 text-sm leading-relaxed">
-              We sent a sign-in link to <strong className="text-warm-700">{email}</strong>.
-              Tap it to continue — the link is good for 60 minutes.
-            </p>
-            <button
-              onClick={() => { setSent(false); setEmail('') }}
-              className="text-sm text-terracotta-500 underline underline-offset-2"
-            >
-              Use a different email
-            </button>
-          </div>
         )}
       </div>
 
