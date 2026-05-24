@@ -1,16 +1,32 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import type { ActivityTileConfig, ActivityLog } from '@/types'
+import type { ActivityTileConfig, ExpectedPeriod, PlannedActivity } from '@/types'
 
 interface Props {
   tile: ActivityTileConfig
-  onLogged: (activity: ActivityLog) => void
+  plannedFor: string
+  onPlanned: (activity: PlannedActivity) => void
   onClose: () => void
 }
 
-export default function ActivityLogModal({ tile, onLogged, onClose }: Props) {
+const EXPECTED_PERIODS: { value: ExpectedPeriod; label: string }[] = [
+  { value: 'morning', label: 'Morning' },
+  { value: 'afternoon', label: 'Afternoon' },
+  { value: 'evening', label: 'Evening' },
+  { value: 'anytime', label: 'Anytime' },
+]
+
+function getDefaultPeriod(): ExpectedPeriod {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'morning'
+  if (hour < 17) return 'afternoon'
+  return 'evening'
+}
+
+export default function ActivityLogModal({ tile, plannedFor, onPlanned, onClose }: Props) {
   const [selectedPreset, setSelectedPreset] = useState('')
   const [note, setNote] = useState('')
+  const [expectedPeriod, setExpectedPeriod] = useState<ExpectedPeriod>(getDefaultPeriod)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -23,13 +39,15 @@ export default function ActivityLogModal({ tile, onLogged, onClose }: Props) {
     e.preventDefault()
     setLoading(true); setError(null)
 
-    const res = await fetch('/api/log-activity', {
+    const res = await fetch('/api/planned-activities', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         category: tile.category,
         label: tile.label,
         note: note.trim() || selectedPreset || null,
+        expected_period: expectedPeriod,
+        planned_for: plannedFor,
       }),
     })
 
@@ -40,8 +58,8 @@ export default function ActivityLogModal({ tile, onLogged, onClose }: Props) {
       return
     }
 
-    const activity: ActivityLog = await res.json()
-    onLogged(activity)
+    const activity: PlannedActivity = await res.json()
+    onPlanned(activity)
     setLoading(false)
   }
 
@@ -72,8 +90,8 @@ export default function ActivityLogModal({ tile, onLogged, onClose }: Props) {
           <div className="flex items-center gap-3">
             <span className="text-3xl">{tile.icon}</span>
             <div>
-              <h2 className="font-serif text-xl font-semibold text-warm-900">Confirm {tile.label}</h2>
-              <p className="text-warm-500 text-sm">Tap a common option or add a small detail.</p>
+              <h2 className="font-serif text-xl font-semibold text-warm-900">Add {tile.label}</h2>
+              <p className="text-warm-500 text-sm">Choose what to remember for later.</p>
             </div>
             <button onClick={onClose} className="ml-auto text-warm-400 hover:text-warm-700 text-2xl leading-none">
               ×
@@ -113,6 +131,26 @@ export default function ActivityLogModal({ tile, onLogged, onClose }: Props) {
               maxLength={200}
             />
 
+            <div>
+              <p className="text-xs font-medium text-warm-500 mb-2">When should this happen?</p>
+              <div className="grid grid-cols-2 gap-2">
+                {EXPECTED_PERIODS.map(period => (
+                  <button
+                    key={period.value}
+                    type="button"
+                    onClick={() => setExpectedPeriod(period.value)}
+                    className={`rounded-xl border px-3 py-2 text-sm font-medium transition-all ${
+                      expectedPeriod === period.value
+                        ? 'border-warm-700 bg-white/90 text-warm-900'
+                        : 'border-black/10 bg-white/50 text-warm-600 hover:bg-white/80'
+                    }`}
+                  >
+                    {period.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {error && (
               <p className="text-terracotta-600 text-sm">{error}</p>
             )}
@@ -124,7 +162,7 @@ export default function ActivityLogModal({ tile, onLogged, onClose }: Props) {
                          hover:bg-warm-900 active:scale-[0.98] transition-all
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Saving…' : `Confirm ${tile.label}`}
+              {loading ? 'Saving...' : "Add to today's plan"}
             </button>
           </form>
         </div>

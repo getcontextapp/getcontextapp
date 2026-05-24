@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createServerClient, createServiceClient } from '@/lib/supabase-server'
+import { getLocalDateKey } from '@/lib/dates'
 import CarePartnerClient from './CarePartnerClient'
 
 export default async function CarePartnerPage() {
@@ -38,6 +39,13 @@ export default async function CarePartnerPage() {
     .order('occurred_at', { ascending: false })
     .limit(100)
 
+  const { data: plannedActivities } = await supabase
+    .from('planned_activities')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+    .order('created_at', { ascending: true })
+
   let linkedProfile = mciProfile ?? null
   if (!linkedProfile) {
     const { data: householdProfiles } = await supabase
@@ -62,6 +70,7 @@ export default async function CarePartnerPage() {
       careProfile={profile}
       mciProfile={linkedProfile}
       initialActivities={activities ?? []}
+      initialPlannedActivities={plannedActivities ?? []}
       household={household ?? null}
     />
   )

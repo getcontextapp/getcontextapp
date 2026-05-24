@@ -8,7 +8,9 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 
 - Keep the main activity tiles as the primary structure: Morning, Meal, Movement, Social, Rest, Medication, Other.
 - Reduce typing by offering common IADL presets inside each tile.
-- When a preset is selected, save it as the activity note so the log has useful context.
+- When a preset is selected, save it as the planned activity note so the entry has useful context.
+- Treat the first user action as adding something to today's plan.
+- Treat the later user action as confirmation that the planned activity happened.
 - Show notes clearly on both the MCI and care partner dashboards.
 - Use language like "confirm" and "mark" instead of "log" when the user is doing the action.
 
@@ -31,15 +33,16 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 
 ## Dashboard changes for the SMS stage
 
-- MCI dashboard should show the latest cue and the next gentle reminder.
+- MCI dashboard should show today's plan, including expected period: morning, afternoon, evening, or anytime.
 - MCI dashboard should make one-tap confirmation the main action.
-- Care partner dashboard should show whether the participant responded to today’s prompt.
-- Care partner dashboard should show recent confirmations and missed cues without sounding alarming.
+- Care partner dashboard should show whether today's planned items are waiting, done, later, or skipped.
+- Care partner dashboard should show recent confirmations without sounding alarming.
 - Both dashboards should keep the weekly activity view, but it should support the SMS-confirmed entries too.
 
 ## Supabase changes for the SMS stage
 
 - Add a table for message prompts and replies.
+- Use the planned activities table as the place where AI-sorted SMS items are stored before confirmation.
 - Store message direction: outbound or inbound.
 - Store message purpose: morning_prompt, reentry_cue, confirmation, care_summary.
 - Store delivery status from Twilio.
@@ -69,4 +72,3 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 - Do not add clinician workflows before testing participant and care partner behavior.
 - Do not make the MCI user type long entries.
 - Do not over-invest in automation integrations until interviews show which IADLs matter most.
-

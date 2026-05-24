@@ -2,8 +2,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
+import { getLocalDateKey } from '@/lib/dates'
 import { ACTIVITY_TILES } from '@/types'
-import type { Profile, ActivityLog, ContextCard, ActivityTileConfig } from '@/types'
+import type { Profile, ActivityLog, ContextCard, ActivityTileConfig, PlannedActivity } from '@/types'
 import ActivityLogModal from '@/components/mci/ActivityLogModal'
 import ContextCardDisplay from '@/components/mci/ContextCardDisplay'
 import HouseholdCode from '@/components/mci/HouseholdCode'
@@ -12,14 +13,30 @@ import ReminderSettings from '@/components/mci/ReminderSettings'
 interface Props {
   profile: Profile
   initialActivities: ActivityLog[]
+  initialPlannedActivities: PlannedActivity[]
   initialContextCard: ContextCard | null
   household: { join_code: string; name: string } | null
 }
 
-export default function MCIUserClient({ profile, initialActivities, initialContextCard, household }: Props) {
+const PERIOD_LABELS: Record<string, string> = {
+  morning: 'Morning',
+  afternoon: 'Afternoon',
+  evening: 'Evening',
+  anytime: 'Anytime',
+}
+
+const PERIOD_ORDER: Record<string, number> = {
+  morning: 0,
+  afternoon: 1,
+  evening: 2,
+  anytime: 3,
+}
+
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialContextCard, household }: Props) {
   const supabase = createClient()
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
+  const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
   const [contextCard, setContextCard] = useState<ContextCard | null>(initialContextCard)
   const [selectedTile, setSelectedTile] = useState<ActivityTileConfig | null>(null)
   const [showSettings, setShowSettings] = useState(false)
@@ -29,11 +46,13 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
   const now = new Date()
   const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening'
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+  const todayKey = getLocalDateKey(now, profile.timezone)
 
   // Subscribe to realtime activity updates
   useEffect(() => {
     trackClientEvent('mci_dashboard_viewed', {
       activity_count: initialActivities.length,
+      planned_activity_count: initialPlannedActivities.length,
       has_context_card: Boolean(initialContextCard),
     })
 
@@ -50,20 +69,36 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [profile.household_id, initialActivities.length, initialContextCard, supabase])
+  }, [profile.household_id, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase])
 
-  const handleActivityLogged = useCallback(async (activity: ActivityLog) => {
-    setActivities(prev => [activity, ...prev])
+  const handleActivityPlanned = useCallback((activity: PlannedActivity) => {
+    setPlannedActivities(prev => [...prev, activity])
     setSelectedTile(null)
+  }, [])
 
-    // Generate/refresh open context card after logging
+  const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped') => {
+    const res = await fetch('/api/planned-activities', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: plannedActivity.id, action }),
+    })
+
+    if (!res.ok) return
+
+    const result: { plannedActivity: PlannedActivity; activity: ActivityLog | null } = await res.json()
+    setPlannedActivities(prev => prev.map(item => item.id === result.plannedActivity.id ? result.plannedActivity : item))
+
+    if (!result.activity) return
+
+    setActivities(prev => [result.activity!, ...prev])
+
     setGeneratingCard(true)
     try {
       const res = await fetch('/api/context-cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          activity_log_id: activity.id,
+          activity_log_id: result.activity.id,
           type: 'open',
         }),
       })
@@ -90,6 +125,14 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
     acc[period].push(a)
     return acc
   }, {})
+
+  const sortedPlannedActivities = [...plannedActivities].sort((a, b) => {
+    const periodDiff = (PERIOD_ORDER[a.expected_period] ?? 9) - (PERIOD_ORDER[b.expected_period] ?? 9)
+    if (periodDiff !== 0) return periodDiff
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  })
+
+  const openPlannedCount = sortedPlannedActivities.filter(a => a.status === 'planned' || a.status === 'not_now').length
 
   return (
     <div className="min-h-svh bg-cream-50 pb-8 safe-bottom">
@@ -143,18 +186,84 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
             <div className="h-3 bg-cream-200 rounded-pill w-full mb-2" />
             <div className="h-3 bg-cream-200 rounded-pill w-4/5" />
           </div>
-        ) : activities.length === 0 ? (
+        ) : activities.length === 0 && sortedPlannedActivities.length === 0 ? (
           <div className="card p-5 border border-cream-200 animate-fade-up">
             <p className="font-serif text-warm-700 text-base italic">
-              "Tap a tile below to log your first activity of the day."
+              "Add one thing to today's plan. You can confirm it later."
             </p>
-            <p className="text-warm-300 text-xs mt-2">A summary card will appear here as your day builds.</p>
+            <p className="text-warm-300 text-xs mt-2">This keeps the day simple and easy to return to.</p>
           </div>
         ) : null}
 
+        {/* Today's Plan */}
+        <div className="animate-fade-up">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-warm-500 text-sm font-medium">Today's plan</p>
+            {openPlannedCount > 0 && (
+              <span className="text-xs text-warm-400">{openPlannedCount} waiting</span>
+            )}
+          </div>
+          {sortedPlannedActivities.length === 0 ? (
+            <div className="card p-5 text-center border border-cream-100">
+              <p className="text-warm-400 text-sm">Nothing planned yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {sortedPlannedActivities.map(item => {
+                const tile = ACTIVITY_TILES.find(t => t.category === item.category)
+                const isConfirmed = item.status === 'confirmed'
+                const isSkipped = item.status === 'skipped'
+                return (
+                  <div key={item.id} className="bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
+                    <div className="flex items-start gap-3">
+                      <span className="text-xl mt-0.5">{tile?.icon ?? '📌'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-medium text-warm-800">{tile?.label ?? item.label}</p>
+                            {item.note && <p className="text-xs leading-5 text-warm-500 whitespace-normal break-words">{item.note}</p>}
+                          </div>
+                          <span className={`text-[11px] rounded-pill px-2 py-0.5 whitespace-nowrap ${
+                            isConfirmed
+                              ? 'bg-sage-100 text-sage-700'
+                              : item.status === 'not_now'
+                              ? 'bg-cream-200 text-warm-600'
+                              : isSkipped
+                              ? 'bg-cream-100 text-warm-300'
+                              : 'bg-terracotta-50 text-terracotta-600'
+                          }`}>
+                            {isConfirmed ? 'Done' : item.status === 'not_now' ? 'Later' : isSkipped ? 'Skipped' : 'Planned'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-warm-300 mt-1">Expected: {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}</p>
+                      </div>
+                    </div>
+                    {!isConfirmed && !isSkipped && (
+                      <div className="grid grid-cols-2 gap-2 mt-3">
+                        <button
+                          onClick={() => handlePlanAction(item, 'confirm')}
+                          className="rounded-xl bg-warm-700 text-cream-100 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                        >
+                          Done
+                        </button>
+                        <button
+                          onClick={() => handlePlanAction(item, 'not_now')}
+                          className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                        >
+                          Not yet
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Activity Tiles Grid */}
         <div>
-          <p className="text-warm-500 text-sm font-medium mb-3">What are you up to?</p>
+          <p className="text-warm-500 text-sm font-medium mb-3">Add something to today</p>
           <div className="grid grid-cols-3 gap-3">
             {ACTIVITY_TILES.map((tile, i) => (
               <button
@@ -172,10 +281,10 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
           </div>
         </div>
 
-        {/* Today's Timeline */}
+        {/* Confirmed Timeline */}
         {activities.length > 0 && (
           <div className="animate-fade-up">
-            <p className="text-warm-500 text-sm font-medium mb-3">Today's timeline</p>
+            <p className="text-warm-500 text-sm font-medium mb-3">Confirmed today</p>
             <div className="space-y-4">
               {(['Morning', 'Afternoon', 'Evening'] as const).map(period => {
                 const group = groupedActivities[period]
@@ -215,7 +324,8 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
       {selectedTile && (
         <ActivityLogModal
           tile={selectedTile}
-          onLogged={handleActivityLogged}
+          plannedFor={todayKey}
+          onPlanned={handleActivityPlanned}
           onClose={() => setSelectedTile(null)}
         />
       )}

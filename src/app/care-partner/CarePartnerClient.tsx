@@ -4,12 +4,13 @@ import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey } from '@/lib/dates'
 import { ACTIVITY_TILES } from '@/types'
-import type { Profile, ActivityLog } from '@/types'
+import type { Profile, ActivityLog, PlannedActivity } from '@/types'
 
 interface Props {
   careProfile: Profile
   mciProfile: Profile | null
   initialActivities: ActivityLog[]
+  initialPlannedActivities: PlannedActivity[]
   household: { join_code: string; name: string } | null
 }
 
@@ -33,9 +34,24 @@ function getCategoryBreakdown(activities: ActivityLog[]) {
   return Object.entries(counts).sort((a, b) => b[1] - a[1])
 }
 
-export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, household }: Props) {
+const PERIOD_LABELS: Record<string, string> = {
+  morning: 'Morning',
+  afternoon: 'Afternoon',
+  evening: 'Evening',
+  anytime: 'Anytime',
+}
+
+const PERIOD_ORDER: Record<string, number> = {
+  morning: 0,
+  afternoon: 1,
+  evening: 2,
+  anytime: 3,
+}
+
+export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities, household }: Props) {
   const supabase = createClient()
   const [activities] = useState<ActivityLog[]>(initialActivities)
+  const [plannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
   const [selectedDay, setSelectedDay] = useState<string>(getLocalDateKey(new Date(), careProfile.timezone))
   const [testSending, setTestSending] = useState(false)
   const [testSent, setTestSent] = useState(false)
@@ -45,9 +61,10 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   useEffect(() => {
     trackClientEvent('care_partner_dashboard_viewed', {
       activity_count: initialActivities.length,
+      planned_activity_count: initialPlannedActivities.length,
       has_mci_profile: Boolean(mciProfile),
     })
-  }, [initialActivities.length, mciProfile])
+  }, [initialActivities.length, initialPlannedActivities.length, mciProfile])
 
   // Build last 7 days for the week strip
   const weekDays = Array.from({ length: 7 }, (_, i) => {
@@ -68,6 +85,13 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const todayKey = getLocalDateKey(new Date(), careProfile.timezone)
   const todayActivities = byDay[todayKey] ?? []
   const categoryBreakdown = getCategoryBreakdown(todayActivities)
+  const sortedPlannedActivities = [...plannedActivities].sort((a, b) => {
+    const periodDiff = (PERIOD_ORDER[a.expected_period] ?? 9) - (PERIOD_ORDER[b.expected_period] ?? 9)
+    if (periodDiff !== 0) return periodDiff
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  })
+  const confirmedPlanCount = sortedPlannedActivities.filter(item => item.status === 'confirmed').length
+  const openPlanCount = sortedPlannedActivities.filter(item => item.status === 'planned' || item.status === 'not_now').length
 
   async function sendTestSummary() {
     if (!careProfile.phone_e164) return
@@ -129,7 +153,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             <div className="flex-1">
               <p className="font-medium text-warm-900">{mciProfile.display_name}</p>
               <p className="text-sm text-warm-400">
-                {todayActivities.length} {todayActivities.length === 1 ? 'activity' : 'activities'} logged today
+                {confirmedPlanCount} confirmed, {openPlanCount} waiting today
               </p>
             </div>
             <div className={`px-3 py-1 rounded-pill text-xs font-medium ${
@@ -148,10 +172,53 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
           </div>
         )}
 
+        {/* Today's plan */}
+        <div className="animate-fade-up delay-100">
+          <p className="text-warm-500 text-sm font-medium mb-3">Today's plan</p>
+          {sortedPlannedActivities.length === 0 ? (
+            <div className="card p-5 text-center">
+              <p className="text-warm-300 text-sm">No plan has been added for today yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {sortedPlannedActivities.map(item => {
+                const tile = ACTIVITY_TILES.find(t => t.category === item.category)
+                return (
+                  <div key={item.id} className="bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
+                    <div className="flex items-start gap-3">
+                      <span className="text-xl mt-0.5">{tile?.icon ?? '📌'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-medium text-warm-800">{tile?.label ?? item.label}</p>
+                            {item.note && <p className="text-xs leading-5 text-warm-500 whitespace-normal break-words">{item.note}</p>}
+                          </div>
+                          <span className={`text-[11px] rounded-pill px-2 py-0.5 whitespace-nowrap ${
+                            item.status === 'confirmed'
+                              ? 'bg-sage-100 text-sage-700'
+                              : item.status === 'not_now'
+                              ? 'bg-cream-200 text-warm-600'
+                              : item.status === 'skipped'
+                              ? 'bg-cream-100 text-warm-300'
+                              : 'bg-terracotta-50 text-terracotta-600'
+                          }`}>
+                            {item.status === 'confirmed' ? 'Done' : item.status === 'not_now' ? 'Later' : item.status === 'skipped' ? 'Skipped' : 'Waiting'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-warm-300 mt-1">Expected: {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}</p>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Today's activity breakdown */}
         {todayActivities.length > 0 && (
-          <div className="animate-fade-up delay-100">
-            <p className="text-warm-500 text-sm font-medium mb-3">Today's activity types</p>
+          <div className="animate-fade-up delay-200">
+            <p className="text-warm-500 text-sm font-medium mb-3">Confirmed activity types</p>
             <div className="grid grid-cols-3 gap-2">
               {categoryBreakdown.slice(0, 6).map(([cat, count]) => {
                 const tile = ACTIVITY_TILES.find(t => t.category === cat)
@@ -168,7 +235,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
         )}
 
         {/* 7-day week strip */}
-        <div className="animate-fade-up delay-200">
+        <div className="animate-fade-up delay-300">
           <p className="text-warm-500 text-sm font-medium mb-3">Activity this week</p>
           <div className="flex gap-2 overflow-x-auto pb-1">
             {weekDays.map(day => (
@@ -198,13 +265,13 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
         </div>
 
         {/* Selected day activity list */}
-        <div className="animate-fade-up delay-300">
+        <div className="animate-fade-up delay-400">
           <p className="text-warm-500 text-sm font-medium mb-3">
-            {selectedDay === getLocalDateKey(new Date(), careProfile.timezone) ? "Today's log" : `Log for ${new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`}
+            {selectedDay === getLocalDateKey(new Date(), careProfile.timezone) ? "Confirmed today" : `Confirmed on ${new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`}
           </p>
           {selectedActivities.length === 0 ? (
             <div className="card p-6 text-center">
-              <p className="text-warm-300 text-sm">No activities logged this day.</p>
+              <p className="text-warm-300 text-sm">No activities confirmed this day.</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -231,7 +298,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
         </div>
 
         {/* SMS Summary test */}
-        <div className="card p-5 space-y-3 animate-fade-up delay-400">
+        <div className="card p-5 space-y-3 animate-fade-up delay-500">
           <div className="flex items-start gap-3">
             <span className="text-2xl">📱</span>
             <div>

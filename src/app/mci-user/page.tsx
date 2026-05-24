@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase-server'
-import { getUtcRangeForLocalDay } from '@/lib/dates'
+import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import MCIUserClient from './MCIUserClient'
 
 export default async function MCIUserPage() {
@@ -29,6 +29,13 @@ export default async function MCIUserPage() {
     .order('occurred_at', { ascending: false })
     .limit(20)
 
+  const { data: plannedActivities } = await supabase
+    .from('planned_activities')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+    .order('created_at', { ascending: true })
+
   // Fetch active context card
   const { data: contextCard } = await supabase
     .from('context_cards')
@@ -50,6 +57,7 @@ export default async function MCIUserPage() {
     <MCIUserClient
       profile={profile}
       initialActivities={activities ?? []}
+      initialPlannedActivities={plannedActivities ?? []}
       initialContextCard={contextCard ?? null}
       household={household ?? null}
     />

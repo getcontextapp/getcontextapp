@@ -42,6 +42,28 @@ export interface ActivityLog {
   created_at: string
 }
 
+export type PlannedActivityStatus = 'planned' | 'confirmed' | 'not_now' | 'skipped'
+export type ExpectedPeriod = 'morning' | 'afternoon' | 'evening' | 'anytime'
+
+export interface PlannedActivity {
+  id: string
+  household_id: string
+  created_by: string
+  assigned_to: string | null
+  category: ActivityCategory
+  label: string
+  note: string | null
+  expected_period: ExpectedPeriod
+  expected_time: string | null
+  planned_for: string
+  status: PlannedActivityStatus
+  confirmed_activity_log_id: string | null
+  confirmed_at: string | null
+  source: 'manual' | 'sms_ai'
+  created_at: string
+  updated_at: string
+}
+
 export interface ContextCard {
   id: string
   household_id: string
@@ -71,6 +93,15 @@ export interface LogActivityPayload {
   label: string
   note?: string
   occurred_at?: string
+}
+
+export interface CreatePlannedActivityPayload {
+  category: ActivityCategory
+  label: string
+  note?: string
+  expected_period: ExpectedPeriod
+  expected_time?: string | null
+  planned_for?: string
 }
 
 export interface GenerateReentryCardPayload {

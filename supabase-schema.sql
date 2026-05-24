@@ -43,6 +43,31 @@ create table if not exists activity_logs (
 create index if not exists activity_logs_household_time
   on activity_logs (household_id, occurred_at desc);
 
+-- ─── Planned Activities ─────────────────────────────────────────────────────
+create table if not exists planned_activities (
+  id                         uuid primary key default gen_random_uuid(),
+  household_id               uuid not null references households(id) on delete cascade,
+  created_by                 uuid not null references profiles(id) on delete cascade,
+  assigned_to                uuid references profiles(id) on delete set null,
+  category                   text not null,
+  label                      text not null,
+  note                       text,
+  expected_period            text not null default 'anytime'
+                             check (expected_period in ('morning', 'afternoon', 'evening', 'anytime')),
+  expected_time              text,
+  planned_for                date not null default current_date,
+  status                     text not null default 'planned'
+                             check (status in ('planned', 'confirmed', 'not_now', 'skipped')),
+  confirmed_activity_log_id  uuid references activity_logs(id) on delete set null,
+  confirmed_at               timestamptz,
+  source                     text not null default 'manual' check (source in ('manual', 'sms_ai')),
+  created_at                 timestamptz default now(),
+  updated_at                 timestamptz default now()
+);
+
+create index if not exists planned_activities_household_day
+  on planned_activities (household_id, planned_for, status);
+
 -- ─── Context Cards ───────────────────────────────────────────────────────────
 create table if not exists context_cards (
   id               uuid primary key default gen_random_uuid(),
@@ -92,6 +117,7 @@ create table if not exists reminder_logs (
 alter table profiles       enable row level security;
 alter table households     enable row level security;
 alter table activity_logs  enable row level security;
+alter table planned_activities enable row level security;
 alter table context_cards  enable row level security;
 alter table analytics_events enable row level security;
 alter table reminder_logs  enable row level security;
@@ -114,6 +140,20 @@ create policy "household member"
 create policy "household activity"
   on activity_logs for all
   using (
+    household_id in (
+      select household_id from profiles where user_id = auth.uid()
+    )
+  );
+
+-- Planned activities: household members
+create policy "household planned activities"
+  on planned_activities for all
+  using (
+    household_id in (
+      select household_id from profiles where user_id = auth.uid()
+    )
+  )
+  with check (
     household_id in (
       select household_id from profiles where user_id = auth.uid()
     )
@@ -147,3 +187,19 @@ create or replace function get_my_profile()
 returns profiles language sql stable security definer as $$
   select * from profiles where user_id = auth.uid() limit 1;
 $$;
+
+grant all on profiles to authenticated;
+grant all on households to authenticated;
+grant all on activity_logs to authenticated;
+grant all on planned_activities to authenticated;
+grant all on context_cards to authenticated;
+grant all on analytics_events to authenticated;
+grant all on reminder_logs to authenticated;
+
+grant all on profiles to service_role;
+grant all on households to service_role;
+grant all on activity_logs to service_role;
+grant all on planned_activities to service_role;
+grant all on context_cards to service_role;
+grant all on analytics_events to service_role;
+grant all on reminder_logs to service_role;
