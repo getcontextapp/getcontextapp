@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { generateReentryCard, generateOpenContextCard } from '@/lib/anthropic'
+import { getUtcRangeForLocalDay } from '@/lib/dates'
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -22,12 +23,13 @@ export async function POST(request: NextRequest) {
   }
 
   // Fetch recent activities for context
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
   const { data: recentActivities } = await supabase
     .from('activity_logs')
     .select('*')
     .eq('household_id', profile.household_id)
-    .gte('occurred_at', todayStart.toISOString())
+    .gte('occurred_at', todayRange.start)
+    .lt('occurred_at', todayRange.end)
     .order('occurred_at', { ascending: false })
     .limit(10)
 

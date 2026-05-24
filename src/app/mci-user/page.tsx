@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase-server'
+import { getUtcRangeForLocalDay } from '@/lib/dates'
 import MCIUserClient from './MCIUserClient'
 
 export default async function MCIUserPage() {
@@ -17,14 +18,14 @@ export default async function MCIUserPage() {
   if (!profile || profile.role !== 'mci_user') redirect('/')
 
   // Fetch today's activities
-  const todayStart = new Date()
-  todayStart.setHours(0, 0, 0, 0)
+  const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
 
   const { data: activities } = await supabase
     .from('activity_logs')
     .select('*')
     .eq('household_id', profile.household_id)
-    .gte('occurred_at', todayStart.toISOString())
+    .gte('occurred_at', todayRange.start)
+    .lt('occurred_at', todayRange.end)
     .order('occurred_at', { ascending: false })
     .limit(20)
 

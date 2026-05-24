@@ -3,6 +3,7 @@ import { createServerClient } from '@/lib/supabase-server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendSMS, buildDailySummaryMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
+import { getUtcRangeForLocalDay } from '@/lib/dates'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
 const CRON_SECRET = process.env.CRON_SECRET
@@ -86,12 +87,13 @@ async function sendDailySummary(householdId: string, careProfile: any) {
     .single()
 
   // Get today's activities
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const todayRange = getUtcRangeForLocalDay(new Date(), careProfile.timezone)
   const { data: activities } = await supabase
     .from('activity_logs')
     .select('*')
     .eq('household_id', householdId)
-    .gte('occurred_at', todayStart.toISOString())
+    .gte('occurred_at', todayRange.start)
+    .lt('occurred_at', todayRange.end)
     .order('occurred_at', { ascending: true })
     .limit(20)
 

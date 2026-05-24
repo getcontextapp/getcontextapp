@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { getLocalDateKey } from '@/lib/dates'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog } from '@/types'
 
@@ -13,14 +14,10 @@ interface Props {
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-function getDayKey(date: Date) {
-  return date.toISOString().split('T')[0]
-}
-
-function groupByDay(activities: ActivityLog[]) {
+function groupByDay(activities: ActivityLog[], timeZone?: string | null) {
   const groups: Record<string, ActivityLog[]> = {}
   for (const a of activities) {
-    const key = getDayKey(new Date(a.occurred_at))
+    const key = getLocalDateKey(new Date(a.occurred_at), timeZone)
     if (!groups[key]) groups[key] = []
     groups[key].push(a)
   }
@@ -38,29 +35,29 @@ function getCategoryBreakdown(activities: ActivityLog[]) {
 export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, household }: Props) {
   const supabase = createClient()
   const [activities] = useState<ActivityLog[]>(initialActivities)
-  const [selectedDay, setSelectedDay] = useState<string>(getDayKey(new Date()))
+  const [selectedDay, setSelectedDay] = useState<string>(getLocalDateKey(new Date(), careProfile.timezone))
   const [testSending, setTestSending] = useState(false)
   const [testSent, setTestSent] = useState(false)
 
-  const byDay = groupByDay(activities)
+  const byDay = groupByDay(activities, careProfile.timezone)
 
   // Build last 7 days for the week strip
   const weekDays = Array.from({ length: 7 }, (_, i) => {
     const d = new Date()
     d.setDate(d.getDate() - (6 - i))
     return {
-      key: getDayKey(d),
+      key: getLocalDateKey(d, careProfile.timezone),
       label: DAYS[d.getDay()],
       dayNum: d.getDate(),
-      count: byDay[getDayKey(d)]?.length ?? 0,
-      isToday: getDayKey(d) === getDayKey(new Date()),
+      count: byDay[getLocalDateKey(d, careProfile.timezone)]?.length ?? 0,
+      isToday: getLocalDateKey(d, careProfile.timezone) === getLocalDateKey(new Date(), careProfile.timezone),
     }
   })
 
   const selectedActivities = byDay[selectedDay] ?? []
 
   // Today's stats
-  const todayKey = getDayKey(new Date())
+  const todayKey = getLocalDateKey(new Date(), careProfile.timezone)
   const todayActivities = byDay[todayKey] ?? []
   const categoryBreakdown = getCategoryBreakdown(todayActivities)
 
@@ -190,7 +187,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
         {/* Selected day activity list */}
         <div className="animate-fade-up delay-300">
           <p className="text-warm-500 text-sm font-medium mb-3">
-            {selectedDay === getDayKey(new Date()) ? "Today's log" : `Log for ${new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`}
+            {selectedDay === getLocalDateKey(new Date(), careProfile.timezone) ? "Today's log" : `Log for ${new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`}
           </p>
           {selectedActivities.length === 0 ? (
             <div className="card p-6 text-center">
