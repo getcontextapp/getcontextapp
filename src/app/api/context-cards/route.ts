@@ -4,6 +4,54 @@ import { generateReentryCard, generateOpenContextCard } from '@/lib/anthropic'
 import { getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
 
+function getActivityDetail(activity: { label: string; note?: string | null }) {
+  const note = activity.note?.trim()
+  if (note) return note
+
+  const genericLabels = new Set(['Morning', 'Meal', 'Movement', 'Social', 'Rest', 'Medication', 'Other'])
+  if (genericLabels.has(activity.label)) return activity.label.toLowerCase() === 'other' ? 'another activity' : `a ${activity.label.toLowerCase()} activity`
+
+  return activity.label
+}
+
+function getDayPart(timeZone?: string | null) {
+  const hour = Number(new Date().toLocaleString('en-US', {
+    timeZone: timeZone || undefined,
+    hour: 'numeric',
+    hour12: false,
+  }))
+
+  if (hour < 5) return 'night'
+  if (hour < 12) return 'morning'
+  if (hour < 17) return 'afternoon'
+  if (hour < 21) return 'evening'
+  return 'night'
+}
+
+function buildFallbackOpenCard(displayName: string, recentActivities: Array<{ label: string; note?: string | null }>, timeZone?: string | null) {
+  const details = recentActivities
+    .slice(0, 3)
+    .map(getActivityDetail)
+    .filter(Boolean)
+
+  const dayPart = getDayPart(timeZone)
+  const intro =
+    dayPart === 'morning' ? `Here is what has happened this morning, ${displayName}.` :
+    dayPart === 'afternoon' ? `Here is what has been happening today, ${displayName}.` :
+    dayPart === 'evening' ? `Here is what has been part of your day, ${displayName}.` :
+    `Here is what is saved from tonight, ${displayName}.`
+
+  const activityText =
+    details.length === 0 ? 'There is nothing saved yet.' :
+    details.length === 1 ? `Saved here: ${details[0]}.` :
+    `Saved here: ${details.slice(0, -1).join(', ')} and ${details[details.length - 1]}.`
+
+  return {
+    title: 'Your day so far',
+    body: `${intro} ${activityText} This is a good place to return to when you need it.`,
+  }
+}
+
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -51,15 +99,11 @@ export async function POST(request: NextRequest) {
         gapMinutes,
       })
     } else {
-      generated = await generateOpenContextCard(profile.display_name, recentActivities)
+      generated = await generateOpenContextCard(profile.display_name, recentActivities, profile.timezone)
     }
   } catch (error) {
     console.error('[Context Cards] AI generation failed:', error)
-    const labels = recentActivities.slice(0, 3).map(a => a.label).join(', ')
-    generated = {
-      title: 'Your day so far',
-      body: `You have had a full day so far, ${profile.display_name}. You have spent time with ${labels}. This is a good place to return to your day.`,
-    }
+    generated = buildFallbackOpenCard(profile.display_name, recentActivities, profile.timezone)
   }
 
   // Deactivate old active cards of same type

@@ -5,8 +5,8 @@ const MODEL = 'claude-3-5-haiku-latest'
 
 interface ReentryCardInput {
   displayName: string
-  recentActivities: Array<{ label: string; category: string; occurred_at: string }>
-  triggerActivity: { label: string; category: string }
+  recentActivities: Array<{ label: string; category: string; note?: string | null; occurred_at: string }>
+  triggerActivity: { label: string; category: string; note?: string | null }
   gapMinutes: number
 }
 
@@ -24,7 +24,8 @@ export async function generateReentryCard(input: ReentryCardInput): Promise<Gene
       const t = new Date(a.occurred_at).toLocaleTimeString('en-US', {
         hour: 'numeric', minute: '2-digit', hour12: true,
       })
-      return `${i + 1}. ${a.label} (${a.category}) at ${t}`
+      const detail = a.note?.trim() || a.label
+      return `${i + 1}. ${detail} (${a.category}) at ${t}`
     })
     .join('\n')
 
@@ -65,19 +66,44 @@ Respond ONLY with a JSON object with keys "title" (short, 4–6 words) and "body
 
 export async function generateOpenContextCard(
   displayName: string,
-  recentActivities: Array<{ label: string; category: string; occurred_at: string }>,
+  recentActivities: Array<{ label: string; category: string; note?: string | null; occurred_at: string }>,
+  timeZone?: string | null,
 ): Promise<GeneratedCard> {
+  const now = new Date()
+  const currentTime = now.toLocaleTimeString('en-US', {
+    timeZone: timeZone || undefined,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+  const hour = Number(now.toLocaleString('en-US', {
+    timeZone: timeZone || undefined,
+    hour: 'numeric',
+    hour12: false,
+  }))
+  const dayPart =
+    hour < 5 ? 'late night' :
+    hour < 12 ? 'morning' :
+    hour < 17 ? 'afternoon' :
+    hour < 21 ? 'evening' :
+    'night'
+
   const activityList = recentActivities
     .slice(0, 8)
     .map(a => {
       const t = new Date(a.occurred_at).toLocaleTimeString('en-US', {
+        timeZone: timeZone || undefined,
         hour: 'numeric', minute: '2-digit', hour12: true,
       })
-      return `• ${a.label} at ${t}`
+      const detail = a.note?.trim() || a.label
+      return `• ${detail} (${a.category}) at ${t}`
     })
     .join('\n')
 
   const prompt = `You are writing a gentle orientation card for ${displayName}, an older adult with memory changes who is using Context to reconnect with their day.
+
+Current local time: ${currentTime}
+Current part of day: ${dayPart}
 
 Their activities so far today:
 ${activityList}
@@ -85,8 +111,10 @@ ${activityList}
 The card appears at the top of their home screen. It should help them feel oriented and settled, not evaluated or pushed.
 
 Write 2–3 short, warm sentences. The card should:
-- Start with a natural orienting sentence, such as "You have had a full morning, ${displayName}" or "Here is what has been happening today"
-- Mention the recent activities in plain, everyday language
+- Start with a natural orienting sentence that fits the current time of day
+- Do not say "full day" unless it is late afternoon or evening and there are several activities
+- Mention the activity details in plain, everyday language
+- Prefer details like "Resting" or "Phone call"; do not say "spent time with Morning", "spent time with Meal", or treat category labels as people/things
 - Avoid productivity language like "keep building your day", "stay on track", "progress", or "goals"
 - Avoid clinical language and avoid sounding like a performance report
 - End with a calm grounding sentence, such as "This is a good place to return to your day" or "You can take the next step from here"
