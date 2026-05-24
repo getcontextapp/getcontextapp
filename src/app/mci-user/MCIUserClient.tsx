@@ -189,12 +189,14 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
                         const timeStr = new Date(a.occurred_at).toLocaleTimeString('en-US', {
                           hour: 'numeric', minute: '2-digit', hour12: true,
                         })
+                        const displayLabel = tileConfig?.label ?? a.label
+                        const detail = a.note || (tileConfig && a.label !== tileConfig.label ? a.label : null)
                         return (
                           <div key={a.id} className="flex items-center gap-3 bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
                             <span className="text-xl">{tileConfig?.icon ?? '📌'}</span>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-warm-800 truncate">{a.label}</p>
-                              {a.note && <p className="text-xs text-warm-400 truncate">{a.note}</p>}
+                              <p className="text-sm font-medium text-warm-800">{displayLabel}</p>
+                              {detail && <p className="text-xs leading-5 text-warm-500 whitespace-normal break-words">{detail}</p>}
                             </div>
                             <span className="text-xs text-warm-300 whitespace-nowrap">{timeStr}</span>
                           </div>
@@ -213,7 +215,6 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
       {selectedTile && (
         <ActivityLogModal
           tile={selectedTile}
-          profile={profile}
           onLogged={handleActivityLogged}
           onClose={() => setSelectedTile(null)}
         />
