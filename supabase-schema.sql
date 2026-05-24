@@ -23,7 +23,7 @@ create table if not exists profiles (
   phone_e164             text,
   household_id           uuid references households(id) on delete set null,
   reminder_gap_minutes   integer not null default 90,
-  daily_summary_time     text not null default '20:00',
+  daily_summary_time     text not null default '21:00',
   timezone               text not null default 'America/New_York',
   created_at             timestamptz default now()
 );

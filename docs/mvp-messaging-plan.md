@@ -16,19 +16,19 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 
 ## SMS workflow after Twilio approval
 
-1. Send a morning prompt to the MCI participant.
+1. Send a morning prompt to the MCI participant at 8:00 AM.
    Example: "Good morning. What is one thing you plan to do first today?"
 
 2. Let the participant reply by SMS.
    The reply becomes the note on a simple activity entry.
 
-3. Send a re-entry cue after a configured gap.
+3. Send a re-entry cue after the participant's configured gap only if there is still a pending planned activity.
    Example: "A gentle reminder: you mentioned breakfast earlier. Tap here if you want to return to your day."
 
 4. Let the participant confirm by tapping a link or replying by text.
    This should feel like confirmation, not homework.
 
-5. Send the care partner a daily summary.
+5. Send the MCI participant and care partner a daily summary around 9:00 PM.
    Keep it short, warm, and factual.
 
 ## Dashboard changes for the SMS stage
@@ -38,6 +38,7 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 - Care partner dashboard should show whether today's planned items are waiting, done, later, or skipped.
 - Care partner dashboard should show recent confirmations without sounding alarming.
 - Both dashboards should keep the weekly activity view, but it should support the SMS-confirmed entries too.
+- Reminder settings should control how often pending items are nudged, not how often logging is requested.
 
 ## Supabase changes for the SMS stage
 

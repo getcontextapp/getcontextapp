@@ -18,10 +18,12 @@ const GAP_OPTIONS = [
   { value: 240, label: '4 hours' },
 ]
 
+const DEFAULT_SUMMARY_TIME = '21:00'
+
 export default function ReminderSettings({ profile, onClose, onSignOut }: Props) {
   const supabase = createClient()
   const [gap, setGap] = useState(profile.reminder_gap_minutes)
-  const [summaryTime, setSummaryTime] = useState(profile.daily_summary_time)
+  const [summaryTime, setSummaryTime] = useState(profile.daily_summary_time || DEFAULT_SUMMARY_TIME)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -51,10 +53,10 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
           {/* Re-entry reminder gap */}
           <div>
             <label className="block text-sm font-medium text-warm-700 mb-1">
-              Re-entry reminder
+              Text reminder frequency
             </label>
             <p className="text-xs text-warm-400 mb-3">
-              Send an SMS re-entry card if I haven't logged an activity after this long.
+              If something in today&apos;s plan is still waiting, send a gentle SMS reminder after this long.
             </p>
             <div className="grid grid-cols-3 gap-2">
               {GAP_OPTIONS.map(opt => (
@@ -75,11 +77,22 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
 
           {/* Daily summary time */}
           <div>
+            <label className="block text-sm font-medium text-warm-700 mb-1">
+              Daily text rhythm
+            </label>
+            <div className="rounded-xl border border-cream-200 bg-cream-100 px-4 py-3 text-xs leading-5 text-warm-500">
+              <p>Morning plan text: 8:00 AM</p>
+              <p>Reminder checks: only when something is still waiting</p>
+              <p>Final follow-up window: around 8:00 PM</p>
+            </div>
+          </div>
+
+          <div>
             <label htmlFor="summary-time" className="block text-sm font-medium text-warm-700 mb-1">
               Daily summary time
             </label>
             <p className="text-xs text-warm-400 mb-3">
-              When your care partner receives their end-of-day SMS summary.
+              When you and your care partner receive the end-of-day SMS summary.
             </p>
             <input
               id="summary-time"

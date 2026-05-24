@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
-import { generateReentryCard } from '@/lib/anthropic'
-import { sendSMS, buildReentryMessage } from '@/lib/twilio'
+import { sendSMS, buildPendingPlanReminderMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
 import { trackEvent } from '@/lib/analytics'
+import { getLocalDateKey } from '@/lib/dates'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
 const CRON_SECRET = process.env.CRON_SECRET
@@ -33,19 +33,32 @@ export async function GET(request: NextRequest) {
   let sent = 0
 
   for (const profile of mciProfiles) {
-    const gapMs = (profile.reminder_gap_minutes ?? 90) * 60 * 1000
+    const localHour = Number(new Date().toLocaleString('en-US', {
+      timeZone: profile.timezone || undefined,
+      hour: 'numeric',
+      hour12: false,
+    }))
+
+    // Keep SMS nudges inside the MVP day window: 8 AM through 8 PM local time.
+    if (localHour < 8 || localHour > 20) continue
+
+    const gapMinutes = profile.reminder_gap_minutes ?? 240
+    const gapMs = gapMinutes * 60 * 1000
     const checkFrom = new Date(Date.now() - gapMs).toISOString()
+    const todayKey = getLocalDateKey(new Date(), profile.timezone)
 
-    // Check if any activity has been logged since gap threshold
-    const { data: recentActivity } = await supabase
-      .from('activity_logs')
-      .select('id, occurred_at')
+    // Only remind when there is at least one planned item waiting for confirmation.
+    const { data: pendingItems } = await supabase
+      .from('planned_activities')
+      .select('*')
       .eq('household_id', profile.household_id)
-      .gte('occurred_at', checkFrom)
-      .limit(1)
-      .single()
+      .eq('planned_for', todayKey)
+      .in('status', ['planned', 'not_now'])
+      .lte('updated_at', checkFrom)
+      .order('created_at', { ascending: true })
+      .limit(5)
 
-    if (recentActivity) continue // Active recently — no reminder needed
+    if (!pendingItems || pendingItems.length === 0) continue
 
     // Check if we sent a reminder in the last gap period (avoid duplicates)
     const { data: recentReminder } = await supabase
@@ -59,53 +72,29 @@ export async function GET(request: NextRequest) {
 
     if (recentReminder) continue // Already sent one in this window
 
-    // Check that they logged at least one activity ever (not a brand-new user)
-    const { data: hasAnyActivity } = await supabase
-      .from('activity_logs')
-      .select('id, label, category, occurred_at')
-      .eq('household_id', profile.household_id)
-      .order('occurred_at', { ascending: false })
-      .limit(6)
-
-    if (!hasAnyActivity || hasAnyActivity.length === 0) continue
-
-    // Generate re-entry card
-    let generated: { title: string; body: string }
-    try {
-      generated = await generateReentryCard({
-        displayName: profile.display_name,
-        recentActivities: hasAnyActivity,
-        triggerActivity: hasAnyActivity[0],
-        gapMinutes: profile.reminder_gap_minutes ?? 90,
-      })
-    } catch {
-      generated = {
-        title: 'Welcome back',
-        body: `Hi ${profile.display_name}, it looks like it's been a little while. Tap the app to see your day and log your next activity.`,
+    const pendingForSms = pendingItems.map(item => {
+      const tile = ACTIVITY_TILES.find(t => t.category === item.category)
+      return {
+        icon: tile?.icon ?? '📌',
+        label: tile?.label ?? item.label,
+        note: item.note,
+        expected_period: item.expected_period,
       }
-    }
+    })
 
     // Save re-entry card to DB
     await supabase.from('context_cards').insert({
       household_id: profile.household_id,
       type: 'reentry',
-      title: generated.title,
-      body: generated.body,
-      generated_by: 'ai',
+      title: "Today's plan",
+      body: `You still have ${pendingItems.length} item${pendingItems.length !== 1 ? 's' : ''} waiting in today's plan. You can confirm what happened or leave it for later.`,
+      generated_by: 'user',
       is_active: true,
     })
 
-    // Build SMS
-    const recentLabels = hasAnyActivity.map(a => {
-      const tile = ACTIVITY_TILES.find(t => t.category === a.category)
-      return `${tile?.icon ?? ''} ${a.label}`.trim()
-    })
-
-    const smsBody = buildReentryMessage(
+    const smsBody = buildPendingPlanReminderMessage(
       profile.display_name,
-      recentLabels,
-      generated.title,
-      generated.body,
+      pendingForSms,
       APP_URL,
     )
 
@@ -128,7 +117,8 @@ export async function GET(request: NextRequest) {
       properties: {
         status,
         sid,
-        gap_minutes: profile.reminder_gap_minutes ?? 90,
+        gap_minutes: gapMinutes,
+        pending_count: pendingItems.length,
       },
     })
 

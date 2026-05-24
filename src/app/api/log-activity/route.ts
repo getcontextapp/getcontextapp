@@ -55,9 +55,8 @@ export async function POST(request: NextRequest) {
     },
   })
 
-  // Schedule re-entry reminder: check if we should cancel any pending re-entry SMS
-  // (Vercel cron handles the actual sending — this just logs the timestamp)
-  // The cron job checks if last activity + gap < now to decide whether to send
+  // Vercel cron handles SMS reminders separately. The current MVP reminder
+  // logic nudges pending planned activities, not manual logging.
 
   return NextResponse.json(activity)
 }

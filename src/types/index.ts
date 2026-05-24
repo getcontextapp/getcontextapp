@@ -9,8 +9,8 @@ export interface Profile {
   display_name: string
   phone_e164: string | null
   household_id: string | null
-  reminder_gap_minutes: number   // minutes before re-entry card SMS fires
-  daily_summary_time: string     // HH:MM in user local time, e.g. "20:00"
+  reminder_gap_minutes: number   // minutes between SMS nudges while planned activity is pending
+  daily_summary_time: string     // HH:MM in user local time, e.g. "21:00"
   timezone: string               // IANA tz string
   created_at: string
 }

@@ -42,6 +42,26 @@ export function buildReentryMessage(
   ].join('\n')
 }
 
+export function buildPendingPlanReminderMessage(
+  displayName: string,
+  pendingItems: Array<{ icon: string; label: string; note: string | null; expected_period: string }>,
+  appUrl: string,
+): string {
+  const lines = pendingItems.slice(0, 3).map(item => {
+    const detail = item.note?.trim() || item.label
+    return `  ${item.icon} ${detail}`
+  })
+
+  return [
+    `Hi ${displayName}, a gentle Context reminder.`,
+    ``,
+    `Still waiting in today's plan:`,
+    ...lines,
+    ``,
+    `Tap to confirm or mark later: ${appUrl}/mci-user`,
+  ].join('\n')
+}
+
 export function buildDailySummaryMessage(
   carePartnerName: string,
   memberName: string,
