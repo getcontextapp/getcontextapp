@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { createServerClient } from '@/lib/supabase-server'
+import { createServerClient, createServiceClient } from '@/lib/supabase-server'
 import CarePartnerClient from './CarePartnerClient'
 
 export default async function CarePartnerPage() {
@@ -16,8 +16,10 @@ export default async function CarePartnerPage() {
 
   if (!profile || profile.role !== 'care_partner') redirect('/')
 
+  const serviceSupabase = createServiceClient()
+
   // Get the MCI user in the same household
-  const { data: mciProfile } = await supabase
+  const { data: mciProfile } = await serviceSupabase
     .from('profiles')
     .select('*')
     .eq('household_id', profile.household_id)
