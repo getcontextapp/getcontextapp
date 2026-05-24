@@ -77,11 +77,21 @@ export async function generateOpenContextCard(
     })
     .join('\n')
 
-  const prompt = `Write a brief, warm "open context" summary card for ${displayName} based on their activities so far today:
+  const prompt = `You are writing a gentle orientation card for ${displayName}, an older adult with memory changes who is using Context to reconnect with their day.
 
+Their activities so far today:
 ${activityList}
 
-This card appears at the top of their home screen to help orient them. Write 2–3 gentle sentences describing their day so far in a narrative, friendly tone. No bullet points. End with an encouraging note.
+The card appears at the top of their home screen. It should help them feel oriented and settled, not evaluated or pushed.
+
+Write 2–3 short, warm sentences. The card should:
+- Start with a natural orienting sentence, such as "You have had a full morning, ${displayName}" or "Here is what has been happening today"
+- Mention the recent activities in plain, everyday language
+- Avoid productivity language like "keep building your day", "stay on track", "progress", or "goals"
+- Avoid clinical language and avoid sounding like a performance report
+- End with a calm grounding sentence, such as "This is a good place to return to your day" or "You can take the next step from here"
+- Use second person ("you")
+- Keep the tone gentle, familiar, and reassuring
 
 Respond ONLY with JSON: {"title": "4–6 word title", "body": "the summary text"}`
 

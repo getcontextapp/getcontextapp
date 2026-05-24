@@ -139,4 +139,11 @@ export const ACTIVITY_TILES: ActivityTileConfig[] = [
     colorClass: 'tile-medication',
     suggestions: ['Morning medications', 'Evening medications', 'Supplements'],
   },
+  {
+    category: 'custom',
+    icon: '✏️',
+    label: 'Other',
+    colorClass: 'tile-custom',
+    suggestions: ['Household task', 'Personal care', 'Appointment', 'Hobby'],
+  },
 ]

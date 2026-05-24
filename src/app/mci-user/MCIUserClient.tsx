@@ -169,21 +169,6 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
                 <span className="text-sm font-medium text-warm-700">{tile.label}</span>
               </button>
             ))}
-            {/* Custom tile */}
-            <button
-              onClick={() => setSelectedTile({
-                category: 'custom',
-                icon: '✏️',
-                label: 'Other',
-                colorClass: 'tile-custom',
-                suggestions: [],
-              })}
-              className="tile-custom border-2 rounded-card p-4 text-left
-                          hover:shadow-float active:scale-[0.96] transition-all animate-fade-up delay-400"
-            >
-              <span className="text-2xl block mb-1.5">✏️</span>
-              <span className="text-sm font-medium text-warm-700">Other</span>
-            </button>
           </div>
         </div>
 

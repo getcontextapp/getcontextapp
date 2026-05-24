@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
     const labels = recentActivities.slice(0, 3).map(a => a.label).join(', ')
     generated = {
       title: 'Your day so far',
-      body: `${profile.display_name}, you have logged ${labels}. This is a good place to keep building your day.`,
+      body: `You have had a full day so far, ${profile.display_name}. You have spent time with ${labels}. This is a good place to return to your day.`,
     }
   }
 
