@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { generateReentryCard, generateOpenContextCard } from '@/lib/anthropic'
 import { getUtcRangeForLocalDay } from '@/lib/dates'
+import { trackEvent } from '@/lib/analytics'
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -87,6 +88,18 @@ export async function POST(request: NextRequest) {
   if (error || !card) {
     return NextResponse.json({ error: error?.message ?? 'Insert failed' }, { status: 500 })
   }
+
+  await trackEvent(supabase, {
+    eventName: 'context_card_generated',
+    profile,
+    userId: user.id,
+    properties: {
+      card_id: card.id,
+      card_type: card.type,
+      activity_count: recentActivities.length,
+      generated_by: card.generated_by,
+    },
+  })
 
   return NextResponse.json(card)
 }

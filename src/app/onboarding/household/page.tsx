@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { trackClientEvent } from '@/lib/client-analytics'
 
 type Mode = 'choose' | 'create' | 'join'
 
@@ -41,6 +42,10 @@ export default function HouseholdPage() {
       // Link profile
       await supabase.from('profiles').update({ household_id: household.id }).eq('id', profile.id)
 
+      trackClientEvent('household_created', {
+        household_id: household.id,
+      })
+
       router.push('/')
     } catch (err: any) {
       setError(err.message)
@@ -66,6 +71,10 @@ export default function HouseholdPage() {
       if (hErr || !household) throw new Error('No household found with that code. Double-check and try again.')
 
       await supabase.from('profiles').update({ household_id: household.id }).eq('id', profile.id)
+
+      trackClientEvent('household_joined', {
+        household_id: household.id,
+      })
 
       router.push('/')
     } catch (err: any) {

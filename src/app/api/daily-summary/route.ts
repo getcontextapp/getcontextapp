@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendSMS, buildDailySummaryMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
 import { getUtcRangeForLocalDay } from '@/lib/dates'
+import { trackEvent } from '@/lib/analytics'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
 const CRON_SECRET = process.env.CRON_SECRET
@@ -28,6 +29,15 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await sendDailySummary(careProfile.household_id, careProfile)
+  await trackEvent(supabase, {
+    eventName: 'daily_summary_test_requested',
+    profile: careProfile,
+    userId: user.id,
+    properties: {
+      status: result.status,
+      sent: result.sent,
+    },
+  })
   return NextResponse.json(result)
 }
 
@@ -120,6 +130,17 @@ async function sendDailySummary(householdId: string, careProfile: any) {
     type: 'daily_summary',
     twilio_sid: sid,
     status,
+  })
+
+  await trackEvent(supabase, {
+    eventName: 'daily_summary_sms_attempted',
+    profile: careProfile,
+    userId: careProfile.user_id,
+    properties: {
+      status,
+      sid,
+      activity_count: activityList.length,
+    },
   })
 
   return { sent: true, status }

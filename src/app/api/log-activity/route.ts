@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendSMS, buildReentryMessage } from '@/lib/twilio'
+import { trackEvent } from '@/lib/analytics'
 import type { LogActivityPayload } from '@/types'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
@@ -42,6 +43,17 @@ export async function POST(request: NextRequest) {
   if (error || !activity) {
     return NextResponse.json({ error: error?.message ?? 'Insert failed' }, { status: 500 })
   }
+
+  await trackEvent(supabase, {
+    eventName: 'activity_logged',
+    profile,
+    userId: user.id,
+    properties: {
+      activity_id: activity.id,
+      category: activity.category,
+      has_note: Boolean(activity.note),
+    },
+  })
 
   // Schedule re-entry reminder: check if we should cancel any pending re-entry SMS
   // (Vercel cron handles the actual sending — this just logs the timestamp)

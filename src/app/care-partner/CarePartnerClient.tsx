@@ -1,6 +1,7 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey } from '@/lib/dates'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog } from '@/types'
@@ -41,6 +42,13 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
 
   const byDay = groupByDay(activities, careProfile.timezone)
 
+  useEffect(() => {
+    trackClientEvent('care_partner_dashboard_viewed', {
+      activity_count: initialActivities.length,
+      has_mci_profile: Boolean(mciProfile),
+    })
+  }, [initialActivities.length, mciProfile])
+
   // Build last 7 days for the week strip
   const weekDays = Array.from({ length: 7 }, (_, i) => {
     const d = new Date()
@@ -71,6 +79,9 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
         body: JSON.stringify({ household_id: careProfile.household_id }),
       })
       setTestSent(true)
+      trackClientEvent('daily_summary_test_clicked', {
+        has_phone: Boolean(careProfile.phone_e164),
+      })
       setTimeout(() => setTestSent(false), 4000)
     } catch {}
     setTestSending(false)

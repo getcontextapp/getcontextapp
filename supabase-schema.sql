@@ -59,6 +59,24 @@ create table if not exists context_cards (
 create index if not exists context_cards_household_active
   on context_cards (household_id, is_active, created_at desc);
 
+-- ─── Analytics Events ───────────────────────────────────────────────────────
+create table if not exists analytics_events (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid references auth.users(id) on delete set null,
+  profile_id    uuid references profiles(id) on delete set null,
+  household_id  uuid references households(id) on delete set null,
+  role          text,
+  event_name    text not null,
+  properties    jsonb not null default '{}'::jsonb,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists analytics_events_created_at
+  on analytics_events (created_at desc);
+
+create index if not exists analytics_events_household_time
+  on analytics_events (household_id, created_at desc);
+
 -- ─── Reminder Logs ───────────────────────────────────────────────────────────
 create table if not exists reminder_logs (
   id            uuid primary key default gen_random_uuid(),
@@ -75,6 +93,7 @@ alter table profiles       enable row level security;
 alter table households     enable row level security;
 alter table activity_logs  enable row level security;
 alter table context_cards  enable row level security;
+alter table analytics_events enable row level security;
 alter table reminder_logs  enable row level security;
 
 -- Profiles: user sees own profile
@@ -108,6 +127,11 @@ create policy "household cards"
       select household_id from profiles where user_id = auth.uid()
     )
   );
+
+-- Analytics: users can insert their own events; service role can read all
+create policy "insert own analytics events"
+  on analytics_events for insert
+  with check (auth.uid() = user_id);
 
 -- Reminder logs: household members (read only for non-service)
 create policy "household reminders read"

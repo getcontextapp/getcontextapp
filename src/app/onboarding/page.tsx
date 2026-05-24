@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { trackClientEvent } from '@/lib/client-analytics'
 import type { UserRole } from '@/types'
 
 type Step = 'role' | 'profile'
@@ -31,19 +32,26 @@ export default function OnboardingPage() {
     const cleanPhone = phone.replace(/\D/g, '')
     const phoneE164 = cleanPhone ? `+1${cleanPhone}` : null
 
-    const { error: insertError } = await supabase.from('profiles').insert({
+    const { data: profile, error: insertError } = await supabase.from('profiles').insert({
       user_id: user.id,
       role,
       display_name: displayName.trim(),
       phone_e164: phoneE164,
       timezone,
-    })
+    }).select('id').single()
 
     if (insertError) {
       setError(insertError.message)
       setLoading(false)
       return
     }
+
+    trackClientEvent('profile_created', {
+      profile_id: profile?.id,
+      role,
+      has_phone: Boolean(phoneE164),
+      timezone,
+    })
 
     router.push('/onboarding/household')
   }

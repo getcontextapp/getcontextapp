@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { generateReentryCard } from '@/lib/anthropic'
 import { sendSMS, buildReentryMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
+import { trackEvent } from '@/lib/analytics'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
 const CRON_SECRET = process.env.CRON_SECRET
@@ -118,6 +119,17 @@ export async function GET(request: NextRequest) {
       type: 'reentry',
       twilio_sid: sid,
       status,
+    })
+
+    await trackEvent(supabase, {
+      eventName: 'reentry_sms_attempted',
+      profile,
+      userId: profile.user_id,
+      properties: {
+        status,
+        sid,
+        gap_minutes: profile.reminder_gap_minutes ?? 90,
+      },
     })
 
     sent++

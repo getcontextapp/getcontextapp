@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
+import { trackClientEvent } from '@/lib/client-analytics'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, ContextCard, ActivityTileConfig } from '@/types'
 import ActivityLogModal from '@/components/mci/ActivityLogModal'
@@ -31,6 +32,11 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
 
   // Subscribe to realtime activity updates
   useEffect(() => {
+    trackClientEvent('mci_dashboard_viewed', {
+      activity_count: initialActivities.length,
+      has_context_card: Boolean(initialContextCard),
+    })
+
     const channel = supabase
       .channel('activity-logs')
       .on('postgres_changes', {
@@ -44,7 +50,7 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [profile.household_id])
+  }, [profile.household_id, initialActivities.length, initialContextCard, supabase])
 
   const handleActivityLogged = useCallback(async (activity: ActivityLog) => {
     setActivities(prev => [activity, ...prev])
@@ -124,6 +130,10 @@ export default function MCIUserClient({ profile, initialActivities, initialConte
             isGenerating={generatingCard}
             onDismiss={async () => {
               await supabase.from('context_cards').update({ is_active: false }).eq('id', contextCard.id)
+              trackClientEvent('context_card_dismissed', {
+                card_id: contextCard.id,
+                card_type: contextCard.type,
+              })
               setContextCard(null)
             }}
           />
