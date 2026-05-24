@@ -141,7 +141,9 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
         ) : (
           <div className="card p-5 border-2 border-dashed border-cream-300 animate-fade-up">
             <p className="text-warm-500 text-sm text-center">
-              No household member linked yet. Share join code: <strong className="font-mono">{household?.join_code}</strong>
+              {activities.length > 0
+                ? `Household linked. ${todayActivities.length} ${todayActivities.length === 1 ? 'activity' : 'activities'} logged today.`
+                : <>No household member linked yet. Share join code: <strong className="font-mono">{household?.join_code}</strong></>}
             </p>
           </div>
         )}
