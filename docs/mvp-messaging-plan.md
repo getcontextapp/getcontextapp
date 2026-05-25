@@ -22,14 +22,27 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 2. Let the participant reply by SMS.
    The reply becomes the note on a simple activity entry.
 
-3. Send a re-entry cue after the participant's configured gap only if there is still a pending planned activity.
+3. Parse natural replies with AI.
+   The parser only returns known Context categories and time buckets. Low-confidence items are dropped.
+
+4. Save parsed items as planned activities.
+   These appear on the dashboard as waiting for confirmation.
+
+5. Send a re-entry cue after the participant's configured gap only if there is still a pending planned activity.
    Example: "A gentle reminder: you mentioned breakfast earlier. Tap here if you want to return to your day."
 
-4. Let the participant confirm by tapping a link or replying by text.
+6. Let the participant confirm by tapping a link or replying by text.
    This should feel like confirmation, not homework.
 
-5. Send the MCI participant and care partner a daily summary around 9:00 PM.
+7. Send the MCI participant and care partner a daily summary around 9:00 PM.
    Keep it short, warm, and factual.
+
+## No-response logic
+
+- If the MCI participant does not reply to the 8:00 AM plan text, send one gentle follow-up around 10:00 AM.
+- If there is still no reply around noon, send a calm care partner notice.
+- If the MCI participant replies later, Context still accepts the reply and creates the plan.
+- The care partner notice should not sound urgent unless future safety logic explicitly requires that.
 
 ## Dashboard changes for the SMS stage
 
@@ -42,7 +55,7 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 
 ## Supabase changes for the SMS stage
 
-- Add a table for message prompts and replies.
+- Add `sms_messages` for message prompts, replies, delivery status, and parsing metadata.
 - Use the planned activities table as the place where AI-sorted SMS items are stored before confirmation.
 - Store message direction: outbound or inbound.
 - Store message purpose: morning_prompt, reentry_cue, confirmation, care_summary.
@@ -54,6 +67,7 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 
 - Add a Twilio inbound webhook route.
 - Add a scheduled job for morning prompts.
+- Add a scheduled job for morning no-response follow-up.
 - Add a scheduled job for re-entry reminders.
 - Add a scheduled job for daily care partner summaries.
 - Keep `CRON_SECRET` set in Vercel for scheduled routes.
@@ -62,7 +76,8 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 
 - Finish A2P 10DLC approval.
 - Connect the approved phone number to the campaign.
-- Configure the inbound webhook URL in Twilio.
+- Configure the inbound webhook URL in Twilio:
+  `https://getcontextapp.com/api/twilio/inbound`
 - Test STOP and HELP handling.
 - Start with a low daily message cap during participant testing.
 

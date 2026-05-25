@@ -44,6 +44,7 @@ export interface ActivityLog {
 
 export type PlannedActivityStatus = 'planned' | 'confirmed' | 'not_now' | 'skipped'
 export type ExpectedPeriod = 'morning' | 'afternoon' | 'evening' | 'anytime'
+export type PlannedActivitySource = 'manual' | 'sms_ai'
 
 export interface PlannedActivity {
   id: string
@@ -59,7 +60,7 @@ export interface PlannedActivity {
   status: PlannedActivityStatus
   confirmed_activity_log_id: string | null
   confirmed_at: string | null
-  source: 'manual' | 'sms_ai'
+  source: PlannedActivitySource
   created_at: string
   updated_at: string
 }
@@ -86,6 +87,31 @@ export interface ReminderLog {
   status: 'sent' | 'delivered' | 'failed'
 }
 
+export type SmsDirection = 'inbound' | 'outbound'
+export type SmsPurpose =
+  | 'morning_prompt'
+  | 'morning_followup'
+  | 'care_partner_no_response'
+  | 'pending_reminder'
+  | 'daily_summary'
+  | 'inbound_plan_reply'
+  | 'inbound_confirmation'
+  | 'inbound_other'
+
+export interface SmsMessage {
+  id: string
+  household_id: string | null
+  profile_id: string | null
+  direction: SmsDirection
+  purpose: SmsPurpose
+  phone_e164: string
+  body: string
+  twilio_sid: string | null
+  status: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
 // ─── API Payloads ─────────────────────────────────────────────────────────────
 
 export interface LogActivityPayload {
@@ -102,6 +128,20 @@ export interface CreatePlannedActivityPayload {
   expected_period: ExpectedPeriod
   expected_time?: string | null
   planned_for?: string
+}
+
+export interface ParsedSmsPlanItem {
+  category: ActivityCategory
+  note: string
+  expected_period: ExpectedPeriod
+  confidence: 'high' | 'medium' | 'low'
+}
+
+export interface ParsedSmsPlanReply {
+  intent: 'plan' | 'confirmation' | 'unclear'
+  items: ParsedSmsPlanItem[]
+  confirmation?: 'yes' | 'not_now' | 'skip' | null
+  reply: string
 }
 
 export interface GenerateReentryCardPayload {

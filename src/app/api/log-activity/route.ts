@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
-import { createServiceClient } from '@/lib/supabase-server'
-import { sendSMS, buildReentryMessage } from '@/lib/twilio'
 import { trackEvent } from '@/lib/analytics'
 import type { LogActivityPayload } from '@/types'
-
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()

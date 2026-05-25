@@ -4,6 +4,7 @@ import { sendSMS, buildPendingPlanReminderMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
 import { trackEvent } from '@/lib/analytics'
 import { getLocalDateKey } from '@/lib/dates'
+import { logSmsMessage } from '@/lib/sms'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
 const CRON_SECRET = process.env.CRON_SECRET
@@ -100,6 +101,19 @@ export async function GET(request: NextRequest) {
 
     // Send SMS
     const { sid, status } = await sendSMS(profile.phone_e164!, smsBody)
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'pending_reminder',
+      phoneE164: profile.phone_e164!,
+      body: smsBody,
+      twilioSid: sid,
+      status,
+      metadata: {
+        pending_count: pendingItems.length,
+      },
+    })
 
     // Log the reminder
     await supabase.from('reminder_logs').insert({

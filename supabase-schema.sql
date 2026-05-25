@@ -68,6 +68,27 @@ create table if not exists planned_activities (
 create index if not exists planned_activities_household_day
   on planned_activities (household_id, planned_for, status);
 
+-- ─── SMS Messages ───────────────────────────────────────────────────────────
+create table if not exists sms_messages (
+  id            uuid primary key default gen_random_uuid(),
+  household_id  uuid references households(id) on delete set null,
+  profile_id    uuid references profiles(id) on delete set null,
+  direction     text not null check (direction in ('inbound', 'outbound')),
+  purpose       text not null,
+  phone_e164    text not null,
+  body          text not null,
+  twilio_sid    text,
+  status        text not null default 'recorded',
+  metadata      jsonb not null default '{}'::jsonb,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists sms_messages_profile_time
+  on sms_messages (profile_id, created_at desc);
+
+create index if not exists sms_messages_household_time
+  on sms_messages (household_id, created_at desc);
+
 -- ─── Context Cards ───────────────────────────────────────────────────────────
 create table if not exists context_cards (
   id               uuid primary key default gen_random_uuid(),
@@ -118,6 +139,7 @@ alter table profiles       enable row level security;
 alter table households     enable row level security;
 alter table activity_logs  enable row level security;
 alter table planned_activities enable row level security;
+alter table sms_messages enable row level security;
 alter table context_cards  enable row level security;
 alter table analytics_events enable row level security;
 alter table reminder_logs  enable row level security;
@@ -159,6 +181,18 @@ create policy "household planned activities"
     )
   );
 
+-- SMS messages: household members
+create policy "household sms messages"
+  on sms_messages for select
+  using (
+    household_id in (
+      select household_id from profiles where user_id = auth.uid()
+    )
+    or profile_id in (
+      select id from profiles where user_id = auth.uid()
+    )
+  );
+
 -- Context cards: household members
 create policy "household cards"
   on context_cards for all
@@ -192,6 +226,7 @@ grant all on profiles to authenticated;
 grant all on households to authenticated;
 grant all on activity_logs to authenticated;
 grant all on planned_activities to authenticated;
+grant select on sms_messages to authenticated;
 grant all on context_cards to authenticated;
 grant all on analytics_events to authenticated;
 grant all on reminder_logs to authenticated;
@@ -200,6 +235,7 @@ grant all on profiles to service_role;
 grant all on households to service_role;
 grant all on activity_logs to service_role;
 grant all on planned_activities to service_role;
+grant all on sms_messages to service_role;
 grant all on context_cards to service_role;
 grant all on analytics_events to service_role;
 grant all on reminder_logs to service_role;

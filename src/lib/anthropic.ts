@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import type { ActivityCategory, ExpectedPeriod, ParsedSmsPlanReply } from '@/types'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const MODEL = 'claude-3-5-haiku-latest'
@@ -13,6 +14,180 @@ interface ReentryCardInput {
 interface GeneratedCard {
   title: string
   body: string
+}
+
+const VALID_CATEGORIES: ActivityCategory[] = ['morning', 'meal', 'movement', 'social', 'rest', 'medication', 'custom']
+const VALID_PERIODS: ExpectedPeriod[] = ['morning', 'afternoon', 'evening', 'anytime']
+
+function cleanJson(raw: string) {
+  return raw.replace(/```json|```/g, '').trim()
+}
+
+function safeCategory(value: unknown): ActivityCategory {
+  return VALID_CATEGORIES.includes(value as ActivityCategory) ? value as ActivityCategory : 'custom'
+}
+
+function safePeriod(value: unknown): ExpectedPeriod {
+  return VALID_PERIODS.includes(value as ExpectedPeriod) ? value as ExpectedPeriod : 'anytime'
+}
+
+function inferPeriod(text: string): ExpectedPeriod {
+  const lower = text.toLowerCase()
+  if (/\b(morning|breakfast|wake|shower|dress|coffee|tea|am|a\.m\.)\b/.test(lower)) return 'morning'
+  if (/\b(afternoon|lunch|after lunch|noon|midday)\b/.test(lower)) return 'afternoon'
+  if (/\b(evening|dinner|tonight|night|before bed|pm|p\.m\.)\b/.test(lower)) return 'evening'
+  if (/\blater\b/.test(lower)) return 'afternoon'
+  return 'anytime'
+}
+
+function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
+  const lower = message.toLowerCase()
+  const items: ParsedSmsPlanReply['items'] = []
+
+  const add = (category: ActivityCategory, note: string, confidence: 'high' | 'medium' = 'medium') => {
+    if (!items.some(item => item.category === category && item.note.toLowerCase() === note.toLowerCase())) {
+      items.push({ category, note, expected_period: inferPeriod(`${message} ${note}`), confidence })
+    }
+  }
+
+  if (/\b(yes|done|did it|finished|completed|took it|already)\b/.test(lower) && lower.length < 80) {
+    return {
+      intent: 'confirmation',
+      items: [],
+      confirmation: 'yes',
+      reply: 'Thank you. I marked that in Context.',
+    }
+  }
+
+  if (/\b(not yet|later|not now)\b/.test(lower) && lower.length < 80) {
+    return {
+      intent: 'confirmation',
+      items: [],
+      confirmation: 'not_now',
+      reply: 'No problem. I will leave it in your plan for later.',
+    }
+  }
+
+  if (/\b(skip|cancel|forget it|no)\b/.test(lower) && lower.length < 80) {
+    return {
+      intent: 'confirmation',
+      items: [],
+      confirmation: 'skip',
+      reply: 'Okay. I will leave that aside for now.',
+    }
+  }
+
+  if (/\b(pill|pills|medicine|medication|meds|vitamin|supplement)\b/.test(lower)) add('medication', 'Take medication', 'high')
+  if (/\b(breakfast|lunch|dinner|eat|meal|snack|drink|water|tea|coffee)\b/.test(lower)) add('meal', 'Have a meal or drink', 'medium')
+  if (/\b(walk|exercise|stretch|gym|garden|yard|outside)\b/.test(lower)) add('movement', 'Move around', 'medium')
+  if (/\b(call|phone|daughter|son|wife|husband|friend|family|neighbor|visit|text)\b/.test(lower)) add('social', 'Connect with someone', 'medium')
+  if (/\b(nap|rest|sleep|relax|tv|read)\b/.test(lower)) add('rest', 'Rest for a while', 'medium')
+  if (/\b(shower|wash|dress|dressed|brush|morning)\b/.test(lower)) add('morning', 'Morning routine', 'medium')
+  if (/\b(doctor|appointment|errand|store|shop|bank|bill|clean|laundry|cook)\b/.test(lower)) add('custom', 'Other task', 'medium')
+
+  if (items.length === 0) {
+    return {
+      intent: 'unclear',
+      items: [],
+      confirmation: null,
+      reply: `I could not turn that into a clear Context plan yet. You can open Context to add it directly: ${process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'}/mci-user`,
+    }
+  }
+
+  return {
+    intent: 'plan',
+    items: items.slice(0, 6),
+    confirmation: null,
+    reply: 'I added this to your Context plan.',
+  }
+}
+
+export async function parseSmsPlanReply(message: string, displayName: string, timeZone?: string | null): Promise<ParsedSmsPlanReply> {
+  const prompt = `You are a strict parser for Context, an app for older adults with MCI.
+
+The user may write messy SMS text without punctuation. Convert it into planned IADL activities for today.
+
+User name: ${displayName}
+User timezone: ${timeZone ?? 'America/New_York'}
+SMS text:
+"${message}"
+
+Allowed categories:
+- morning
+- meal
+- movement
+- social
+- rest
+- medication
+- custom
+
+Allowed expected_period values:
+- morning
+- afternoon
+- evening
+- anytime
+
+Rules:
+- Return JSON only. No markdown.
+- Do not invent tasks that are not implied by the message.
+- Use "custom" for appointments, errands, household tasks, hobbies, finance, or anything that does not fit.
+- If the message is mainly "yes", "done", "I did it", or "already did it", set intent to "confirmation" and confirmation to "yes".
+- If the message is "not yet", "later", or similar, set intent to "confirmation" and confirmation to "not_now".
+- If the message is "skip", "no", "cancel", or similar, set intent to "confirmation" and confirmation to "skip".
+- If the message is too vague, set intent to "unclear" and return an empty items array.
+- Keep each note short and natural, using the user's words when possible.
+- If the user mentions tomorrow or another future day, ignore that item for this MVP unless they also mention doing it today.
+- Use confidence "high", "medium", or "low".
+
+Return exactly this shape:
+{
+  "intent": "plan" | "confirmation" | "unclear",
+  "items": [
+    {
+      "category": "meal",
+      "note": "Lunch",
+      "expected_period": "afternoon",
+      "confidence": "high"
+    }
+  ],
+  "confirmation": "yes" | "not_now" | "skip" | null,
+  "reply": "short warm SMS reply"
+}`
+
+  try {
+    const result = await client.messages.create({
+      model: MODEL,
+      max_tokens: 700,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    const raw = result.content[0].type === 'text' ? result.content[0].text : ''
+    const parsed = JSON.parse(cleanJson(raw))
+
+    const intent = ['plan', 'confirmation', 'unclear'].includes(parsed.intent) ? parsed.intent : 'unclear'
+    const confirmation = ['yes', 'not_now', 'skip'].includes(parsed.confirmation) ? parsed.confirmation : null
+    const items = Array.isArray(parsed.items)
+      ? parsed.items
+        .slice(0, 6)
+        .map((item: any) => ({
+          category: safeCategory(item.category),
+          note: String(item.note ?? '').trim().slice(0, 160),
+          expected_period: safePeriod(item.expected_period),
+          confidence: ['high', 'medium', 'low'].includes(item.confidence) ? item.confidence : 'medium',
+        }))
+        .filter((item: any) => item.note && item.confidence !== 'low')
+      : []
+
+    return {
+      intent,
+      items,
+      confirmation,
+      reply: String(parsed.reply ?? 'I saved that in Context.').slice(0, 240),
+    }
+  } catch (error) {
+    console.error('[Anthropic] SMS parse failed:', error)
+    return fallbackParseSmsPlanReply(message)
+  }
 }
 
 export async function generateReentryCard(input: ReentryCardInput): Promise<GeneratedCard> {
@@ -57,7 +232,7 @@ Respond ONLY with a JSON object with keys "title" (short, 4–6 words) and "body
 
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   try {
-    const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim())
+    const parsed = JSON.parse(cleanJson(raw))
     return { title: parsed.title ?? 'Welcome back', body: parsed.body ?? raw }
   } catch {
     return { title: 'Welcome back', body: raw }
@@ -131,7 +306,7 @@ Respond ONLY with JSON: {"title": "4–6 word title", "body": "the summary text"
 
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   try {
-    const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim())
+    const parsed = JSON.parse(cleanJson(raw))
     return { title: parsed.title ?? "Your day so far", body: parsed.body ?? raw }
   } catch {
     return { title: "Your day so far", body: raw }

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { createServiceClient } from '@/lib/supabase-server'
-import { sendSMS, buildDailySummaryMessage } from '@/lib/twilio'
+import { sendSMS, buildDailySummaryMessage, buildPersonalDailySummaryMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
-import { getUtcRangeForLocalDay } from '@/lib/dates'
+import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
+import { logSmsMessage } from '@/lib/sms'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
 const CRON_SECRET = process.env.CRON_SECRET
@@ -91,7 +92,7 @@ async function sendDailySummary(householdId: string, careProfile: any) {
   // Get MCI user profile
   const { data: mciProfile } = await supabase
     .from('profiles')
-    .select('display_name')
+    .select('*')
     .eq('household_id', householdId)
     .eq('role', 'mci_user')
     .single()
@@ -109,8 +110,15 @@ async function sendDailySummary(householdId: string, careProfile: any) {
 
   const activityList = (activities ?? []).map(a => {
     const tile = ACTIVITY_TILES.find(t => t.category === a.category)
-    return { icon: tile?.icon ?? '📌', label: a.label, occurred_at: a.occurred_at }
+    return { icon: tile?.icon ?? '📌', label: a.note || a.label, occurred_at: a.occurred_at }
   })
+
+  const { data: pendingItems } = await supabase
+    .from('planned_activities')
+    .select('id')
+    .eq('household_id', householdId)
+    .eq('planned_for', getLocalDateKey(new Date(), careProfile.timezone))
+    .in('status', ['planned', 'not_now'])
 
   const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 
@@ -123,6 +131,21 @@ async function sendDailySummary(householdId: string, careProfile: any) {
   )
 
   const { sid, status } = await sendSMS(careProfile.phone_e164, smsBody)
+  await logSmsMessage(supabase, {
+    householdId,
+    profileId: careProfile.id,
+    direction: 'outbound',
+    purpose: 'daily_summary',
+    phoneE164: careProfile.phone_e164,
+    body: smsBody,
+    twilioSid: sid,
+    status,
+    metadata: {
+      activity_count: activityList.length,
+      pending_count: pendingItems?.length ?? 0,
+      recipient_role: 'care_partner',
+    },
+  })
 
   await supabase.from('reminder_logs').insert({
     household_id: householdId,
@@ -143,5 +166,34 @@ async function sendDailySummary(householdId: string, careProfile: any) {
     },
   })
 
-  return { sent: true, status }
+  let mciStatus: string | null = null
+  if (mciProfile?.phone_e164) {
+    const mciBody = buildPersonalDailySummaryMessage(
+      mciProfile.display_name,
+      dateStr,
+      activityList,
+      pendingItems?.length ?? 0,
+      APP_URL,
+    )
+    const mciResult = await sendSMS(mciProfile.phone_e164, mciBody)
+    mciStatus = mciResult.status
+
+    await logSmsMessage(supabase, {
+      householdId,
+      profileId: mciProfile.id,
+      direction: 'outbound',
+      purpose: 'daily_summary',
+      phoneE164: mciProfile.phone_e164,
+      body: mciBody,
+      twilioSid: mciResult.sid,
+      status: mciResult.status,
+      metadata: {
+        activity_count: activityList.length,
+        pending_count: pendingItems?.length ?? 0,
+        recipient_role: 'mci_user',
+      },
+    })
+  }
+
+  return { sent: true, status, mciStatus }
 }

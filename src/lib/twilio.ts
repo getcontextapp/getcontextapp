@@ -88,3 +88,28 @@ export function buildDailySummaryMessage(
     `Full view: ${appUrl}/care-partner`,
   ].join('\n')
 }
+
+export function buildPersonalDailySummaryMessage(
+  displayName: string,
+  date: string,
+  activities: Array<{ icon: string; label: string; occurred_at: string }>,
+  pendingCount: number,
+  appUrl: string,
+): string {
+  const lines = activities.slice(0, 6).map(a => {
+    const t = new Date(a.occurred_at).toLocaleTimeString('en-US', {
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    })
+    return `  ${a.icon} ${a.label} (${t})`
+  })
+
+  return [
+    `Hi ${displayName}, here is what Context saved today — ${date}:`,
+    ``,
+    ...lines,
+    activities.length === 0 ? 'Nothing was confirmed today.' : '',
+    pendingCount > 0 ? `${pendingCount} item${pendingCount !== 1 ? 's' : ''} still waiting in today's plan.` : `Everything in today's plan is settled.`,
+    ``,
+    `Open Context: ${appUrl}/mci-user`,
+  ].filter(Boolean).join('\n')
+}
