@@ -102,6 +102,25 @@ function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
   }
 }
 
+function normalizePlannedNote(note: string) {
+  return note
+    .trim()
+    .replace(/^took\b/i, 'Take')
+    .replace(/^called\b/i, 'Call')
+    .replace(/^walked\b/i, 'Walk')
+    .replace(/^went for\b/i, 'Go for')
+    .replace(/^ate\b/i, 'Eat')
+    .replace(/^had\b/i, 'Have')
+    .replace(/^washed\b/i, 'Wash')
+    .replace(/^got dressed\b/i, 'Get dressed')
+    .replace(/^stretched\b/i, 'Stretch')
+    .replace(/^rested\b/i, 'Rest')
+    .replace(/^watched\b/i, 'Watch')
+    .replace(/^checked\b/i, 'Check')
+    .replace(/^worked\b/i, 'Work')
+    .slice(0, 160)
+}
+
 export async function parseSmsPlanReply(message: string, displayName: string, timeZone?: string | null): Promise<ParsedSmsPlanReply> {
   const prompt = `You are a strict parser for Context, an app for older adults with MCI.
 
@@ -135,7 +154,10 @@ Rules:
 - If the message is "not yet", "later", or similar, set intent to "confirmation" and confirmation to "not_now".
 - If the message is "skip", "no", "cancel", or similar, set intent to "confirmation" and confirmation to "skip".
 - If the message is too vague, set intent to "unclear" and return an empty items array.
-- Keep each note short and natural, using the user's words when possible.
+- For planned items, write notes as future/neutral action phrases, not past tense.
+- Good planned notes: "Take morning pills", "Call daughter", "Walk outside", "Eat lunch", "Go to eye appointment".
+- Bad planned notes: "Took pills", "Called daughter", "Walked outside", "Ate lunch".
+- Keep each note short and natural, using the user's words when possible but converting to plan language.
 - If the user mentions tomorrow or another future day, ignore that item for this MVP unless they also mention doing it today.
 - Use confidence "high", "medium", or "low".
 
@@ -171,7 +193,7 @@ Return exactly this shape:
         .slice(0, 6)
         .map((item: any) => ({
           category: safeCategory(item.category),
-          note: String(item.note ?? '').trim().slice(0, 160),
+          note: normalizePlannedNote(String(item.note ?? '')),
           expected_period: safePeriod(item.expected_period),
           confidence: ['high', 'medium', 'low'].includes(item.confidence) ? item.confidence : 'medium',
         }))

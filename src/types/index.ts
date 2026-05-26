@@ -173,7 +173,7 @@ export const ACTIVITY_TILES: ActivityTileConfig[] = [
     icon: '🌤',
     label: 'Morning',
     colorClass: 'tile-morning',
-    suggestions: ['Washed up', 'Got dressed', 'Had coffee or tea', 'Checked today\'s plan'],
+    suggestions: ['Wash up', 'Get dressed', 'Have coffee or tea', 'Check today\'s plan'],
   },
   {
     category: 'meal',
@@ -187,21 +187,21 @@ export const ACTIVITY_TILES: ActivityTileConfig[] = [
     icon: '🚶',
     label: 'Movement',
     colorClass: 'tile-movement',
-    suggestions: ['Walked outside', 'Stretched', 'Exercise class', 'Worked in the yard'],
+    suggestions: ['Walk outside', 'Stretch', 'Exercise class', 'Work in the yard'],
   },
   {
     category: 'social',
     icon: '💬',
     label: 'Social',
     colorClass: 'tile-social',
-    suggestions: ['Phone call', 'Family visit', 'Talked with a neighbor', 'Video call'],
+    suggestions: ['Phone call', 'Family visit', 'Talk with a neighbor', 'Video call'],
   },
   {
     category: 'rest',
     icon: '🛋',
     label: 'Rest',
     colorClass: 'tile-rest',
-    suggestions: ['Took a nap', 'Quiet reading', 'Rested for a while', 'Watched TV'],
+    suggestions: ['Take a nap', 'Quiet reading', 'Rest for a while', 'Watch TV'],
   },
   {
     category: 'medication',
