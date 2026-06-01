@@ -15,6 +15,7 @@ export default function OnboardingPage() {
   const [role, setRole] = useState<UserRole | null>(null)
   const [displayName, setDisplayName] = useState('')
   const [phone, setPhone] = useState('')
+  const [smsConsent, setSmsConsent] = useState(false)
   const [timezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -31,6 +32,12 @@ export default function OnboardingPage() {
     // Normalize phone to E.164
     const cleanPhone = phone.replace(/\D/g, '')
     const phoneE164 = cleanPhone ? `+1${cleanPhone}` : null
+
+    if (phoneE164 && !smsConsent) {
+      setError('Please check the SMS consent box to receive text reminders, or leave the phone number blank.')
+      setLoading(false)
+      return
+    }
 
     const { data: profile, error: insertError } = await supabase.from('profiles').insert({
       user_id: user.id,
@@ -133,7 +140,10 @@ export default function OnboardingPage() {
               <input
                 type="tel"
                 value={phone}
-                onChange={e => setPhone(e.target.value)}
+                onChange={e => {
+                  setPhone(e.target.value)
+                  if (!e.target.value.trim()) setSmsConsent(false)
+                }}
                 className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900 text-base
                            focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
                 placeholder="(555) 555-0100"
@@ -141,6 +151,30 @@ export default function OnboardingPage() {
                 inputMode="tel"
               />
               <p className="text-xs text-warm-300 mt-1">US numbers only during beta. Optional but recommended.</p>
+
+              <label className="mt-3 flex gap-3 rounded-xl border border-cream-300 bg-white/70 p-3 text-sm text-warm-600">
+                <input
+                  type="checkbox"
+                  checked={smsConsent}
+                  disabled={!phone.trim()}
+                  required={Boolean(phone.trim())}
+                  onChange={e => setSmsConsent(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-cream-300 text-warm-700 focus:ring-warm-500 disabled:opacity-40"
+                />
+                <span>
+                  Yes, I agree to receive Context SMS messages for daily planning prompts, reminder cues,
+                  activity confirmations, no-response notices, and daily summaries. Message frequency varies.
+                  Message and data rates may apply. Reply HELP for help or STOP to opt out. See{' '}
+                  <a href="/privacy" target="_blank" className="underline decoration-cream-400 underline-offset-2">
+                    Privacy Policy
+                  </a>{' '}
+                  and{' '}
+                  <a href="/terms" target="_blank" className="underline decoration-cream-400 underline-offset-2">
+                    Terms
+                  </a>
+                  .
+                </span>
+              </label>
             </div>
 
             {error && (
