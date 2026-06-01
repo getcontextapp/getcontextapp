@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import type { EmailOtpType } from '@supabase/supabase-js'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -39,20 +40,22 @@ export default function LoginPage() {
     setVerifying(true)
     setError(null)
 
-    const { error } = await supabase.auth.verifyOtp({
-      email,
-      token: code.replace(/\D/g, ''),
-      type: 'email',
-    })
+    const token = code.replace(/\D/g, '')
+    const otpTypes: EmailOtpType[] = ['email', 'signup', 'magiclink']
+    let lastError: Error | null = null
 
-    if (error) {
-      setError('That code did not work. Please check the email and try again.')
-      setVerifying(false)
-      return
+    for (const type of otpTypes) {
+      const { error } = await supabase.auth.verifyOtp({ email, token, type })
+      if (!error) {
+        router.push('/')
+        router.refresh()
+        return
+      }
+      lastError = error
     }
 
-    router.push('/')
-    router.refresh()
+    setError(lastError?.message || 'That code did not work. Please check the email and try again.')
+    setVerifying(false)
   }
 
   return (
