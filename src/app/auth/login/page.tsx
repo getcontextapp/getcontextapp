@@ -113,7 +113,7 @@ export default function LoginPage() {
             <h2 className="font-serif text-xl font-semibold text-warm-900">Check your email</h2>
             <p className="text-warm-500 text-sm leading-relaxed">
               We sent a sign-in link to <strong className="text-warm-700">{email}</strong>.
-              Tap the link, or enter the 6-digit code from the email here.
+              Tap the link, or enter the sign-in code from the email here.
             </p>
 
             <div className="text-left">
@@ -125,7 +125,7 @@ export default function LoginPage() {
                 type="text"
                 required
                 value={code}
-                onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
                 className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900 text-center text-2xl tracking-[0.3em]
                            focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100
                            placeholder:text-warm-300 transition-colors"
@@ -141,7 +141,7 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={verifying || code.length !== 6}
+              disabled={verifying || code.length < 6}
               className="w-full py-3.5 rounded-xl bg-warm-700 text-cream-100 font-medium text-base
                          hover:bg-warm-900 active:scale-[0.98] transition-all
                          disabled:opacity-50 disabled:cursor-not-allowed"
