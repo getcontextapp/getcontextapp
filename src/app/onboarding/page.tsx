@@ -150,19 +150,20 @@ export default function OnboardingPage() {
                 autoComplete="tel"
                 inputMode="tel"
               />
-              <p className="text-xs text-warm-300 mt-1">US numbers only during beta. Optional but recommended.</p>
+              <p className="text-xs text-warm-300 mt-1">
+                US numbers only during beta. Optional. SMS consent is not required to use Context.
+              </p>
 
-              <label className="mt-3 flex gap-3 rounded-xl border border-cream-300 bg-white/70 p-3 text-sm text-warm-600">
+              <label className="mt-3 flex gap-3 rounded-xl border-2 border-cream-300 bg-white/80 p-3 text-sm text-warm-600">
                 <input
                   type="checkbox"
                   checked={smsConsent}
-                  disabled={!phone.trim()}
                   required={Boolean(phone.trim())}
                   onChange={e => setSmsConsent(e.target.checked)}
-                  className="mt-1 h-4 w-4 rounded border-cream-300 text-warm-700 focus:ring-warm-500 disabled:opacity-40"
+                  className="mt-1 h-5 w-5 rounded border-2 border-warm-500 text-warm-700 focus:ring-warm-500"
                 />
                 <span>
-                  Yes, I agree to receive Context SMS messages for daily planning prompts, reminder cues,
+                  Optional SMS opt-in: Yes, I agree to receive Context SMS messages for daily planning prompts, reminder cues,
                   activity confirmations, no-response notices, and daily summaries. Message frequency varies.
                   Message and data rates may apply. Reply HELP for help or STOP to opt out. See{' '}
                   <a href="/privacy" target="_blank" className="underline decoration-cream-400 underline-offset-2">
