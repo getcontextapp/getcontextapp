@@ -56,6 +56,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const [selectedDay, setSelectedDay] = useState<string>(getLocalDateKey(new Date(), careProfile.timezone))
   const [testSending, setTestSending] = useState(false)
   const [testSent, setTestSent] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [smsTestState, setSmsTestState] = useState<Record<string, 'idle' | 'sending' | 'sent' | 'error'>>({})
   const [smsTestError, setSmsTestError] = useState<string | null>(null)
   const [joinCode, setJoinCode] = useState('')
@@ -105,7 +106,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const openPlanCount = sortedPlannedActivities.filter(item => item.status === 'planned' || item.status === 'not_now').length
 
   async function sendTestSummary() {
-    if (!careProfile.phone_e164) return
+    if (!careProfile.phone_e164 && !carePhone.trim()) return
     setTestSending(true)
     try {
       await fetch('/api/daily-summary', {
@@ -182,11 +183,15 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
 
     setCarePhoneSaving(true)
     setCarePhoneError(null)
-    await supabase
+    const { error } = await supabase
       .from('profiles')
       .update({ phone_e164: phoneE164 })
       .eq('id', careProfile.id)
     setCarePhoneSaving(false)
+    if (error) {
+      setCarePhoneError(error.message)
+      return
+    }
     setCarePhoneSaved(true)
     setTimeout(() => setCarePhoneSaved(false), 2500)
   }
@@ -213,10 +218,12 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
           </div>
           <div className="flex gap-2">
             <button
-              onClick={handleSignOut}
-              className="text-sm text-warm-400 hover:text-warm-700 px-3 py-1.5 rounded-lg hover:bg-cream-100 transition-colors"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Open settings"
+              className="w-10 h-10 rounded-full bg-cream-100 text-lg flex items-center justify-center
+                         hover:bg-cream-200 active:scale-95 transition-all"
             >
-              Sign out
+              ⚙
             </button>
           </div>
         </div>
@@ -402,110 +409,131 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
           )}
         </div>
 
-        {/* SMS Summary test */}
-        <div className="card p-5 space-y-3 animate-fade-up delay-500">
-          <div className="flex items-start gap-3">
-            <span className="text-2xl">📱</span>
-            <div>
-              <p className="font-medium text-warm-900 text-sm">Daily SMS summary</p>
-              <p className="text-warm-400 text-xs mt-0.5">
-                Sent to {careProfile.phone_e164 ?? 'no phone on file'} each evening.
-              </p>
+      </div>
+
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-end" onClick={e => { if (e.target === e.currentTarget) setSettingsOpen(false) }}>
+          <div className="absolute inset-0 bg-warm-900/30 backdrop-blur-sm" />
+          <div className="relative w-full max-w-lg mx-auto bg-cream-50 rounded-t-3xl pt-2 pb-10 px-6 shadow-float animate-fade-up max-h-[92svh] overflow-y-auto">
+            <div className="w-10 h-1 bg-warm-300 rounded-pill mx-auto mb-6" />
+
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="font-serif text-xl font-semibold text-warm-900">Settings</h2>
+              <button onClick={() => setSettingsOpen(false)} className="text-warm-400 hover:text-warm-700 text-2xl">×</button>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <p className="font-medium text-warm-900 text-sm">Care partner phone</p>
+                <p className="text-warm-400 text-xs mt-0.5">
+                  Used for daily summaries and no-response alerts.
+                </p>
+                <input
+                  type="tel"
+                  value={carePhone}
+                  onChange={e => {
+                    setCarePhone(e.target.value)
+                    if (!e.target.value.trim()) setCareSmsConsent(false)
+                  }}
+                  className="mt-3 w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900
+                             focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
+                  placeholder="(555) 555-0100"
+                  autoComplete="tel"
+                  inputMode="tel"
+                />
+                <label className="mt-3 flex gap-3 rounded-xl border border-cream-300 bg-white/70 p-3 text-xs leading-5 text-warm-600">
+                  <input
+                    type="checkbox"
+                    checked={careSmsConsent}
+                    required={Boolean(carePhone.trim())}
+                    onChange={e => setCareSmsConsent(e.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-warm-500 text-warm-700 focus:ring-warm-500"
+                  />
+                  <span>
+                    Optional SMS opt-in: I agree to receive Context care partner texts. Message frequency varies.
+                    Message and data rates may apply. Reply HELP for help or STOP to opt out.
+                  </span>
+                </label>
+                {carePhoneError && (
+                  <p className="mt-3 text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{carePhoneError}</p>
+                )}
+                <button
+                  onClick={saveCarePhone}
+                  disabled={carePhoneSaving}
+                  className="mt-3 w-full py-2.5 rounded-xl border-2 border-warm-300 text-warm-700 text-sm font-medium
+                             hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
+                >
+                  {carePhoneSaving ? 'Saving...' : carePhoneSaved ? 'Saved!' : 'Save care partner phone'}
+                </button>
+              </div>
+
+              <div className="border-t border-cream-200 pt-5 space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">📱</span>
+                  <div>
+                    <p className="font-medium text-warm-900 text-sm">Daily SMS summary</p>
+                    <p className="text-warm-400 text-xs mt-0.5">
+                      Sent to {careProfile.phone_e164 ?? (carePhone || 'no phone on file')} each evening.
+                    </p>
+                  </div>
+                </div>
+                {careProfile.phone_e164 || carePhone ? (
+                  <button
+                    onClick={sendTestSummary}
+                    disabled={testSending}
+                    className="w-full py-2.5 rounded-xl border-2 border-warm-300 text-warm-700 text-sm font-medium
+                               hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
+                  >
+                    {testSending ? 'Sending…' : testSent ? 'Sent! Check your phone ✓' : 'Send test summary now'}
+                  </button>
+                ) : (
+                  <p className="text-xs text-terracotta-500">Add a phone number to enable SMS.</p>
+                )}
+              </div>
+
+              <div className="border-t border-cream-200 pt-5 space-y-3">
+                <div>
+                  <p className="font-medium text-warm-900 text-sm">MVP SMS flow tests</p>
+                  <p className="text-warm-400 text-xs mt-0.5">
+                    Temporary tools for testing the morning plan, follow-up, pending reminders, and care partner alerts.
+                  </p>
+                </div>
+                {[
+                  ['morning_prompt', 'Send morning plan prompt'],
+                  ['morning_followup', 'Send no-response follow-up'],
+                  ['pending_reminder', 'Send pending plan reminder'],
+                  ['care_partner_no_response', 'Send care partner no-response alert'],
+                ].map(([action, label]) => {
+                  const state = smsTestState[action] ?? 'idle'
+                  return (
+                    <button
+                      key={action}
+                      onClick={() => sendSmsTest(action)}
+                      disabled={state === 'sending'}
+                      className="w-full py-2.5 rounded-xl border-2 border-cream-300 text-warm-700 text-sm font-medium
+                                 hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
+                    >
+                      {state === 'sending' ? 'Sending...' : state === 'sent' ? 'Sent! Check phone' : state === 'error' ? 'Try again' : label}
+                    </button>
+                  )
+                })}
+                {smsTestError && (
+                  <p className="text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{smsTestError}</p>
+                )}
+              </div>
+
+              <div className="border-t border-cream-200 pt-4">
+                <button
+                  onClick={handleSignOut}
+                  className="w-full py-3 text-warm-400 text-sm hover:text-terracotta-500 transition-colors"
+                >
+                  Sign out
+                </button>
+              </div>
             </div>
           </div>
-          {careProfile.phone_e164 ? (
-            <button
-              onClick={sendTestSummary}
-              disabled={testSending}
-              className="w-full py-2.5 rounded-xl border-2 border-warm-300 text-warm-700 text-sm font-medium
-                         hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
-            >
-              {testSending ? 'Sending…' : testSent ? 'Sent! Check your phone ✓' : 'Send test summary now'}
-            </button>
-          ) : (
-            <p className="text-xs text-terracotta-500">Add a phone number in settings to enable SMS.</p>
-          )}
         </div>
-
-        {/* Care partner phone */}
-        <div className="card p-5 space-y-3 animate-fade-up delay-500">
-          <div>
-            <p className="font-medium text-warm-900 text-sm">Care partner phone</p>
-            <p className="text-warm-400 text-xs mt-0.5">
-              Used for daily summaries and no-response alerts.
-            </p>
-          </div>
-          <input
-            type="tel"
-            value={carePhone}
-            onChange={e => {
-              setCarePhone(e.target.value)
-              if (!e.target.value.trim()) setCareSmsConsent(false)
-            }}
-            className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900
-                       focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
-            placeholder="(555) 555-0100"
-            autoComplete="tel"
-            inputMode="tel"
-          />
-          <label className="flex gap-3 rounded-xl border border-cream-300 bg-white/70 p-3 text-xs leading-5 text-warm-600">
-            <input
-              type="checkbox"
-              checked={careSmsConsent}
-              required={Boolean(carePhone.trim())}
-              onChange={e => setCareSmsConsent(e.target.checked)}
-              className="mt-1 h-4 w-4 rounded border-warm-500 text-warm-700 focus:ring-warm-500"
-            />
-            <span>
-              Optional SMS opt-in: I agree to receive Context care partner texts. Message frequency varies.
-              Message and data rates may apply. Reply HELP for help or STOP to opt out.
-            </span>
-          </label>
-          {carePhoneError && (
-            <p className="text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{carePhoneError}</p>
-          )}
-          <button
-            onClick={saveCarePhone}
-            disabled={carePhoneSaving}
-            className="w-full py-2.5 rounded-xl border-2 border-warm-300 text-warm-700 text-sm font-medium
-                       hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
-          >
-            {carePhoneSaving ? 'Saving...' : carePhoneSaved ? 'Saved!' : 'Save care partner phone'}
-          </button>
-        </div>
-
-        {/* MVP SMS flow tests */}
-        <div className="card p-5 space-y-3 animate-fade-up delay-500">
-          <div>
-            <p className="font-medium text-warm-900 text-sm">MVP SMS flow tests</p>
-            <p className="text-warm-400 text-xs mt-0.5">
-              Trigger each message now before turning on the automatic schedule.
-            </p>
-          </div>
-          {[
-            ['morning_prompt', 'Send morning plan prompt'],
-            ['morning_followup', 'Send no-response follow-up'],
-            ['pending_reminder', 'Send pending plan reminder'],
-            ['care_partner_no_response', 'Send care partner no-response alert'],
-          ].map(([action, label]) => {
-            const state = smsTestState[action] ?? 'idle'
-            return (
-              <button
-                key={action}
-                onClick={() => sendSmsTest(action)}
-                disabled={state === 'sending'}
-                className="w-full py-2.5 rounded-xl border-2 border-cream-300 text-warm-700 text-sm font-medium
-                           hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
-              >
-                {state === 'sending' ? 'Sending...' : state === 'sent' ? 'Sent! Check phone' : state === 'error' ? 'Try again' : label}
-              </button>
-            )
-          })}
-          {smsTestError && (
-            <p className="text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{smsTestError}</p>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   )
 }

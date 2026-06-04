@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createServerClient, createServiceClient } from '@/lib/supabase-server'
 import { getLocalDateKey } from '@/lib/dates'
+import { getLinkedMciProfile } from '@/lib/household-links'
 import CarePartnerClient from './CarePartnerClient'
 
 export default async function CarePartnerPage() {
@@ -19,13 +20,7 @@ export default async function CarePartnerPage() {
 
   const serviceSupabase = createServiceClient()
 
-  // Get the MCI user in the same household
-  const { data: mciProfile } = await serviceSupabase
-    .from('profiles')
-    .select('*')
-    .eq('household_id', profile.household_id)
-    .eq('role', 'mci_user')
-    .maybeSingle()
+  const linkedProfile = await getLinkedMciProfile(serviceSupabase, profile.household_id, profile.id)
 
   // Fetch last 7 days of activities
   const sevenDaysAgo = new Date()
@@ -45,18 +40,6 @@ export default async function CarePartnerPage() {
     .eq('household_id', profile.household_id)
     .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
     .order('created_at', { ascending: true })
-
-  let linkedProfile = mciProfile ?? null
-  if (!linkedProfile) {
-    const { data: householdProfiles } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('household_id', profile.household_id)
-      .neq('id', profile.id)
-      .limit(1)
-
-    linkedProfile = householdProfiles?.[0] ?? null
-  }
 
   // Fetch household
   const { data: household } = await supabase

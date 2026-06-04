@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient, createServiceClient } from '@/lib/supabase-server'
 import { ACTIVITY_TILES } from '@/types'
 import { getLocalDateKey } from '@/lib/dates'
+import { getLinkedMciProfile } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 import {
   APP_URL,
@@ -34,12 +35,7 @@ export async function POST(request: NextRequest) {
   }
 
   const service = createServiceClient()
-  const { data: mciProfile } = await service
-    .from('profiles')
-    .select('*')
-    .eq('household_id', careProfile.household_id)
-    .eq('role', 'mci_user')
-    .maybeSingle()
+  const mciProfile = await getLinkedMciProfile(service, careProfile.household_id, careProfile.id)
 
   if (!mciProfile) {
     return NextResponse.json({ error: 'No MCI household member is linked yet' }, { status: 400 })
