@@ -23,19 +23,29 @@ async function getPendingItems(supabase: ReturnType<typeof createServiceClient>,
     .order('created_at', { ascending: true })
 }
 
-async function handleConfirmation(supabase: ReturnType<typeof createServiceClient>, profile: any, confirmation: 'yes' | 'not_now' | 'skip') {
-  const { data: pendingItems } = await getPendingItems(supabase, profile)
+function pendingItemLabel(item: any) {
+  return item.note?.trim() || item.label || 'Plan item'
+}
 
-  if (!pendingItems || pendingItems.length === 0) {
-    return `I do not see anything waiting in today's plan. You can open Context here: ${APP_URL}/mci-user`
-  }
+function buildPendingChoiceReply(pendingItems: any[], actionLabel = 'finished') {
+  const lines = pendingItems
+    .slice(0, 6)
+    .map((item, index) => `${index + 1}. ${pendingItemLabel(item)}`)
 
-  if (pendingItems.length > 1) {
-    return `I see ${pendingItems.length} things waiting. Please open Context to choose which one: ${APP_URL}/mci-user`
-  }
+  return [
+    `I see a few things waiting:`,
+    ...lines,
+    ``,
+    `Reply with the number you ${actionLabel}, or open Context: ${APP_URL}/mci-user`,
+  ].join('\n')
+}
 
-  const item = pendingItems[0]
-
+async function updatePendingItem(
+  supabase: ReturnType<typeof createServiceClient>,
+  profile: any,
+  item: any,
+  confirmation: 'yes' | 'not_now' | 'skip',
+) {
   if (confirmation === 'not_now') {
     await supabase.from('planned_activities').update({
       status: 'not_now',
@@ -83,7 +93,41 @@ async function handleConfirmation(supabase: ReturnType<typeof createServiceClien
     },
   })
 
-  return 'Thank you. I marked that as done in Context.'
+  return `Thank you. I marked "${pendingItemLabel(item)}" as done in Context.`
+}
+
+async function handleNumberedSelection(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
+  const match = body.trim().match(/^\d+$/)
+  if (!match) return null
+
+  const selectedIndex = Number(match[0]) - 1
+  const { data: pendingItems } = await getPendingItems(supabase, profile)
+
+  if (!pendingItems || pendingItems.length === 0) {
+    return `I do not see anything waiting in today's plan. You can open Context here: ${APP_URL}/mci-user`
+  }
+
+  const item = pendingItems[selectedIndex]
+  if (!item) {
+    return buildPendingChoiceReply(pendingItems)
+  }
+
+  return updatePendingItem(supabase, profile, item, 'yes')
+}
+
+async function handleConfirmation(supabase: ReturnType<typeof createServiceClient>, profile: any, confirmation: 'yes' | 'not_now' | 'skip') {
+  const { data: pendingItems } = await getPendingItems(supabase, profile)
+
+  if (!pendingItems || pendingItems.length === 0) {
+    return `I do not see anything waiting in today's plan. You can open Context here: ${APP_URL}/mci-user`
+  }
+
+  if (pendingItems.length > 1) {
+    const actionLabel = confirmation === 'not_now' ? 'want to leave for later' : confirmation === 'skip' ? 'want to set aside' : 'finished'
+    return buildPendingChoiceReply(pendingItems, actionLabel)
+  }
+
+  return updatePendingItem(supabase, profile, pendingItems[0], confirmation)
 }
 
 export async function POST(request: NextRequest) {
@@ -119,6 +163,21 @@ export async function POST(request: NextRequest) {
     twilioSid: messageSid,
     status: 'received',
   })
+
+  const numberedSelectionReply = await handleNumberedSelection(supabase, profile, body)
+  if (numberedSelectionReply) {
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: numberedSelectionReply,
+      status: 'twiml_reply',
+      metadata: { selected_by_number: body },
+    })
+    return xmlResponse(numberedSelectionReply)
+  }
 
   const parsed = await parseSmsPlanReply(body, profile.display_name, profile.timezone)
 
