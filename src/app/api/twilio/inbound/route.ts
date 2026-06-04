@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { parseSmsPlanReply } from '@/lib/anthropic'
 import { getLocalDateKey } from '@/lib/dates'
 import { buildPlanSavedReply, logSmsMessage, normalizePhone, twiml, APP_URL } from '@/lib/sms'
-import { getSmsProfileByPhone } from '@/lib/household-links'
+import { getSmsProfileMatch } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 import type { ActivityCategory, ExpectedPeriod } from '@/types'
 
@@ -139,9 +139,11 @@ export async function POST(request: NextRequest) {
 
   if (!from || !body) return xmlResponse('Context received an empty message.')
 
-  const profile = await getSmsProfileByPhone(supabase, from)
+  const match = await getSmsProfileMatch(supabase, from)
+  const profile = match.profile
 
   if (!profile?.household_id) {
+    console.error('[SMS] Unmatched inbound reply:', match.debug)
     await logSmsMessage(supabase, {
       direction: 'inbound',
       purpose: 'inbound_other',
@@ -149,8 +151,16 @@ export async function POST(request: NextRequest) {
       body,
       twilioSid: messageSid,
       status: 'unmatched',
+      metadata: { match_debug: match.debug },
     })
-    return xmlResponse(`Context could not match this phone number to a profile. Open Context here: ${APP_URL}`)
+    return xmlResponse([
+      `Context could not match this phone number to a profile. Open Context here: ${APP_URL}`,
+      ``,
+      `Debug: incoming ${match.debug.inputLast10 ? `...${match.debug.inputLast10.slice(-4)}` : 'blank'}, checked ${match.debug.profileCount} profiles and ${match.debug.smsCount} SMS records.`,
+      `Profile phones: ${match.debug.profilePhoneEndings.join(', ') || 'none'}`,
+      `SMS phones: ${match.debug.smsPhoneEndings.join(', ') || 'none'}`,
+      match.debug.error ? `Error: ${match.debug.error}` : null,
+    ].filter(Boolean).join('\n'))
   }
 
   await logSmsMessage(supabase, {

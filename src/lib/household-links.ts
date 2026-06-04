@@ -13,6 +13,37 @@ export type SmsReadyProfile = Profile & {
   household_id: string
 }
 
+export interface SmsProfileMatchDebug {
+  inputPhone: string
+  inputDigits: string
+  inputLast10: string
+  profileCount: number
+  profilePhoneEndings: string[]
+  smsCount: number
+  smsPhoneEndings: string[]
+  matchedBy: 'profile_phone' | 'sms_history' | null
+  error?: string
+}
+
+export interface SmsProfileMatchResult {
+  profile: Profile | null
+  debug: SmsProfileMatchDebug
+}
+
+function phoneDigits(value: string | null | undefined) {
+  return normalizePhone(value ?? '').replace(/\D/g, '')
+}
+
+function phoneLast10(value: string | null | undefined) {
+  const digits = phoneDigits(value)
+  return digits.length >= 10 ? digits.slice(-10) : digits
+}
+
+function phoneEnding(value: string | null | undefined) {
+  const last10 = phoneLast10(value)
+  return last10 ? `...${last10.slice(-4)}` : 'blank'
+}
+
 export async function getHouseholdMembers(
   supabase: SupabaseClient,
   householdId: string | null,
@@ -70,43 +101,79 @@ export async function getSmsProfileByPhone(
   supabase: SupabaseClient,
   phoneE164: string,
 ) {
-  const normalized = normalizePhone(phoneE164)
-  const digits = normalized.replace(/\D/g, '')
-  const withoutCountry = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
-  const matchesPhone = (value: string | null) => {
-    if (!value) return false
-    const valueDigits = normalizePhone(value).replace(/\D/g, '')
-    const valueWithoutCountry = valueDigits.length === 11 && valueDigits.startsWith('1')
-      ? valueDigits.slice(1)
-      : valueDigits
+  const result = await getSmsProfileMatch(supabase, phoneE164)
+  return result.profile
+}
 
-    return valueDigits === digits || valueWithoutCountry === withoutCountry
+export async function getSmsProfileMatch(
+  supabase: SupabaseClient,
+  phoneE164: string,
+): Promise<SmsProfileMatchResult> {
+  const normalized = normalizePhone(phoneE164)
+  const digits = phoneDigits(normalized)
+  const last10 = phoneLast10(normalized)
+  const debug: SmsProfileMatchDebug = {
+    inputPhone: normalized,
+    inputDigits: digits,
+    inputLast10: last10,
+    profileCount: 0,
+    profilePhoneEndings: [],
+    smsCount: 0,
+    smsPhoneEndings: [],
+    matchedBy: null,
   }
 
-  const { data } = await supabase
+  const matchesPhone = (value: string | null) => {
+    const valueLast10 = phoneLast10(value)
+    return Boolean(last10 && valueLast10 && valueLast10 === last10)
+  }
+
+  const { data, error } = await supabase
     .from('profiles')
     .select('*')
     .not('phone_e164', 'is', null)
     .not('household_id', 'is', null)
     .order('created_at', { ascending: true })
 
-  const profiles = ((data ?? []) as Profile[]).filter(profile => matchesPhone(profile.phone_e164))
+  if (error) {
+    debug.error = `profiles: ${error.message}`
+    console.error('[SMS] Profile lookup failed:', error.message)
+    return { profile: null, debug }
+  }
+
+  const allProfiles = (data ?? []) as Profile[]
+  debug.profileCount = allProfiles.length
+  debug.profilePhoneEndings = Array.from(new Set(allProfiles.map(profile => phoneEnding(profile.phone_e164)))).slice(0, 8)
+
+  const profiles = allProfiles.filter(profile => matchesPhone(profile.phone_e164))
   const directMatch =
     profiles.find(profile => profile.role === 'mci_user') ??
     profiles[0] ??
     null
 
-  if (directMatch) return directMatch
+  if (directMatch) {
+    debug.matchedBy = 'profile_phone'
+    return { profile: directMatch, debug }
+  }
 
-  const { data: recentSms } = await supabase
+  const { data: recentSms, error: recentSmsError } = await supabase
     .from('sms_messages')
     .select('profile_id, phone_e164')
     .not('profile_id', 'is', null)
     .order('created_at', { ascending: false })
-    .limit(100)
+    .limit(250)
+
+  if (recentSmsError) {
+    debug.error = `sms_messages: ${recentSmsError.message}`
+    console.error('[SMS] SMS history lookup failed:', recentSmsError.message)
+    return { profile: null, debug }
+  }
+
+  debug.smsCount = recentSms?.length ?? 0
+  debug.smsPhoneEndings = Array.from(new Set((recentSms ?? []).map(message => phoneEnding(message.phone_e164)))).slice(0, 8)
 
   const smsOwner = (recentSms ?? []).find(message => matchesPhone(message.phone_e164))
-  if (!smsOwner?.profile_id) return null
+  if (!smsOwner?.profile_id) return { profile: null, debug }
 
   const { data: smsProfile } = await supabase
     .from('profiles')
@@ -115,5 +182,6 @@ export async function getSmsProfileByPhone(
     .not('household_id', 'is', null)
     .maybeSingle()
 
-  return (smsProfile as Profile | null) ?? null
+  debug.matchedBy = smsProfile ? 'sms_history' : null
+  return { profile: (smsProfile as Profile | null) ?? null, debug }
 }
