@@ -12,7 +12,6 @@ interface Props {
   mciProfile: Profile | null
   initialActivities: ActivityLog[]
   initialPlannedActivities: PlannedActivity[]
-  household: { join_code: string; name: string } | null
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -49,7 +48,7 @@ const PERIOD_ORDER: Record<string, number> = {
   anytime: 3,
 }
 
-export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities, household }: Props) {
+export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities }: Props) {
   const supabase = createClient()
   const [activities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
@@ -59,9 +58,6 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [smsTestState, setSmsTestState] = useState<Record<string, 'idle' | 'sending' | 'sent' | 'error'>>({})
   const [smsTestError, setSmsTestError] = useState<string | null>(null)
-  const [joinCode, setJoinCode] = useState('')
-  const [joinLoading, setJoinLoading] = useState(false)
-  const [joinError, setJoinError] = useState<string | null>(null)
   const [carePhone, setCarePhone] = useState(careProfile.phone_e164 ?? '')
   const [careSmsConsent, setCareSmsConsent] = useState(Boolean(careProfile.phone_e164))
   const [carePhoneSaving, setCarePhoneSaving] = useState(false)
@@ -149,29 +145,6 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
     }
   }
 
-  async function reconnectHousehold(e: React.FormEvent) {
-    e.preventDefault()
-    setJoinLoading(true)
-    setJoinError(null)
-    try {
-      const response = await fetch('/api/households/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ join_code: joinCode }),
-      })
-      const result = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        setJoinError(result.error || 'Could not join that household.')
-        return
-      }
-      window.location.reload()
-    } catch {
-      setJoinError('Could not join that household.')
-    } finally {
-      setJoinLoading(false)
-    }
-  }
-
   async function saveCarePhone() {
     const phoneValue = carePhone.trim()
     const phoneE164 = phoneValue ? normalizePhone(phoneValue) : null
@@ -252,35 +225,11 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
         ) : (
           <div className="card p-5 border-2 border-dashed border-cream-300 animate-fade-up">
             <p className="text-warm-500 text-sm text-center">
-              {activities.length > 0
-                ? `Household linked. ${todayActivities.length} ${todayActivities.length === 1 ? 'activity' : 'activities'} logged today.`
-                : 'No MCI household member is linked yet.'}
+              Household setup needs attention.
             </p>
-            <form onSubmit={reconnectHousehold} className="mt-4 space-y-3">
-              <p className="text-xs leading-5 text-warm-400 text-center">
-                Enter the MCI member&apos;s household code to reconnect this care partner account.
-              </p>
-              <input
-                type="text"
-                value={joinCode}
-                onChange={e => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
-                className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900 text-xl
-                           font-mono tracking-[0.3em] text-center
-                           focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
-                placeholder="ABC123"
-                maxLength={6}
-                autoCapitalize="characters"
-              />
-              {joinError && <p className="text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{joinError}</p>}
-              <button
-                type="submit"
-                disabled={joinLoading || joinCode.length !== 6}
-                className="w-full py-2.5 rounded-xl bg-warm-700 text-cream-100 text-sm font-medium
-                           hover:bg-warm-900 active:scale-[0.98] transition-all disabled:opacity-50"
-              >
-                {joinLoading ? 'Connecting...' : 'Connect household'}
-              </button>
-            </form>
+            <p className="mt-2 text-xs leading-5 text-warm-400 text-center">
+              The care partner account is signed in, but the linked MCI member is not showing in this household.
+            </p>
           </div>
         )}
 

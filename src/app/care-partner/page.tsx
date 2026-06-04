@@ -41,20 +41,12 @@ export default async function CarePartnerPage() {
     .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
     .order('created_at', { ascending: true })
 
-  // Fetch household
-  const { data: household } = await supabase
-    .from('households')
-    .select('*')
-    .eq('id', profile.household_id)
-    .single()
-
   return (
     <CarePartnerClient
       careProfile={profile}
       mciProfile={linkedProfile}
       initialActivities={activities ?? []}
       initialPlannedActivities={plannedActivities ?? []}
-      household={household ?? null}
     />
   )
 }
