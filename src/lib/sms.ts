@@ -1,7 +1,23 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SmsPurpose } from '@/types'
 
-export const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
+const DEFAULT_APP_URL = 'https://getcontextapp.com'
+
+export function getAppUrl() {
+  const rawUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || DEFAULT_APP_URL
+
+  try {
+    const url = new URL(rawUrl)
+    if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+      return DEFAULT_APP_URL
+    }
+    return `${url.origin}${url.pathname}`.replace(/\/$/, '')
+  } catch {
+    return DEFAULT_APP_URL
+  }
+}
+
+export const APP_URL = getAppUrl()
 
 export function normalizePhone(phone: string) {
   const trimmed = phone.trim()
@@ -77,4 +93,3 @@ export function twiml(message: string) {
 
   return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escaped}</Message></Response>`
 }
-

@@ -4,9 +4,8 @@ import { sendSMS, buildPendingPlanReminderMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
 import { trackEvent } from '@/lib/analytics'
 import { getLocalDateKey } from '@/lib/dates'
-import { logSmsMessage } from '@/lib/sms'
+import { APP_URL, logSmsMessage } from '@/lib/sms'
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
 const CRON_SECRET = process.env.CRON_SECRET
 
 // Called by Vercel Cron every 15 minutes

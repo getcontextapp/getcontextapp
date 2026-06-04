@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { ActivityCategory, ExpectedPeriod, ParsedSmsPlanReply } from '@/types'
+import { APP_URL } from '@/lib/sms'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const MODEL = 'claude-3-5-haiku-latest'
@@ -90,7 +91,7 @@ function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
       intent: 'unclear',
       items: [],
       confirmation: null,
-      reply: `I could not turn that into a clear Context plan yet. You can open Context to add it directly: ${process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'}/mci-user`,
+      reply: `I could not turn that into a clear Context plan yet. You can open Context to add it directly: ${APP_URL}/mci-user`,
     }
   }
 

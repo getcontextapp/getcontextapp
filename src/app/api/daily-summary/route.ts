@@ -5,9 +5,8 @@ import { sendSMS, buildDailySummaryMessage, buildPersonalDailySummaryMessage } f
 import { ACTIVITY_TILES } from '@/types'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
-import { logSmsMessage } from '@/lib/sms'
+import { APP_URL, logSmsMessage } from '@/lib/sms'
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://getcontextapp.com'
 const CRON_SECRET = process.env.CRON_SECRET
 
 // POST: manual trigger (from care partner UI)
