@@ -4,6 +4,7 @@ import { sendSMS, buildPendingPlanReminderMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
 import { trackEvent } from '@/lib/analytics'
 import { getLocalDateKey } from '@/lib/dates'
+import { getMciProfilesForSms } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 
 const CRON_SECRET = process.env.CRON_SECRET
@@ -18,15 +19,9 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient()
 
-  // Find all MCI users with a phone number and a household
-  const { data: mciProfiles } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('role', 'mci_user')
-    .not('phone_e164', 'is', null)
-    .not('household_id', 'is', null)
+  const mciProfiles = await getMciProfilesForSms(supabase)
 
-  if (!mciProfiles || mciProfiles.length === 0) {
+  if (mciProfiles.length === 0) {
     return NextResponse.json({ processed: 0 })
   }
 

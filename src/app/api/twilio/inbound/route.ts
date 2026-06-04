@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { parseSmsPlanReply } from '@/lib/anthropic'
 import { getLocalDateKey } from '@/lib/dates'
 import { buildPlanSavedReply, logSmsMessage, normalizePhone, twiml, APP_URL } from '@/lib/sms'
+import { getSmsProfileByPhone } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 import type { ActivityCategory, ExpectedPeriod } from '@/types'
 
@@ -94,12 +95,7 @@ export async function POST(request: NextRequest) {
 
   if (!from || !body) return xmlResponse('Context received an empty message.')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('phone_e164', from)
-    .eq('role', 'mci_user')
-    .maybeSingle()
+  const profile = await getSmsProfileByPhone(supabase, from)
 
   if (!profile?.household_id) {
     await logSmsMessage(supabase, {
@@ -203,4 +199,3 @@ export async function POST(request: NextRequest) {
 
   return xmlResponse(reply)
 }
-

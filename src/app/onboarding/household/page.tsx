@@ -61,19 +61,17 @@ export default function HouseholdPage() {
       const profile = await getMyProfile()
       if (!profile) throw new Error('Profile not found')
 
-      const code = joinCode.trim().toUpperCase()
-      const { data: household, error: hErr } = await supabase
-        .from('households')
-        .select('id')
-        .eq('join_code', code)
-        .single()
+      const response = await fetch('/api/households/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ join_code: joinCode }),
+      })
+      const result = await response.json().catch(() => ({}))
 
-      if (hErr || !household) throw new Error('No household found with that code. Double-check and try again.')
-
-      await supabase.from('profiles').update({ household_id: household.id }).eq('id', profile.id)
+      if (!response.ok) throw new Error(result.error || 'No household found with that code. Double-check and try again.')
 
       trackClientEvent('household_joined', {
-        household_id: household.id,
+        household_id: result.household_id,
       })
 
       router.push('/')

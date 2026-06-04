@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendSMS } from '@/lib/twilio'
 import { buildCarePartnerNoResponse, buildMorningFollowup, logSmsMessage } from '@/lib/sms'
 import { getLocalDateKey } from '@/lib/dates'
+import { getCarePartnersForHousehold, getMciProfilesForSms } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 
 const CRON_SECRET = process.env.CRON_SECRET
@@ -52,14 +53,9 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient()
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('role', 'mci_user')
-    .not('phone_e164', 'is', null)
-    .not('household_id', 'is', null)
+  const profiles = await getMciProfilesForSms(supabase)
 
-  if (!profiles) return NextResponse.json({ processed: 0, mciFollowups: 0, careAlerts: 0 })
+  if (profiles.length === 0) return NextResponse.json({ processed: 0, mciFollowups: 0, careAlerts: 0 })
 
   let mciFollowups = 0
   let careAlerts = 0
@@ -94,14 +90,10 @@ export async function GET(request: NextRequest) {
     }
 
     if (hour >= 12 && !(await hasPurposeToday(supabase, profile, 'care_partner_no_response'))) {
-      const { data: carePartners } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('household_id', profile.household_id)
-        .eq('role', 'care_partner')
-        .not('phone_e164', 'is', null)
+      const carePartners = await getCarePartnersForHousehold(supabase, profile.household_id)
 
-      for (const carePartner of carePartners ?? []) {
+      for (const carePartner of carePartners) {
+        if (!carePartner.phone_e164) continue
         const body = buildCarePartnerNoResponse(profile.display_name)
         const { sid, status } = await sendSMS(carePartner.phone_e164, body)
         await logSmsMessage(supabase, {
@@ -130,4 +122,3 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ processed: profiles.length, mciFollowups, careAlerts })
 }
-

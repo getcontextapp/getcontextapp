@@ -254,11 +254,11 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             <p className="text-warm-500 text-sm text-center">
               {activities.length > 0
                 ? `Household linked. ${todayActivities.length} ${todayActivities.length === 1 ? 'activity' : 'activities'} logged today.`
-                : <>No household member linked yet. Share join code: <strong className="font-mono">{household?.join_code}</strong></>}
+                : 'No MCI household member is linked yet.'}
             </p>
             <form onSubmit={reconnectHousehold} className="mt-4 space-y-3">
               <p className="text-xs leading-5 text-warm-400 text-center">
-                If the MCI member already created a household, enter their join code to reconnect this care partner account.
+                Enter the MCI member&apos;s household code to reconnect this care partner account.
               </p>
               <input
                 type="text"

@@ -5,6 +5,7 @@ import { sendSMS, buildDailySummaryMessage, buildPersonalDailySummaryMessage } f
 import { ACTIVITY_TILES } from '@/types'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
+import { getLinkedMciProfile } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 
 const CRON_SECRET = process.env.CRON_SECRET
@@ -88,13 +89,7 @@ export async function GET(request: NextRequest) {
 async function sendDailySummary(householdId: string, careProfile: any) {
   const supabase = createServiceClient()
 
-  // Get MCI user profile
-  const { data: mciProfile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('household_id', householdId)
-    .eq('role', 'mci_user')
-    .single()
+  const mciProfile = await getLinkedMciProfile(supabase, householdId, careProfile.id)
 
   // Get today's activities
   const todayRange = getUtcRangeForLocalDay(new Date(), careProfile.timezone)

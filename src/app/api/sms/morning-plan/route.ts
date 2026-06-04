@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendSMS } from '@/lib/twilio'
 import { buildMorningPrompt, logSmsMessage } from '@/lib/sms'
 import { getLocalDateKey } from '@/lib/dates'
+import { getMciProfilesForSms } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 
 const CRON_SECRET = process.env.CRON_SECRET
@@ -22,14 +23,9 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient()
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('role', 'mci_user')
-    .not('phone_e164', 'is', null)
-    .not('household_id', 'is', null)
+  const profiles = await getMciProfilesForSms(supabase)
 
-  if (!profiles) return NextResponse.json({ processed: 0, sent: 0 })
+  if (profiles.length === 0) return NextResponse.json({ processed: 0, sent: 0 })
 
   let sent = 0
 
@@ -76,4 +72,3 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ processed: profiles.length, sent })
 }
-

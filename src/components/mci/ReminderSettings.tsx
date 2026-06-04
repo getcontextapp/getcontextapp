@@ -52,9 +52,9 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="absolute inset-0 bg-warm-900/30 backdrop-blur-sm" />
-      <div className="relative w-full max-w-lg mx-auto bg-cream-50 rounded-t-3xl pt-2 pb-10 px-6 shadow-float animate-fade-up">
+      <div className="relative w-full max-w-lg mx-auto bg-cream-50 rounded-t-3xl sm:rounded-3xl pt-2 pb-10 px-6 shadow-float animate-fade-up max-h-[92svh] overflow-y-auto">
         <div className="w-10 h-1 bg-warm-300 rounded-pill mx-auto mb-6" />
 
         <div className="flex items-center justify-between mb-6">
