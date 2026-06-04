@@ -55,6 +55,8 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const [selectedDay, setSelectedDay] = useState<string>(getLocalDateKey(new Date(), careProfile.timezone))
   const [testSending, setTestSending] = useState(false)
   const [testSent, setTestSent] = useState(false)
+  const [smsTestState, setSmsTestState] = useState<Record<string, 'idle' | 'sending' | 'sent' | 'error'>>({})
+  const [smsTestError, setSmsTestError] = useState<string | null>(null)
 
   const byDay = groupByDay(activities, careProfile.timezone)
 
@@ -109,6 +111,32 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
       setTimeout(() => setTestSent(false), 4000)
     } catch {}
     setTestSending(false)
+  }
+
+  async function sendSmsTest(action: string) {
+    setSmsTestError(null)
+    setSmsTestState(current => ({ ...current, [action]: 'sending' }))
+    try {
+      const response = await fetch('/api/sms/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setSmsTestState(current => ({ ...current, [action]: 'error' }))
+        setSmsTestError(result.error || 'SMS test failed.')
+        return
+      }
+
+      setSmsTestState(current => ({ ...current, [action]: 'sent' }))
+      setTimeout(() => {
+        setSmsTestState(current => ({ ...current, [action]: 'idle' }))
+      }, 4000)
+    } catch {
+      setSmsTestState(current => ({ ...current, [action]: 'error' }))
+      setSmsTestError('SMS test failed.')
+    }
   }
 
   async function handleSignOut() {
@@ -319,6 +347,38 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             </button>
           ) : (
             <p className="text-xs text-terracotta-500">Add a phone number in settings to enable SMS.</p>
+          )}
+        </div>
+
+        {/* MVP SMS flow tests */}
+        <div className="card p-5 space-y-3 animate-fade-up delay-500">
+          <div>
+            <p className="font-medium text-warm-900 text-sm">MVP SMS flow tests</p>
+            <p className="text-warm-400 text-xs mt-0.5">
+              Trigger each message now before turning on the automatic schedule.
+            </p>
+          </div>
+          {[
+            ['morning_prompt', 'Send morning plan prompt'],
+            ['morning_followup', 'Send no-response follow-up'],
+            ['pending_reminder', 'Send pending plan reminder'],
+            ['care_partner_no_response', 'Send care partner no-response alert'],
+          ].map(([action, label]) => {
+            const state = smsTestState[action] ?? 'idle'
+            return (
+              <button
+                key={action}
+                onClick={() => sendSmsTest(action)}
+                disabled={state === 'sending'}
+                className="w-full py-2.5 rounded-xl border-2 border-cream-300 text-warm-700 text-sm font-medium
+                           hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
+              >
+                {state === 'sending' ? 'Sending...' : state === 'sent' ? 'Sent! Check phone' : state === 'error' ? 'Try again' : label}
+              </button>
+            )
+          })}
+          {smsTestError && (
+            <p className="text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{smsTestError}</p>
           )}
         </div>
       </div>
