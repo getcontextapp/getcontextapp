@@ -153,14 +153,9 @@ export async function POST(request: NextRequest) {
       status: 'unmatched',
       metadata: { match_debug: match.debug },
     })
-    return xmlResponse([
-      `Context could not match this phone number to a profile. Open Context here: ${APP_URL}`,
-      ``,
-      `Debug: incoming ${match.debug.inputLast10 ? `...${match.debug.inputLast10.slice(-4)}` : 'blank'}, checked ${match.debug.profileCount} profiles and ${match.debug.smsCount} SMS records.`,
-      `Profile phones: ${match.debug.profilePhoneEndings.join(', ') || 'none'}`,
-      `SMS phones: ${match.debug.smsPhoneEndings.join(', ') || 'none'}`,
-      match.debug.error ? `Error: ${match.debug.error}` : null,
-    ].filter(Boolean).join('\n'))
+    return xmlResponse(
+      `I could not connect this number to a Context profile yet. Open Context here: ${APP_URL}`,
+    )
   }
 
   await logSmsMessage(supabase, {
