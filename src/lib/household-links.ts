@@ -128,6 +128,23 @@ export async function getSmsProfileMatch(
     return Boolean(last10 && valueLast10 && valueLast10 === last10)
   }
 
+  const { data: rpcProfiles, error: rpcError } = await supabase
+    .rpc('find_sms_profile_by_phone', { incoming_phone: normalized })
+
+  if (rpcError) {
+    console.error('[SMS] RPC profile lookup failed:', rpcError.message)
+  }
+
+  const rpcMatch = Array.isArray(rpcProfiles) ? (rpcProfiles[0] as Profile | undefined) : null
+  if (rpcMatch?.household_id) {
+    debug.profileCount = rpcProfiles.length
+    debug.profilePhoneEndings = Array.from(
+      new Set((rpcProfiles as Profile[]).map(profile => phoneEnding(profile.phone_e164))),
+    ).slice(0, 8)
+    debug.matchedBy = 'profile_phone'
+    return { profile: rpcMatch, debug }
+  }
+
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
@@ -136,7 +153,10 @@ export async function getSmsProfileMatch(
     .order('created_at', { ascending: true })
 
   if (error) {
-    debug.error = `profiles: ${error.message}`
+    debug.error = [
+      rpcError ? `rpc: ${rpcError.message}` : null,
+      `profiles: ${error.message}`,
+    ].filter(Boolean).join(' | ')
     console.error('[SMS] Profile lookup failed:', error.message)
     return { profile: null, debug }
   }
