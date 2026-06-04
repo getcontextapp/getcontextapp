@@ -73,22 +73,24 @@ export async function getSmsProfileByPhone(
   const normalized = normalizePhone(phoneE164)
   const digits = normalized.replace(/\D/g, '')
   const withoutCountry = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
-  const candidates = Array.from(new Set([
-    normalized,
-    phoneE164,
-    digits ? `+${digits}` : null,
-    digits,
-    withoutCountry,
-  ].filter(Boolean))) as string[]
+  const matchesPhone = (value: string | null) => {
+    if (!value) return false
+    const valueDigits = normalizePhone(value).replace(/\D/g, '')
+    const valueWithoutCountry = valueDigits.length === 11 && valueDigits.startsWith('1')
+      ? valueDigits.slice(1)
+      : valueDigits
+
+    return valueDigits === digits || valueWithoutCountry === withoutCountry
+  }
 
   const { data } = await supabase
     .from('profiles')
     .select('*')
-    .in('phone_e164', candidates)
+    .not('phone_e164', 'is', null)
     .not('household_id', 'is', null)
     .order('created_at', { ascending: true })
 
-  const profiles = (data ?? []) as Profile[]
+  const profiles = ((data ?? []) as Profile[]).filter(profile => matchesPhone(profile.phone_e164))
   const directMatch =
     profiles.find(profile => profile.role === 'mci_user') ??
     profiles[0] ??
@@ -98,19 +100,18 @@ export async function getSmsProfileByPhone(
 
   const { data: recentSms } = await supabase
     .from('sms_messages')
-    .select('profile_id')
-    .in('phone_e164', candidates)
+    .select('profile_id, phone_e164')
     .not('profile_id', 'is', null)
     .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(100)
 
-  if (!recentSms?.profile_id) return null
+  const smsOwner = (recentSms ?? []).find(message => matchesPhone(message.phone_e164))
+  if (!smsOwner?.profile_id) return null
 
   const { data: smsProfile } = await supabase
     .from('profiles')
     .select('*')
-    .eq('id', recentSms.profile_id)
+    .eq('id', smsOwner.profile_id)
     .not('household_id', 'is', null)
     .maybeSingle()
 
