@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No phone number on file' }, { status: 400 })
   }
 
-  const result = await sendDailySummary(careProfile.household_id, careProfile)
+  const result = await sendDailySummary(careProfile.household_id, careProfile, supabase)
   await trackEvent(supabase, {
     eventName: 'daily_summary_test_requested',
     profile: careProfile,
@@ -86,10 +86,10 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ sent })
 }
 
-async function sendDailySummary(householdId: string, careProfile: any) {
+async function sendDailySummary(householdId: string, careProfile: any, profileSupabase = createServiceClient()) {
   const supabase = createServiceClient()
 
-  const mciProfile = await getLinkedMciProfile(supabase, householdId, careProfile.id)
+  const mciProfile = await getLinkedMciProfile(profileSupabase, householdId, careProfile.id)
 
   // Get today's activities
   const todayRange = getUtcRangeForLocalDay(new Date(), careProfile.timezone)

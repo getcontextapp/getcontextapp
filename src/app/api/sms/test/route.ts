@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
   }
 
   const service = createServiceClient()
-  const household = await getHouseholdMembers(service, careProfile.household_id, careProfile.id)
+  const household = await getHouseholdMembers(supabase, careProfile.household_id, careProfile.id)
   const mciProfile = household.mciProfile
 
   if (!mciProfile) {

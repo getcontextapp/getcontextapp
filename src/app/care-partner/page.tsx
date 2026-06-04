@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { createServerClient, createServiceClient } from '@/lib/supabase-server'
+import { createServerClient } from '@/lib/supabase-server'
 import { getLocalDateKey } from '@/lib/dates'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import CarePartnerClient from './CarePartnerClient'
@@ -18,9 +18,7 @@ export default async function CarePartnerPage() {
 
   if (!profile || profile.role !== 'care_partner') redirect('/')
 
-  const serviceSupabase = createServiceClient()
-
-  const linkedProfile = await getLinkedMciProfile(serviceSupabase, profile.household_id, profile.id)
+  const linkedProfile = await getLinkedMciProfile(supabase, profile.household_id, profile.id)
 
   // Fetch last 7 days of activities
   const sevenDaysAgo = new Date()
