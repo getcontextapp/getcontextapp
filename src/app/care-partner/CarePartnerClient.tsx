@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey } from '@/lib/dates'
+import { normalizePhone } from '@/lib/sms'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, PlannedActivity } from '@/types'
 
@@ -57,6 +58,14 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const [testSent, setTestSent] = useState(false)
   const [smsTestState, setSmsTestState] = useState<Record<string, 'idle' | 'sending' | 'sent' | 'error'>>({})
   const [smsTestError, setSmsTestError] = useState<string | null>(null)
+  const [joinCode, setJoinCode] = useState('')
+  const [joinLoading, setJoinLoading] = useState(false)
+  const [joinError, setJoinError] = useState<string | null>(null)
+  const [carePhone, setCarePhone] = useState(careProfile.phone_e164 ?? '')
+  const [careSmsConsent, setCareSmsConsent] = useState(Boolean(careProfile.phone_e164))
+  const [carePhoneSaving, setCarePhoneSaving] = useState(false)
+  const [carePhoneSaved, setCarePhoneSaved] = useState(false)
+  const [carePhoneError, setCarePhoneError] = useState<string | null>(null)
 
   const byDay = groupByDay(activities, careProfile.timezone)
 
@@ -139,6 +148,49 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
     }
   }
 
+  async function reconnectHousehold(e: React.FormEvent) {
+    e.preventDefault()
+    setJoinLoading(true)
+    setJoinError(null)
+    try {
+      const response = await fetch('/api/households/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ join_code: joinCode }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setJoinError(result.error || 'Could not join that household.')
+        return
+      }
+      window.location.reload()
+    } catch {
+      setJoinError('Could not join that household.')
+    } finally {
+      setJoinLoading(false)
+    }
+  }
+
+  async function saveCarePhone() {
+    const phoneValue = carePhone.trim()
+    const phoneE164 = phoneValue ? normalizePhone(phoneValue) : null
+
+    if (phoneE164 && !careSmsConsent) {
+      setCarePhoneError('Please check SMS consent to receive care partner texts, or leave the phone number blank.')
+      return
+    }
+
+    setCarePhoneSaving(true)
+    setCarePhoneError(null)
+    await supabase
+      .from('profiles')
+      .update({ phone_e164: phoneE164 })
+      .eq('id', careProfile.id)
+    setCarePhoneSaving(false)
+    setCarePhoneSaved(true)
+    setTimeout(() => setCarePhoneSaved(false), 2500)
+  }
+
   async function handleSignOut() {
     await supabase.auth.signOut()
     window.location.href = '/auth/login'
@@ -197,6 +249,31 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                 ? `Household linked. ${todayActivities.length} ${todayActivities.length === 1 ? 'activity' : 'activities'} logged today.`
                 : <>No household member linked yet. Share join code: <strong className="font-mono">{household?.join_code}</strong></>}
             </p>
+            <form onSubmit={reconnectHousehold} className="mt-4 space-y-3">
+              <p className="text-xs leading-5 text-warm-400 text-center">
+                If the MCI member already created a household, enter their join code to reconnect this care partner account.
+              </p>
+              <input
+                type="text"
+                value={joinCode}
+                onChange={e => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
+                className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900 text-xl
+                           font-mono tracking-[0.3em] text-center
+                           focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
+                placeholder="ABC123"
+                maxLength={6}
+                autoCapitalize="characters"
+              />
+              {joinError && <p className="text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{joinError}</p>}
+              <button
+                type="submit"
+                disabled={joinLoading || joinCode.length !== 6}
+                className="w-full py-2.5 rounded-xl bg-warm-700 text-cream-100 text-sm font-medium
+                           hover:bg-warm-900 active:scale-[0.98] transition-all disabled:opacity-50"
+              >
+                {joinLoading ? 'Connecting...' : 'Connect household'}
+              </button>
+            </form>
           </div>
         )}
 
@@ -348,6 +425,53 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
           ) : (
             <p className="text-xs text-terracotta-500">Add a phone number in settings to enable SMS.</p>
           )}
+        </div>
+
+        {/* Care partner phone */}
+        <div className="card p-5 space-y-3 animate-fade-up delay-500">
+          <div>
+            <p className="font-medium text-warm-900 text-sm">Care partner phone</p>
+            <p className="text-warm-400 text-xs mt-0.5">
+              Used for daily summaries and no-response alerts.
+            </p>
+          </div>
+          <input
+            type="tel"
+            value={carePhone}
+            onChange={e => {
+              setCarePhone(e.target.value)
+              if (!e.target.value.trim()) setCareSmsConsent(false)
+            }}
+            className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900
+                       focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
+            placeholder="(555) 555-0100"
+            autoComplete="tel"
+            inputMode="tel"
+          />
+          <label className="flex gap-3 rounded-xl border border-cream-300 bg-white/70 p-3 text-xs leading-5 text-warm-600">
+            <input
+              type="checkbox"
+              checked={careSmsConsent}
+              required={Boolean(carePhone.trim())}
+              onChange={e => setCareSmsConsent(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-warm-500 text-warm-700 focus:ring-warm-500"
+            />
+            <span>
+              Optional SMS opt-in: I agree to receive Context care partner texts. Message frequency varies.
+              Message and data rates may apply. Reply HELP for help or STOP to opt out.
+            </span>
+          </label>
+          {carePhoneError && (
+            <p className="text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{carePhoneError}</p>
+          )}
+          <button
+            onClick={saveCarePhone}
+            disabled={carePhoneSaving}
+            className="w-full py-2.5 rounded-xl border-2 border-warm-300 text-warm-700 text-sm font-medium
+                       hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
+          >
+            {carePhoneSaving ? 'Saving...' : carePhoneSaved ? 'Saved!' : 'Save care partner phone'}
+          </button>
         </div>
 
         {/* MVP SMS flow tests */}
