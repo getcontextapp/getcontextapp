@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { normalizePhone } from '@/lib/sms'
 import type { Profile } from '@/types'
 
 interface Props {
@@ -24,14 +25,26 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
   const supabase = createClient()
   const [gap, setGap] = useState(profile.reminder_gap_minutes)
   const [summaryTime, setSummaryTime] = useState(profile.daily_summary_time || DEFAULT_SUMMARY_TIME)
+  const [phone, setPhone] = useState(profile.phone_e164 ?? '')
+  const [smsConsent, setSmsConsent] = useState(Boolean(profile.phone_e164))
+  const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
   async function handleSave() {
+    const phoneValue = phone.trim()
+    const phoneE164 = phoneValue ? normalizePhone(phoneValue) : null
+
+    if (phoneE164 && !smsConsent) {
+      setError('Please check the SMS consent box to receive text reminders, or leave the phone number blank.')
+      return
+    }
+
+    setError(null)
     setSaving(true)
     await supabase
       .from('profiles')
-      .update({ reminder_gap_minutes: gap, daily_summary_time: summaryTime })
+      .update({ reminder_gap_minutes: gap, daily_summary_time: summaryTime, phone_e164: phoneE164 })
       .eq('id', profile.id)
     setSaving(false)
     setSaved(true)
@@ -50,6 +63,43 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
         </div>
 
         <div className="space-y-6">
+          {/* Phone number */}
+          <div>
+            <label htmlFor="mci-phone" className="block text-sm font-medium text-warm-700 mb-1">
+              Mobile phone
+            </label>
+            <p className="text-xs text-warm-400 mb-3">
+              Used for daily plan texts, reminder cues, and summaries. Optional.
+            </p>
+            <input
+              id="mci-phone"
+              type="tel"
+              value={phone}
+              onChange={e => {
+                setPhone(e.target.value)
+                if (!e.target.value.trim()) setSmsConsent(false)
+              }}
+              className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900
+                         focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
+              placeholder="(555) 555-0100"
+              autoComplete="tel"
+              inputMode="tel"
+            />
+            <label className="mt-3 flex gap-3 rounded-xl border border-cream-300 bg-white/70 p-3 text-xs leading-5 text-warm-600">
+              <input
+                type="checkbox"
+                checked={smsConsent}
+                required={Boolean(phone.trim())}
+                onChange={e => setSmsConsent(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-warm-500 text-warm-700 focus:ring-warm-500"
+              />
+              <span>
+                Optional SMS opt-in: I agree to receive Context SMS messages. Message frequency varies.
+                Message and data rates may apply. Reply HELP for help or STOP to opt out.
+              </span>
+            </label>
+          </div>
+
           {/* Re-entry reminder gap */}
           <div>
             <label className="block text-sm font-medium text-warm-700 mb-1">
@@ -103,6 +153,10 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
                          focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
             />
           </div>
+
+          {error && (
+            <p className="text-terracotta-500 text-sm bg-terracotta-50 px-3 py-2 rounded-lg">{error}</p>
+          )}
 
           <button
             onClick={handleSave}

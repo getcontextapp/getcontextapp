@@ -41,8 +41,8 @@ export async function POST(request: NextRequest) {
     .eq('role', 'mci_user')
     .maybeSingle()
 
-  if (!mciProfile?.phone_e164) {
-    return NextResponse.json({ error: 'The MCI household member needs a phone number first' }, { status: 400 })
+  if (!mciProfile) {
+    return NextResponse.json({ error: 'No MCI household member is linked yet' }, { status: 400 })
   }
 
   if (action === 'care_partner_no_response') {
@@ -70,6 +70,10 @@ export async function POST(request: NextRequest) {
     })
 
     return NextResponse.json({ sent: Boolean(sid), status, error, body })
+  }
+
+  if (!mciProfile.phone_e164) {
+    return NextResponse.json({ error: `${mciProfile.display_name} needs a phone number before MCI SMS tests can send` }, { status: 400 })
   }
 
   let body = ''
