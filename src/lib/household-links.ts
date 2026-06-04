@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Profile } from '@/types'
+import { normalizePhone } from '@/lib/sms'
 
 export interface HouseholdMembers {
   mciProfile: Profile | null
@@ -69,10 +70,21 @@ export async function getSmsProfileByPhone(
   supabase: SupabaseClient,
   phoneE164: string,
 ) {
+  const normalized = normalizePhone(phoneE164)
+  const digits = normalized.replace(/\D/g, '')
+  const withoutCountry = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
+  const candidates = Array.from(new Set([
+    normalized,
+    phoneE164,
+    digits ? `+${digits}` : null,
+    digits,
+    withoutCountry,
+  ].filter(Boolean))) as string[]
+
   const { data } = await supabase
     .from('profiles')
     .select('*')
-    .eq('phone_e164', phoneE164)
+    .in('phone_e164', candidates)
     .not('household_id', 'is', null)
     .order('created_at', { ascending: true })
 
