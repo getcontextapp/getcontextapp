@@ -89,9 +89,30 @@ export async function getSmsProfileByPhone(
     .order('created_at', { ascending: true })
 
   const profiles = (data ?? []) as Profile[]
-  return (
+  const directMatch =
     profiles.find(profile => profile.role === 'mci_user') ??
     profiles[0] ??
     null
-  )
+
+  if (directMatch) return directMatch
+
+  const { data: recentSms } = await supabase
+    .from('sms_messages')
+    .select('profile_id')
+    .in('phone_e164', candidates)
+    .not('profile_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!recentSms?.profile_id) return null
+
+  const { data: smsProfile } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', recentSms.profile_id)
+    .not('household_id', 'is', null)
+    .maybeSingle()
+
+  return (smsProfile as Profile | null) ?? null
 }
