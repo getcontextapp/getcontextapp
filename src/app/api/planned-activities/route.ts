@@ -66,7 +66,7 @@ export async function PATCH(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!profile?.household_id) return NextResponse.json({ error: 'No household linked' }, { status: 400 })
 
-  const body: { id?: string; action?: 'confirm' | 'not_now' | 'skipped' | 'reopen' } = await request.json()
+  const body: { id?: string; action?: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' } = await request.json()
   if (!body.id || !body.action) {
     return NextResponse.json({ error: 'Missing planned activity or action' }, { status: 400 })
   }
@@ -80,6 +80,46 @@ export async function PATCH(request: NextRequest) {
 
   if (fetchError || !plannedActivity) {
     return NextResponse.json({ error: fetchError?.message ?? 'Planned activity not found' }, { status: 404 })
+  }
+
+  if (body.action === 'delete') {
+    const confirmedActivityLogId = plannedActivity.confirmed_activity_log_id
+    const { error } = await supabase
+      .from('planned_activities')
+      .delete()
+      .eq('id', plannedActivity.id)
+      .eq('household_id', profile.household_id)
+
+    if (error) {
+      return NextResponse.json({ error: error.message ?? 'Delete failed' }, { status: 500 })
+    }
+
+    if (confirmedActivityLogId) {
+      await supabase
+        .from('activity_logs')
+        .delete()
+        .eq('id', confirmedActivityLogId)
+        .eq('household_id', profile.household_id)
+    }
+
+    await trackEvent(supabase, {
+      eventName: 'planned_activity_deleted',
+      profile,
+      userId: user.id,
+      properties: {
+        planned_activity_id: plannedActivity.id,
+        deleted_activity_id: confirmedActivityLogId,
+        category: plannedActivity.category,
+        previous_status: plannedActivity.status,
+      },
+    })
+
+    return NextResponse.json({
+      plannedActivity: null,
+      activity: null,
+      deleted_planned_activity_id: plannedActivity.id,
+      deleted_activity_id: confirmedActivityLogId,
+    })
   }
 
   if (body.action === 'reopen') {

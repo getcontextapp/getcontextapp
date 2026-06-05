@@ -42,6 +42,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [showSettings, setShowSettings] = useState(false)
   const [showHousehold, setShowHousehold] = useState(false)
   const [generatingCard, setGeneratingCard] = useState(false)
+  const [deleteCandidate, setDeleteCandidate] = useState<PlannedActivity | null>(null)
+  const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null)
 
   const now = new Date()
   const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening'
@@ -76,7 +78,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setSelectedTile(null)
   }, [])
 
-  const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen') => {
+  const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete') => {
     const res = await fetch('/api/planned-activities', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -85,8 +87,18 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
     if (!res.ok) return
 
-    const result: { plannedActivity: PlannedActivity; activity: ActivityLog | null; deleted_activity_id?: string | null } = await res.json()
-    setPlannedActivities(prev => prev.map(item => item.id === result.plannedActivity.id ? result.plannedActivity : item))
+    const result: {
+      plannedActivity: PlannedActivity | null
+      activity: ActivityLog | null
+      deleted_planned_activity_id?: string | null
+      deleted_activity_id?: string | null
+    } = await res.json()
+
+    if (result.deleted_planned_activity_id) {
+      setPlannedActivities(prev => prev.filter(item => item.id !== result.deleted_planned_activity_id))
+    } else if (result.plannedActivity) {
+      setPlannedActivities(prev => prev.map(item => item.id === result.plannedActivity!.id ? result.plannedActivity! : item))
+    }
 
     if (result.deleted_activity_id) {
       setActivities(prev => prev.filter(activity => activity.id !== result.deleted_activity_id))
@@ -115,6 +127,17 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       setGeneratingCard(false)
     }
   }, [])
+
+  const handleDeleteConfirmed = useCallback(async () => {
+    if (!deleteCandidate) return
+    setDeletingPlanId(deleteCandidate.id)
+    try {
+      await handlePlanAction(deleteCandidate, 'delete')
+      setDeleteCandidate(null)
+    } finally {
+      setDeletingPlanId(null)
+    }
+  }, [deleteCandidate, handlePlanAction])
 
   async function handleSignOut() {
     await supabase.auth.signOut()
@@ -243,16 +266,22 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                       </div>
                     </div>
                     {isConfirmed ? (
-                      <div className="mt-3">
+                      <div className="grid grid-cols-2 gap-2 mt-3">
                         <button
                           onClick={() => handlePlanAction(item, 'reopen')}
-                          className="w-full rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                          className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
                         >
                           Undo done
                         </button>
+                        <button
+                          onClick={() => setDeleteCandidate(item)}
+                          className="rounded-xl border border-terracotta-200 text-terracotta-700 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                        >
+                          Delete
+                        </button>
                       </div>
-                    ) : !isSkipped && (
-                      <div className="grid grid-cols-2 gap-2 mt-3">
+                    ) : !isSkipped ? (
+                      <div className="grid grid-cols-3 gap-2 mt-3">
                         <button
                           onClick={() => handlePlanAction(item, 'confirm')}
                           className="rounded-xl bg-warm-700 text-cream-100 py-2 text-sm font-medium active:scale-[0.98] transition-all"
@@ -264,6 +293,21 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                           className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
                         >
                           Not yet
+                        </button>
+                        <button
+                          onClick={() => setDeleteCandidate(item)}
+                          className="rounded-xl border border-terracotta-200 text-terracotta-700 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-3">
+                        <button
+                          onClick={() => setDeleteCandidate(item)}
+                          className="w-full rounded-xl border border-terracotta-200 text-terracotta-700 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                        >
+                          Delete
                         </button>
                       </div>
                     )}
@@ -358,6 +402,32 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           household={household}
           onClose={() => setShowHousehold(false)}
         />
+      )}
+
+      {deleteCandidate && (
+        <div className="fixed inset-0 z-50 bg-warm-900/35 px-5 flex items-center justify-center">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-float border border-cream-200">
+            <p className="font-serif text-lg font-semibold text-warm-900">Delete this task?</p>
+            <p className="text-sm text-warm-500 mt-2">
+              This removes "{deleteCandidate.note || deleteCandidate.label}" from today's plan.
+            </p>
+            <div className="grid grid-cols-2 gap-2 mt-5">
+              <button
+                onClick={() => setDeleteCandidate(null)}
+                className="rounded-xl border border-warm-200 text-warm-600 py-2.5 text-sm font-medium active:scale-[0.98] transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirmed}
+                disabled={deletingPlanId === deleteCandidate.id}
+                className="rounded-xl bg-terracotta-600 text-cream-50 py-2.5 text-sm font-medium active:scale-[0.98] transition-all disabled:opacity-60"
+              >
+                {deletingPlanId === deleteCandidate.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

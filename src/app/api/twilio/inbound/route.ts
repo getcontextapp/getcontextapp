@@ -35,6 +35,16 @@ async function getPendingItems(supabase: ReturnType<typeof createServiceClient>,
     .order('created_at', { ascending: true })
 }
 
+async function getTodaysPlannedItems(supabase: ReturnType<typeof createServiceClient>, profile: any) {
+  return supabase
+    .from('planned_activities')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+    .order('created_at', { ascending: true })
+    .limit(8)
+}
+
 function pendingItemLabel(item: any) {
   return item.note?.trim() || item.label || 'Plan item'
 }
@@ -55,7 +65,7 @@ function parseNumberedSelections(body: string) {
     .toLowerCase()
     .replace(/\b(and|plus)\b/g, ',')
     .replace(/[&+/]/g, ',')
-  const hasConfirmationCue = /\b(done|did|finished|finish|completed|complete|yes|yep|all done)\b/.test(normalized)
+  const hasConfirmationCue = /\b(done|did|finished|finish|completed|complete|yes|yep|all done|delete|remove)\b/.test(normalized)
 
   if (/^(all|both|everything|the rest|all done)$/.test(normalized)) return 'all' as const
 
@@ -93,6 +103,33 @@ function buildCompletedChoiceReply(completedItems: any[]) {
     ...lines,
     ``,
     `Reply with the number or numbers to move back to waiting.`,
+  ].join('\n')
+}
+
+function statusLabel(status: string) {
+  if (status === 'confirmed') return 'done'
+  if (status === 'not_now') return 'later'
+  if (status === 'skipped') return 'skipped'
+  return 'waiting'
+}
+
+function buildDeleteChoiceReply(items: any[]) {
+  const lines = items
+    .slice(0, 8)
+    .map((item, index) => `${index + 1}. ${pendingItemLabel(item)} (${statusLabel(item.status)})`)
+
+  return [
+    `Which task should I delete?`,
+    ...lines,
+    ``,
+    `Reply with the number or numbers to delete, or say cancel.`,
+  ].join('\n')
+}
+
+function buildDeleteConfirmReply(items: any[]) {
+  return [
+    `Are you sure you want to delete ${formatItemList(items.map(pendingItemLabel))}?`,
+    `Reply YES to delete, or NO to keep it.`,
   ].join('\n')
 }
 
@@ -154,6 +191,18 @@ async function updatePendingItem(
 
 function isUndoRequest(body: string) {
   return /\b(undo|mistake|not done|did not do|didn't do|accident|accidentally)\b/i.test(body)
+}
+
+function isDeleteRequest(body: string) {
+  return /\b(delete|remove|erase|trash|drop)\b/i.test(body)
+}
+
+function isCancelReply(body: string) {
+  return /\b(no|nope|cancel|stop|keep|never mind|nevermind|do not|don't)\b/i.test(body.trim())
+}
+
+function isConfirmDeleteReply(body: string) {
+  return /\b(yes|y|yep|yeah|confirm|sure|delete|remove|go ahead|do it)\b/i.test(body.trim())
 }
 
 async function reopenMostRecentConfirmedItem(supabase: ReturnType<typeof createServiceClient>, profile: any) {
@@ -249,6 +298,118 @@ async function handleUndoSelection(supabase: ReturnType<typeof createServiceClie
   return reopenConfirmedItems(supabase, profile, selectedItems)
 }
 
+async function deletePlannedItems(
+  supabase: ReturnType<typeof createServiceClient>,
+  profile: any,
+  items: any[],
+) {
+  const labels = items.map(pendingItemLabel)
+  const plannedIds = items.map(item => item.id).filter(Boolean)
+  const linkedActivityIds = items
+    .map(item => item.confirmed_activity_log_id)
+    .filter(Boolean)
+
+  if (plannedIds.length > 0) {
+    await supabase
+      .from('planned_activities')
+      .delete()
+      .eq('household_id', profile.household_id)
+      .in('id', plannedIds)
+  }
+
+  if (linkedActivityIds.length > 0) {
+    await supabase
+      .from('activity_logs')
+      .delete()
+      .eq('household_id', profile.household_id)
+      .in('id', linkedActivityIds)
+  }
+
+  for (const item of items) {
+    await trackEvent(supabase, {
+      eventName: 'sms_planned_activity_deleted',
+      profile,
+      userId: profile.user_id,
+      properties: {
+        planned_activity_id: item.id,
+        deleted_activity_id: item.confirmed_activity_log_id ?? null,
+        category: item.category,
+        previous_status: item.status,
+      },
+    })
+  }
+
+  return `Okay. I deleted ${formatItemList(labels)} from today's Context plan.`
+}
+
+async function handleDeleteRequest(supabase: ReturnType<typeof createServiceClient>, profile: any) {
+  const { data: items } = await getTodaysPlannedItems(supabase, profile)
+  if (!items || items.length === 0) {
+    return `I do not see any tasks in today's Context plan. You can open Context here: ${APP_URL}/mci-user`
+  }
+
+  return buildDeleteChoiceReply(items)
+}
+
+async function handleDeleteSelection(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
+  const selections = parseNumberedSelections(body)
+  if (!selections) return null
+
+  const recentDeletePrompt = await hasRecentSmsPurpose(supabase, profile, 'inbound_confirmation', {
+    delete_prompt: true,
+  })
+  if (!recentDeletePrompt) return null
+
+  const { data: items } = await getTodaysPlannedItems(supabase, profile)
+  if (!items || items.length === 0) return null
+
+  const selectedIndexes = selections === 'all'
+    ? items.map((_, index) => index)
+    : selections.map(selection => selection - 1)
+
+  const selectedItems = selectedIndexes
+    .map(index => items[index])
+    .filter(Boolean)
+
+  if (selectedItems.length === 0) return buildDeleteChoiceReply(items)
+
+  return {
+    reply: buildDeleteConfirmReply(selectedItems),
+    selectedItems,
+  }
+}
+
+async function handleDeleteConfirmation(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
+  const recentMetadata = await getRecentSmsMetadata(supabase, profile, 'inbound_confirmation', {
+    delete_confirm_prompt: true,
+  })
+  if (!recentMetadata) return null
+
+  if (isCancelReply(body)) return 'Okay. I did not delete anything.'
+  if (!isConfirmDeleteReply(body)) {
+    return 'Please reply YES to delete, or NO to keep it.'
+  }
+
+  const itemIds = Array.isArray(recentMetadata.delete_item_ids)
+    ? recentMetadata.delete_item_ids.filter((id): id is string => typeof id === 'string')
+    : []
+  if (itemIds.length === 0) return 'I could not find those tasks anymore. Nothing was deleted.'
+
+  const { data: items } = await supabase
+    .from('planned_activities')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .in('id', itemIds)
+
+  if (!items || items.length === 0) return 'I could not find those tasks anymore. Nothing was deleted.'
+
+  const orderedItems = itemIds
+    .map(id => items.find(item => item.id === id))
+    .filter(Boolean)
+
+  return deletePlannedItems(supabase, profile, orderedItems)
+}
+
 async function hasRecentSmsPurpose(
   supabase: ReturnType<typeof createServiceClient>,
   profile: any,
@@ -270,6 +431,28 @@ async function hasRecentSmsPurpose(
     const metadata = message.metadata as Record<string, unknown>
     return Object.entries(metadataMatch).every(([key, value]) => metadata?.[key] === value)
   }))
+}
+
+async function getRecentSmsMetadata(
+  supabase: ReturnType<typeof createServiceClient>,
+  profile: any,
+  purpose: string,
+  metadataMatch: Record<string, unknown>,
+) {
+  const since = new Date(Date.now() - 15 * 60 * 1000).toISOString()
+  const { data } = await supabase
+    .from('sms_messages')
+    .select('metadata')
+    .eq('profile_id', profile.id)
+    .eq('direction', 'outbound')
+    .eq('purpose', purpose)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  return (data ?? [])
+    .map(message => message.metadata as Record<string, unknown>)
+    .find(metadata => Object.entries(metadataMatch).every(([key, value]) => metadata?.[key] === value)) ?? null
 }
 
 async function handleNumberedSelection(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
@@ -425,6 +608,60 @@ export async function POST(request: NextRequest) {
       metadata: { blocked_role: profile.role },
     })
     return xmlResponse(CARE_PARTNER_LIMIT_REPLY)
+  }
+
+  const deleteConfirmationReply = await handleDeleteConfirmation(supabase, profile, body)
+  if (deleteConfirmationReply) {
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: deleteConfirmationReply,
+      status: 'twiml_reply',
+      metadata: { delete_confirmation_reply: body },
+    })
+    return xmlResponse(deleteConfirmationReply)
+  }
+
+  if (isDeleteRequest(body)) {
+    const reply = await handleDeleteRequest(supabase, profile)
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: reply,
+      status: 'twiml_reply',
+      metadata: { delete: true, delete_prompt: true },
+    })
+    return xmlResponse(reply)
+  }
+
+  const deleteSelectionReply = await handleDeleteSelection(supabase, profile, body)
+  if (deleteSelectionReply) {
+    const deleteReplyBody = typeof deleteSelectionReply === 'string'
+      ? deleteSelectionReply
+      : deleteSelectionReply.reply
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: deleteReplyBody,
+      status: 'twiml_reply',
+      metadata: typeof deleteSelectionReply === 'string'
+        ? { delete_selection: body }
+        : {
+            delete_selection: body,
+            delete_confirm_prompt: true,
+            delete_item_ids: deleteSelectionReply.selectedItems.map(item => item.id),
+          },
+    })
+    return xmlResponse(deleteReplyBody)
   }
 
   if (isUndoRequest(body)) {
