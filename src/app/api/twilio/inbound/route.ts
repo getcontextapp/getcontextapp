@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
-import { parseSmsPlanReply } from '@/lib/anthropic'
+import { parsePendingSmsReply, parseSmsPlanReply } from '@/lib/anthropic'
 import { getLocalDateKey } from '@/lib/dates'
 import { buildPlanSavedReply, logSmsMessage, normalizePhone, twiml, APP_URL } from '@/lib/sms'
 import { getSmsProfileMatch } from '@/lib/household-links'
@@ -166,6 +166,64 @@ async function handleNumberedSelection(supabase: ReturnType<typeof createService
   return `Thank you. I marked ${formatItemList(labels)} as done in Context.`
 }
 
+async function updateSelectedPendingItems(
+  supabase: ReturnType<typeof createServiceClient>,
+  profile: any,
+  items: any[],
+  confirmation: 'yes' | 'not_now' | 'skip',
+) {
+  const labels: string[] = []
+  for (const item of items) {
+    labels.push(pendingItemLabel(item))
+    await updatePendingItem(supabase, profile, item, confirmation)
+  }
+
+  if (confirmation === 'not_now') {
+    return `No problem. I left ${formatItemList(labels)} in your Context plan for later.`
+  }
+
+  if (confirmation === 'skip') {
+    return `Okay. I set ${formatItemList(labels)} aside for today.`
+  }
+
+  return `Thank you. I marked ${formatItemList(labels)} as done in Context.`
+}
+
+async function handleNaturalPendingReply(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
+  const { data: pendingItems } = await getPendingItems(supabase, profile)
+  if (!pendingItems || pendingItems.length === 0) return null
+
+  const parsed = await parsePendingSmsReply(
+    body,
+    pendingItems.map(item => ({
+      label: item.label,
+      category: item.category,
+      note: item.note,
+      expected_period: item.expected_period,
+    })),
+    profile.display_name,
+    profile.timezone,
+  )
+
+  if (parsed.intent !== 'pending_action' || !parsed.action) return null
+
+  const selectedItems = parsed.selected_numbers === 'all'
+    ? pendingItems
+    : parsed.selected_numbers
+      .map(selection => pendingItems[selection - 1])
+      .filter(Boolean)
+
+  if (selectedItems.length === 0) {
+    return {
+      reply: buildPendingChoiceReply(pendingItems),
+      parsed,
+    }
+  }
+
+  const reply = await updateSelectedPendingItems(supabase, profile, selectedItems, parsed.action)
+  return { reply, parsed }
+}
+
 async function handleConfirmation(supabase: ReturnType<typeof createServiceClient>, profile: any, confirmation: 'yes' | 'not_now' | 'skip') {
   const { data: pendingItems } = await getPendingItems(supabase, profile)
 
@@ -245,6 +303,21 @@ export async function POST(request: NextRequest) {
       metadata: { selected_by_number: body },
     })
     return xmlResponse(numberedSelectionReply)
+  }
+
+  const naturalPendingReply = await handleNaturalPendingReply(supabase, profile, body)
+  if (naturalPendingReply) {
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: naturalPendingReply.reply,
+      status: 'twiml_reply',
+      metadata: { parsed: naturalPendingReply.parsed },
+    })
+    return xmlResponse(naturalPendingReply.reply)
   }
 
   const parsed = await parseSmsPlanReply(body, profile.display_name, profile.timezone)

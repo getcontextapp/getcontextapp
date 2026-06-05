@@ -17,6 +17,20 @@ interface GeneratedCard {
   body: string
 }
 
+export interface PendingSmsItem {
+  label: string
+  category: string
+  note?: string | null
+  expected_period?: string | null
+}
+
+export interface ParsedPendingSmsReply {
+  intent: 'pending_action' | 'unclear'
+  action: 'yes' | 'not_now' | 'skip' | null
+  selected_numbers: number[] | 'all'
+  reply: string
+}
+
 const VALID_CATEGORIES: ActivityCategory[] = ['morning', 'meal', 'movement', 'social', 'rest', 'medication', 'custom']
 const VALID_PERIODS: ExpectedPeriod[] = ['morning', 'afternoon', 'evening', 'anytime']
 
@@ -120,6 +134,139 @@ function normalizePlannedNote(note: string) {
     .replace(/^checked\b/i, 'Check')
     .replace(/^worked\b/i, 'Work')
     .slice(0, 160)
+}
+
+function fallbackParsePendingSmsReply(message: string, pendingItems: PendingSmsItem[]): ParsedPendingSmsReply {
+  const lower = message.toLowerCase()
+  const hasDoneCue = /\b(done|did|finished|completed|complete|yes|yep|already)\b/.test(lower)
+  const hasLaterCue = /\b(not yet|later|not now|leave it|wait)\b/.test(lower)
+  const hasSkipCue = /\b(skip|cancel|set aside|forget it|no)\b/.test(lower)
+  const action = hasSkipCue ? 'skip' : hasLaterCue ? 'not_now' : hasDoneCue ? 'yes' : null
+
+  if (!action) {
+    return {
+      intent: 'unclear',
+      action: null,
+      selected_numbers: [],
+      reply: 'I was not sure which Context item you meant.',
+    }
+  }
+
+  if (/\b(all|everything|both|the rest)\b/.test(lower)) {
+    return {
+      intent: 'pending_action',
+      action,
+      selected_numbers: 'all',
+      reply: 'I matched that to the waiting items.',
+    }
+  }
+
+  const selected = pendingItems
+    .map((item, index) => {
+      const label = `${item.note ?? ''} ${item.label}`.toLowerCase()
+      const words = label.match(/[a-z0-9]+/g)?.filter(word => word.length > 2) ?? []
+      const matched = words.some(word => lower.includes(word))
+      return matched ? index + 1 : null
+    })
+    .filter((value): value is number => Boolean(value))
+
+  if (selected.length === 0 && pendingItems.length === 1) {
+    selected.push(1)
+  }
+
+  return {
+    intent: selected.length > 0 ? 'pending_action' : 'unclear',
+    action,
+    selected_numbers: selected,
+    reply: selected.length > 0 ? 'I matched that to your Context plan.' : 'I was not sure which Context item you meant.',
+  }
+}
+
+export async function parsePendingSmsReply(
+  message: string,
+  pendingItems: PendingSmsItem[],
+  displayName: string,
+  timeZone?: string | null,
+): Promise<ParsedPendingSmsReply> {
+  const pendingList = pendingItems
+    .slice(0, 6)
+    .map((item, index) => {
+      const label = item.note?.trim() || item.label
+      return `${index + 1}. ${label} (${item.category}, ${item.expected_period ?? 'anytime'})`
+    })
+    .join('\n')
+
+  const prompt = `You are the Context SMS interpreter for an older adult with MCI.
+
+The user is replying by SMS about today's waiting Context plan items. Interpret whether they are confirming items as done, leaving items for later, or skipping items.
+
+User name: ${displayName}
+User timezone: ${timeZone ?? 'America/New_York'}
+
+Waiting items:
+${pendingList}
+
+SMS text:
+"${message}"
+
+Rules:
+- Return JSON only. No markdown.
+- Match the user's words to one or more waiting items.
+- The user may write messy text, omit punctuation, or mention several things in one message.
+- If the user says they finished, did, completed, already did, or yes for matched items, action is "yes".
+- If the user says not yet, later, or not now for matched items, action is "not_now".
+- If the user says skip, cancel, no, or forget it for matched items, action is "skip".
+- If the user says all, both, everything, or the rest with a clear action, selected_numbers is "all".
+- If the user only says "done" and more than one item is waiting, return intent "unclear" so Context can ask which one.
+- If the user mentions a new activity that is not in the waiting list, return intent "unclear".
+- Only choose numbers from the waiting list.
+
+Return exactly this shape:
+{
+  "intent": "pending_action" | "unclear",
+  "action": "yes" | "not_now" | "skip" | null,
+  "selected_numbers": [1, 2] | "all",
+  "reply": "short warm SMS reply"
+}`
+
+  try {
+    const result = await client.messages.create({
+      model: MODEL,
+      max_tokens: 500,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    const raw = result.content[0].type === 'text' ? result.content[0].text : ''
+    const parsed = JSON.parse(cleanJson(raw))
+    const intent = parsed.intent === 'pending_action' ? 'pending_action' : 'unclear'
+    const action = ['yes', 'not_now', 'skip'].includes(parsed.action) ? parsed.action : null
+    const selectedNumbers: number[] | 'all' = parsed.selected_numbers === 'all'
+      ? 'all'
+      : Array.isArray(parsed.selected_numbers)
+        ? Array.from(new Set(parsed.selected_numbers
+          .map((value: unknown) => Number(value))
+          .filter((value: number) => Number.isInteger(value) && value > 0 && value <= pendingItems.length)))
+        : []
+
+    if (intent !== 'pending_action' || !action || (selectedNumbers !== 'all' && selectedNumbers.length === 0)) {
+      return {
+        intent: 'unclear',
+        action: null,
+        selected_numbers: [],
+        reply: String(parsed.reply ?? 'I was not sure which Context item you meant.').slice(0, 240),
+      }
+    }
+
+    return {
+      intent,
+      action,
+      selected_numbers: selectedNumbers,
+      reply: String(parsed.reply ?? 'I matched that to your Context plan.').slice(0, 240),
+    }
+  } catch (error) {
+    console.error('[Anthropic] Pending SMS parse failed:', error)
+    return fallbackParsePendingSmsReply(message, pendingItems)
+  }
 }
 
 export async function parseSmsPlanReply(message: string, displayName: string, timeZone?: string | null): Promise<ParsedSmsPlanReply> {
