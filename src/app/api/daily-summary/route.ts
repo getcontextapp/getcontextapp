@@ -10,6 +10,15 @@ import { APP_URL, logSmsMessage } from '@/lib/sms'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
+function getLocalSummaryTime(profile: any) {
+  return new Date().toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: profile.timezone || undefined,
+  })
+}
+
 // POST: manual trigger (from care partner UI)
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -51,8 +60,6 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient()
 
-  const currentHour = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-
   const { data: careProfiles } = await supabase
     .from('profiles')
     .select('*')
@@ -64,7 +71,7 @@ export async function GET(request: NextRequest) {
 
   let sent = 0
   for (const profile of careProfiles) {
-    if (profile.daily_summary_time !== currentHour) continue
+    if (profile.daily_summary_time !== getLocalSummaryTime(profile)) continue
 
     // Don't send twice in same hour
     const hourAgo = new Date(Date.now() - 3600_000).toISOString()

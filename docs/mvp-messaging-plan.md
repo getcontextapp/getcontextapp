@@ -17,8 +17,8 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 - [ ] Run the phone-uniqueness SQL in Supabase production.
 - [ ] Retest that a care partner number receives only care-partner-appropriate replies.
 - [ ] Retest that an unknown number receives the generic Context reply.
-- [ ] Finish automatic scheduling for 8 AM prompt, no-response follow-up, pending reminders, and end-of-day summary.
-- [ ] Decide the free scheduler path for production.
+- [x] Finish automatic scheduling for 8 AM prompt, no-response follow-up, pending reminders, and end-of-day summary.
+- [x] Decide the free scheduler path for production.
 - [ ] Add SMS analytics events for sent, received, parsed, confirmed, no-response, and opt-out.
 - [ ] Hide or remove MVP SMS flow test buttons before participant testing.
 

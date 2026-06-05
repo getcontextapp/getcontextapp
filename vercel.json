@@ -1,1 +1,20 @@
-{}
+{
+  "crons": [
+    {
+      "path": "/api/sms/morning-plan",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/sms/morning-followup",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/reminders",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/daily-summary",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
