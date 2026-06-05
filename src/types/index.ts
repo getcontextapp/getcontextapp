@@ -138,7 +138,7 @@ export interface ParsedSmsPlanItem {
 }
 
 export interface ParsedSmsPlanReply {
-  intent: 'plan' | 'confirmation' | 'unclear'
+  intent: 'plan' | 'completed' | 'confirmation' | 'unclear'
   items: ParsedSmsPlanItem[]
   confirmation?: 'yes' | 'not_now' | 'skip' | null
   reply: string

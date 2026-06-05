@@ -58,6 +58,7 @@ function inferPeriod(text: string): ExpectedPeriod {
 function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
   const lower = message.toLowerCase()
   const items: ParsedSmsPlanReply['items'] = []
+  const completedCue = /\b(called|went|visited|ate|had|took|walked|stretched|watched|rested|washed|dressed|finished|completed|did|made|cooked|cleaned|paid|checked|worked|played)\b/.test(lower)
 
   const add = (category: ActivityCategory, note: string, confidence: 'high' | 'medium' = 'medium') => {
     if (!items.some(item => item.category === category && item.note.toLowerCase() === note.toLowerCase())) {
@@ -92,13 +93,13 @@ function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
     }
   }
 
-  if (/\b(pill|pills|medicine|medication|meds|vitamin|supplement)\b/.test(lower)) add('medication', 'Take medication', 'high')
-  if (/\b(breakfast|lunch|dinner|eat|meal|snack|drink|water|tea|coffee)\b/.test(lower)) add('meal', 'Have a meal or drink', 'medium')
-  if (/\b(walk|exercise|stretch|gym|garden|yard|outside)\b/.test(lower)) add('movement', 'Move around', 'medium')
-  if (/\b(call|phone|daughter|son|wife|husband|friend|family|neighbor|visit|text)\b/.test(lower)) add('social', 'Connect with someone', 'medium')
+  if (/\b(pill|pills|medicine|medication|meds|vitamin|supplement)\b/.test(lower)) add('medication', completedCue ? message : 'Take medication', 'high')
+  if (/\b(breakfast|lunch|dinner|eat|meal|snack|drink|water|tea|coffee)\b/.test(lower)) add('meal', completedCue ? message : 'Have a meal or drink', 'medium')
+  if (/\b(walk|exercise|stretch|gym|garden|yard|outside)\b/.test(lower)) add('movement', completedCue ? message : 'Move around', 'medium')
+  if (/\b(call|called|phone|daughter|son|wife|husband|friend|family|neighbor|visit|visited|text|club|church|group|meeting|community)\b/.test(lower)) add('social', completedCue ? message : normalizePlannedNote(message), 'medium')
   if (/\b(nap|rest|sleep|relax|tv|read)\b/.test(lower)) add('rest', 'Rest for a while', 'medium')
   if (/\b(shower|wash|dress|dressed|brush|morning)\b/.test(lower)) add('morning', 'Morning routine', 'medium')
-  if (/\b(doctor|appointment|errand|store|shop|bank|bill|clean|laundry|cook)\b/.test(lower)) add('custom', 'Other task', 'medium')
+  if (/\b(doctor|appointment|errand|store|shop|bank|bill|clean|laundry|cook|library|class|hobby|game|cards|bingo)\b/.test(lower)) add('custom', completedCue ? message : normalizePlannedNote(message), 'medium')
 
   if (items.length === 0) {
     return {
@@ -110,16 +111,19 @@ function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
   }
 
   return {
-    intent: 'plan',
+    intent: completedCue ? 'completed' : 'plan',
     items: items.slice(0, 6),
     confirmation: null,
-    reply: 'I added this to your Context plan.',
+    reply: completedCue ? 'I marked this as done in Context.' : 'I added this to your Context plan.',
   }
 }
 
 function normalizePlannedNote(note: string) {
   return note
     .trim()
+    .replace(/^i\s+(want|need|plan|hope)\s+to\b/i, '')
+    .replace(/^i\s+will\b/i, '')
+    .replace(/^i'?m\s+going\s+to\b/i, 'Go to')
     .replace(/^took\b/i, 'Take')
     .replace(/^called\b/i, 'Call')
     .replace(/^walked\b/i, 'Walk')
@@ -138,7 +142,7 @@ function normalizePlannedNote(note: string) {
 
 function fallbackParsePendingSmsReply(message: string, pendingItems: PendingSmsItem[]): ParsedPendingSmsReply {
   const lower = message.toLowerCase()
-  const hasDoneCue = /\b(done|did|finished|completed|complete|yes|yep|already)\b/.test(lower)
+  const hasDoneCue = /\b(done|did|finished|completed|complete|yes|yep|already|called|went|visited|ate|had|took|walked|stretched|watched|rested|washed|dressed)\b/.test(lower)
   const hasLaterCue = /\b(not yet|later|not now|leave it|wait)\b/.test(lower)
   const hasSkipCue = /\b(skip|cancel|set aside|forget it|no)\b/.test(lower)
   const action = hasSkipCue ? 'skip' : hasLaterCue ? 'not_now' : hasDoneCue ? 'yes' : null
@@ -213,7 +217,7 @@ Rules:
 - Return JSON only. No markdown.
 - Match the user's words to one or more waiting items.
 - The user may write messy text, omit punctuation, or mention several things in one message.
-- If the user says they finished, did, completed, already did, or yes for matched items, action is "yes".
+- If the user says they finished, did, completed, already did, called, went, visited, ate, had, took, walked, watched, or yes for matched items, action is "yes".
 - If the user says not yet, later, or not now for matched items, action is "not_now".
 - If the user says skip, cancel, no, or forget it for matched items, action is "skip".
 - If the user says all, both, everything, or the rest with a clear action, selected_numbers is "all".
@@ -272,7 +276,7 @@ Return exactly this shape:
 export async function parseSmsPlanReply(message: string, displayName: string, timeZone?: string | null): Promise<ParsedSmsPlanReply> {
   const prompt = `You are a strict parser for Context, an app for older adults with MCI.
 
-The user may write messy SMS text without punctuation. Convert it into planned IADL activities for today.
+The user may write messy SMS text without punctuation. Decide whether they are planning something for later today or reporting something already completed today.
 
 User name: ${displayName}
 User timezone: ${timeZone ?? 'America/New_York'}
@@ -297,12 +301,18 @@ Allowed expected_period values:
 Rules:
 - Return JSON only. No markdown.
 - Do not invent tasks that are not implied by the message.
-- Use "custom" for appointments, errands, household tasks, hobbies, finance, or anything that does not fit.
+- Use "custom" for appointments, errands, household tasks, hobbies, finance, community activities, clubs, church, library, games, or anything that does not fit.
+- Use "social" for calls, visits, family, friends, neighbors, clubs, groups, church, or community gatherings when the social connection is the main point.
 - If the message is mainly "yes", "done", "I did it", or "already did it", set intent to "confirmation" and confirmation to "yes".
 - If the message is "not yet", "later", or similar, set intent to "confirmation" and confirmation to "not_now".
 - If the message is "skip", "no", "cancel", or similar, set intent to "confirmation" and confirmation to "skip".
+- If the message reports a specific completed activity in past tense, set intent to "completed" and return that completed activity in items.
+- Examples of completed activity language: "Called my daughter", "I walked outside", "I had lunch", "Went to club", "Took my pills".
+- If the message expresses a future intention, set intent to "plan".
+- Examples of plan language: "I want to go to club", "I need to call my daughter", "I will have lunch", "Plan to walk".
 - If the message is too vague, set intent to "unclear" and return an empty items array.
 - For planned items, write notes as future/neutral action phrases, not past tense.
+- For completed items, keep notes as natural completed phrases.
 - Good planned notes: "Take morning pills", "Call daughter", "Walk outside", "Eat lunch", "Go to eye appointment".
 - Bad planned notes: "Took pills", "Called daughter", "Walked outside", "Ate lunch".
 - Keep each note short and natural, using the user's words when possible but converting to plan language.
@@ -311,14 +321,9 @@ Rules:
 
 Return exactly this shape:
 {
-  "intent": "plan" | "confirmation" | "unclear",
+  "intent": "plan" | "completed" | "confirmation" | "unclear",
   "items": [
-    {
-      "category": "meal",
-      "note": "Lunch",
-      "expected_period": "afternoon",
-      "confidence": "high"
-    }
+    { "category": "meal", "note": "Lunch", "expected_period": "afternoon", "confidence": "high" }
   ],
   "confirmation": "yes" | "not_now" | "skip" | null,
   "reply": "short warm SMS reply"
@@ -334,14 +339,16 @@ Return exactly this shape:
     const raw = result.content[0].type === 'text' ? result.content[0].text : ''
     const parsed = JSON.parse(cleanJson(raw))
 
-    const intent = ['plan', 'confirmation', 'unclear'].includes(parsed.intent) ? parsed.intent : 'unclear'
+    const intent = ['plan', 'completed', 'confirmation', 'unclear'].includes(parsed.intent) ? parsed.intent : 'unclear'
     const confirmation = ['yes', 'not_now', 'skip'].includes(parsed.confirmation) ? parsed.confirmation : null
     const items = Array.isArray(parsed.items)
       ? parsed.items
         .slice(0, 6)
         .map((item: any) => ({
           category: safeCategory(item.category),
-          note: normalizePlannedNote(String(item.note ?? '')),
+          note: intent === 'completed'
+            ? String(item.note ?? '').trim().slice(0, 160)
+            : normalizePlannedNote(String(item.note ?? '')),
           expected_period: safePeriod(item.expected_period),
           confidence: ['high', 'medium', 'low'].includes(item.confidence) ? item.confidence : 'medium',
         }))

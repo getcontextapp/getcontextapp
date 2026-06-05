@@ -39,6 +39,10 @@ function pendingItemLabel(item: any) {
   return item.note?.trim() || item.label || 'Plan item'
 }
 
+function categoryLabel(category: ActivityCategory) {
+  return category === 'custom' ? 'Other' : category[0].toUpperCase() + category.slice(1)
+}
+
 function formatItemList(labels: string[]) {
   if (labels.length === 1) return `"${labels[0]}"`
   if (labels.length === 2) return `"${labels[0]}" and "${labels[1]}"`
@@ -337,6 +341,56 @@ export async function POST(request: NextRequest) {
     return xmlResponse(reply)
   }
 
+  if (parsed.intent === 'completed' && parsed.items.length > 0) {
+    const rows = parsed.items.map(item => ({
+      household_id: profile.household_id,
+      logged_by: profile.id,
+      category: item.category as ActivityCategory,
+      label: categoryLabel(item.category as ActivityCategory),
+      note: item.note,
+      occurred_at: new Date().toISOString(),
+    }))
+
+    const { data: activities, error } = await supabase
+      .from('activity_logs')
+      .insert(rows)
+      .select()
+
+    if (error) {
+      console.error('[SMS] Completed activity insert failed:', error.message)
+      return xmlResponse(`I had trouble saving that. Please open Context here: ${APP_URL}/mci-user`)
+    }
+
+    await trackEvent(supabase, {
+      eventName: 'sms_completed_activity_parsed',
+      profile,
+      userId: profile.user_id,
+      properties: {
+        item_count: activities?.length ?? parsed.items.length,
+        raw_length: body.length,
+        parsed,
+      },
+    })
+
+    const count = activities?.length ?? parsed.items.length
+    const reply = count === 1
+      ? 'I marked that as done in Context.'
+      : `I marked ${count} activities as done in Context.`
+
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: reply,
+      status: 'twiml_reply',
+      metadata: { parsed, activity_ids: activities?.map(item => item.id) ?? [] },
+    })
+
+    return xmlResponse(reply)
+  }
+
   if (parsed.intent !== 'plan' || parsed.items.length === 0) {
     await logSmsMessage(supabase, {
       householdId: profile.household_id,
@@ -357,7 +411,7 @@ export async function POST(request: NextRequest) {
     created_by: profile.id,
     assigned_to: profile.id,
     category: item.category as ActivityCategory,
-    label: item.category === 'custom' ? 'Other' : item.category[0].toUpperCase() + item.category.slice(1),
+    label: categoryLabel(item.category as ActivityCategory),
     note: item.note,
     expected_period: item.expected_period as ExpectedPeriod,
     planned_for: todayKey,
