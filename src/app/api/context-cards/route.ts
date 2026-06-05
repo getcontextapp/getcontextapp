@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
-import { generateReentryCard, generateOpenContextCard } from '@/lib/anthropic'
-import { getUtcRangeForLocalDay } from '@/lib/dates'
+import { generateReentryCard } from '@/lib/anthropic'
+import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
 
 function getActivityDetail(activity: { label: string; note?: string | null }) {
@@ -14,41 +14,33 @@ function getActivityDetail(activity: { label: string; note?: string | null }) {
   return activity.label
 }
 
-function getDayPart(timeZone?: string | null) {
-  const hour = Number(new Date().toLocaleString('en-US', {
-    timeZone: timeZone || undefined,
-    hour: 'numeric',
-    hour12: false,
-  }))
-
-  if (hour < 5) return 'night'
-  if (hour < 12) return 'morning'
-  if (hour < 17) return 'afternoon'
-  if (hour < 21) return 'evening'
-  return 'night'
+function formatList(items: string[]) {
+  if (items.length === 0) return 'None.'
+  return `${items.slice(0, 3).join(', ')}.`
 }
 
-function buildFallbackOpenCard(displayName: string, recentActivities: Array<{ label: string; note?: string | null }>, timeZone?: string | null) {
-  const details = recentActivities
+function buildOpenCard(
+  recentActivities: Array<{ label: string; note?: string | null }>,
+  pendingItems: Array<{ label: string; note?: string | null }>,
+) {
+  const done = recentActivities
+    .slice(0, 3)
+    .map(getActivityDetail)
+    .filter(Boolean)
+  const waiting = pendingItems
     .slice(0, 3)
     .map(getActivityDetail)
     .filter(Boolean)
 
-  const dayPart = getDayPart(timeZone)
-  const intro =
-    dayPart === 'morning' ? `Here is what has happened this morning, ${displayName}.` :
-    dayPart === 'afternoon' ? `Here is what has been happening today, ${displayName}.` :
-    dayPart === 'evening' ? `Here is what has been part of your day, ${displayName}.` :
-    `Here is what is saved from tonight, ${displayName}.`
-
-  const activityText =
-    details.length === 0 ? 'There is nothing saved yet.' :
-    details.length === 1 ? `Saved here: ${details[0]}.` :
-    `Saved here: ${details.slice(0, -1).join(', ')} and ${details[details.length - 1]}.`
+  if (done.length === 0 && waiting.length === 0) return null
 
   return {
     title: 'Your day so far',
-    body: `${intro} ${activityText} This is a good place to return to when you need it.`,
+    body: [
+      `Done today: ${formatList(done)}`,
+      `Still waiting: ${formatList(waiting)}`,
+      `You can mark something done or leave it for later.`,
+    ].join('\n'),
   }
 }
 
@@ -82,29 +74,58 @@ export async function POST(request: NextRequest) {
     .order('occurred_at', { ascending: false })
     .limit(10)
 
-  if (!recentActivities || recentActivities.length === 0) {
+  const { data: pendingItems } = await supabase
+    .from('planned_activities')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+    .in('status', ['planned', 'not_now'])
+    .order('created_at', { ascending: true })
+    .limit(10)
+
+  if (type === 'open' && (!recentActivities || recentActivities.length === 0) && (!pendingItems || pendingItems.length === 0)) {
     return NextResponse.json({ error: 'No activities to generate card from' }, { status: 400 })
   }
 
-  let generated: { title: string; body: string }
+  if (type === 'reentry' && (!recentActivities || recentActivities.length === 0)) {
+    return NextResponse.json({ error: 'No activities to generate card from' }, { status: 400 })
+  }
+
+  let generated: { title: string; body: string } | null
 
   try {
     if (type === 'reentry') {
-      const triggerActivity = recentActivities.find(a => a.id === activity_log_id) ?? recentActivities[0]
+      const triggerActivity = recentActivities!.find(a => a.id === activity_log_id) ?? recentActivities![0]
       const gapMinutes = profile.reminder_gap_minutes ?? 90
       generated = await generateReentryCard({
         displayName: profile.display_name,
-        recentActivities,
+        recentActivities: recentActivities!,
         triggerActivity,
         gapMinutes,
       })
     } else {
-      generated = await generateOpenContextCard(profile.display_name, recentActivities, profile.timezone)
+      generated = buildOpenCard(recentActivities ?? [], pendingItems ?? [])
     }
   } catch (error) {
     console.error('[Context Cards] AI generation failed:', error)
-    generated = buildFallbackOpenCard(profile.display_name, recentActivities, profile.timezone)
+    generated = type === 'open' ? buildOpenCard(recentActivities ?? [], pendingItems ?? []) : null
   }
+
+  if (!generated) {
+    return NextResponse.json({ error: 'No useful context card to show' }, { status: 400 })
+  }
+
+  const { data: existingCard } = await supabase
+    .from('context_cards')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .eq('type', type)
+    .eq('is_active', true)
+    .eq('title', generated.title)
+    .eq('body', generated.body)
+    .maybeSingle()
+
+  if (existingCard) return NextResponse.json(existingCard)
 
   // Deactivate old active cards of same type
   await supabase
@@ -123,7 +144,7 @@ export async function POST(request: NextRequest) {
       type,
       title: generated.title,
       body: generated.body,
-      generated_by: 'ai',
+      generated_by: type === 'open' ? 'user' : 'ai',
       is_active: true,
     })
     .select()
@@ -140,7 +161,8 @@ export async function POST(request: NextRequest) {
     properties: {
       card_id: card.id,
       card_type: card.type,
-      activity_count: recentActivities.length,
+      activity_count: recentActivities?.length ?? 0,
+      pending_count: pendingItems?.length ?? 0,
       generated_by: card.generated_by,
     },
   })

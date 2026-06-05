@@ -139,6 +139,20 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     }
   }, [deleteCandidate, handlePlanAction])
 
+  const dismissContextCard = useCallback(async (action: 'dismissed' | 'remind_later' = 'dismissed') => {
+    if (!contextCard) return
+    await supabase.from('context_cards').update({ is_active: false }).eq('id', contextCard.id)
+    trackClientEvent(action === 'remind_later' ? 'context_card_remind_later' : 'context_card_dismissed', {
+      card_id: contextCard.id,
+      card_type: contextCard.type,
+    })
+    setContextCard(null)
+  }, [contextCard, supabase])
+
+  const showWaitingTasks = useCallback(() => {
+    document.getElementById('todays-plan')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
   async function handleSignOut() {
     await supabase.auth.signOut()
     window.location.href = '/auth/login'
@@ -198,14 +212,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           <ContextCardDisplay
             card={contextCard}
             isGenerating={generatingCard}
-            onDismiss={async () => {
-              await supabase.from('context_cards').update({ is_active: false }).eq('id', contextCard.id)
-              trackClientEvent('context_card_dismissed', {
-                card_id: contextCard.id,
-                card_type: contextCard.type,
-              })
-              setContextCard(null)
-            }}
+            onShowWaiting={showWaitingTasks}
+            onRemindLater={() => dismissContextCard('remind_later')}
+            onDismiss={() => dismissContextCard('dismissed')}
           />
         ) : generatingCard ? (
           <div className="card p-5 animate-pulse-soft">
@@ -223,7 +232,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         ) : null}
 
         {/* Today's Plan */}
-        <div className="animate-fade-up">
+        <div id="todays-plan" className="animate-fade-up scroll-mt-4">
           <div className="flex items-center justify-between mb-3">
             <p className="text-warm-500 text-sm font-medium">Today's plan</p>
             {openPlannedCount > 0 && (
