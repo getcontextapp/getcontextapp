@@ -110,6 +110,8 @@ const PERIOD_ORDER: Record<string, number> = {
   anytime: 3,
 }
 
+const SHOW_SMS_TEST_TOOLS = process.env.NEXT_PUBLIC_SHOW_SMS_TEST_TOOLS === 'true'
+
 export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities }: Props) {
   const supabase = createClient()
   const [activities] = useState<ActivityLog[]>(initialActivities)
@@ -500,36 +502,38 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                 )}
               </div>
 
-              <div className="border-t border-cream-200 pt-5 space-y-3">
-                <div>
-                  <p className="font-medium text-warm-900 text-sm">MVP SMS flow tests</p>
-                  <p className="text-warm-400 text-xs mt-0.5">
-                    Temporary tools for testing the morning plan, follow-up, pending reminders, and care partner alerts.
-                  </p>
+              {SHOW_SMS_TEST_TOOLS && (
+                <div className="border-t border-cream-200 pt-5 space-y-3">
+                  <div>
+                    <p className="font-medium text-warm-900 text-sm">MVP SMS flow tests</p>
+                    <p className="text-warm-400 text-xs mt-0.5">
+                      Temporary tools for testing the morning plan, follow-up, pending reminders, and care partner alerts.
+                    </p>
+                  </div>
+                  {[
+                    ['morning_prompt', 'Send morning plan prompt'],
+                    ['morning_followup', 'Send no-response follow-up'],
+                    ['pending_reminder', 'Send pending plan reminder'],
+                    ['care_partner_no_response', 'Send care partner no-response alert'],
+                  ].map(([action, label]) => {
+                    const state = smsTestState[action] ?? 'idle'
+                    return (
+                      <button
+                        key={action}
+                        onClick={() => sendSmsTest(action)}
+                        disabled={state === 'sending'}
+                        className="w-full py-2.5 rounded-xl border-2 border-cream-300 text-warm-700 text-sm font-medium
+                                   hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
+                      >
+                        {state === 'sending' ? 'Sending...' : state === 'sent' ? 'Sent! Check phone' : state === 'error' ? 'Try again' : label}
+                      </button>
+                    )
+                  })}
+                  {smsTestError && (
+                    <p className="text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{smsTestError}</p>
+                  )}
                 </div>
-                {[
-                  ['morning_prompt', 'Send morning plan prompt'],
-                  ['morning_followup', 'Send no-response follow-up'],
-                  ['pending_reminder', 'Send pending plan reminder'],
-                  ['care_partner_no_response', 'Send care partner no-response alert'],
-                ].map(([action, label]) => {
-                  const state = smsTestState[action] ?? 'idle'
-                  return (
-                    <button
-                      key={action}
-                      onClick={() => sendSmsTest(action)}
-                      disabled={state === 'sending'}
-                      className="w-full py-2.5 rounded-xl border-2 border-cream-300 text-warm-700 text-sm font-medium
-                                 hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
-                    >
-                      {state === 'sending' ? 'Sending...' : state === 'sent' ? 'Sent! Check phone' : state === 'error' ? 'Try again' : label}
-                    </button>
-                  )
-                })}
-                {smsTestError && (
-                  <p className="text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{smsTestError}</p>
-                )}
-              </div>
+              )}
 
               <div className="border-t border-cream-200 pt-4">
                 <button

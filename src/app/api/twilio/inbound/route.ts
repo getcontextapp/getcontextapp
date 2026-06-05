@@ -83,6 +83,19 @@ function buildPendingChoiceReply(pendingItems: any[], actionLabel = 'finished') 
   ].join('\n')
 }
 
+function buildCompletedChoiceReply(completedItems: any[]) {
+  const lines = completedItems
+    .slice(0, 6)
+    .map((item, index) => `${index + 1}. ${pendingItemLabel(item)}`)
+
+  return [
+    `I see these completed today:`,
+    ...lines,
+    ``,
+    `Reply with the number or numbers to move back to waiting.`,
+  ].join('\n')
+}
+
 async function updatePendingItem(
   supabase: ReturnType<typeof createServiceClient>,
   profile: any,
@@ -145,50 +158,118 @@ function isUndoRequest(body: string) {
 
 async function reopenMostRecentConfirmedItem(supabase: ReturnType<typeof createServiceClient>, profile: any) {
   const todayKey = getLocalDateKey(new Date(), profile.timezone)
-  const { data: item } = await supabase
+  const { data: completedItems } = await supabase
     .from('planned_activities')
     .select('*')
     .eq('household_id', profile.household_id)
     .eq('planned_for', todayKey)
     .eq('status', 'confirmed')
     .order('confirmed_at', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(6)
 
-  if (!item) {
+  if (!completedItems || completedItems.length === 0) {
     return `I do not see a completed planned item to undo today. You can open Context here: ${APP_URL}/mci-user`
   }
 
-  const confirmedActivityLogId = item.confirmed_activity_log_id
-  await supabase
-    .from('planned_activities')
-    .update({
-      status: 'planned',
-      confirmed_activity_log_id: null,
-      confirmed_at: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', item.id)
+  return buildCompletedChoiceReply(completedItems)
+}
 
-  if (confirmedActivityLogId) {
+async function reopenConfirmedItems(
+  supabase: ReturnType<typeof createServiceClient>,
+  profile: any,
+  items: any[],
+) {
+  const labels: string[] = []
+  for (const item of items) {
+    labels.push(pendingItemLabel(item))
+    const confirmedActivityLogId = item.confirmed_activity_log_id
     await supabase
-      .from('activity_logs')
-      .delete()
-      .eq('id', confirmedActivityLogId)
-      .eq('household_id', profile.household_id)
+      .from('planned_activities')
+      .update({
+        status: 'planned',
+        confirmed_activity_log_id: null,
+        confirmed_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', item.id)
+
+    if (confirmedActivityLogId) {
+      await supabase
+        .from('activity_logs')
+        .delete()
+        .eq('id', confirmedActivityLogId)
+        .eq('household_id', profile.household_id)
+    }
+
+    await trackEvent(supabase, {
+      eventName: 'sms_activity_reopened',
+      profile,
+      userId: profile.user_id,
+      properties: {
+        planned_activity_id: item.id,
+        deleted_activity_id: confirmedActivityLogId,
+      },
+    })
   }
 
-  await trackEvent(supabase, {
-    eventName: 'sms_activity_reopened',
-    profile,
-    userId: profile.user_id,
-    properties: {
-      planned_activity_id: item.id,
-      deleted_activity_id: confirmedActivityLogId,
-    },
-  })
+  return `No problem. I moved ${formatItemList(labels)} back to waiting in your Context plan.`
+}
 
-  return `No problem. I moved "${pendingItemLabel(item)}" back to waiting in your Context plan.`
+async function handleUndoSelection(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
+  const selections = parseNumberedSelections(body)
+  if (!selections) return null
+
+  const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  const { data: completedItems } = await supabase
+    .from('planned_activities')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .eq('planned_for', todayKey)
+    .eq('status', 'confirmed')
+    .order('confirmed_at', { ascending: false, nullsFirst: false })
+    .limit(6)
+
+  if (!completedItems || completedItems.length === 0) return null
+
+  const recentUndoPrompt = await hasRecentSmsPurpose(supabase, profile, 'inbound_confirmation', {
+    undo_prompt: true,
+  })
+  if (!recentUndoPrompt) return null
+
+  const selectedIndexes = selections === 'all'
+    ? completedItems.map((_, index) => index)
+    : selections.map(selection => selection - 1)
+
+  const selectedItems = selectedIndexes
+    .map(index => completedItems[index])
+    .filter(Boolean)
+
+  if (selectedItems.length === 0) return buildCompletedChoiceReply(completedItems)
+
+  return reopenConfirmedItems(supabase, profile, selectedItems)
+}
+
+async function hasRecentSmsPurpose(
+  supabase: ReturnType<typeof createServiceClient>,
+  profile: any,
+  purpose: string,
+  metadataMatch: Record<string, unknown>,
+) {
+  const since = new Date(Date.now() - 15 * 60 * 1000).toISOString()
+  const { data } = await supabase
+    .from('sms_messages')
+    .select('metadata')
+    .eq('profile_id', profile.id)
+    .eq('direction', 'outbound')
+    .eq('purpose', purpose)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  return Boolean((data ?? []).some(message => {
+    const metadata = message.metadata as Record<string, unknown>
+    return Object.entries(metadataMatch).every(([key, value]) => metadata?.[key] === value)
+  }))
 }
 
 async function handleNumberedSelection(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
@@ -356,9 +437,24 @@ export async function POST(request: NextRequest) {
       phoneE164: from,
       body: reply,
       status: 'twiml_reply',
-      metadata: { undo: true },
+      metadata: { undo: true, undo_prompt: true },
     })
     return xmlResponse(reply)
+  }
+
+  const undoSelectionReply = await handleUndoSelection(supabase, profile, body)
+  if (undoSelectionReply) {
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: undoSelectionReply,
+      status: 'twiml_reply',
+      metadata: { undo_selection: body },
+    })
+    return xmlResponse(undoSelectionReply)
   }
 
   const numberedSelectionReply = await handleNumberedSelection(supabase, profile, body)

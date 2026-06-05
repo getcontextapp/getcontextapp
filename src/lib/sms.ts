@@ -75,6 +75,28 @@ export async function logSmsMessage(
   })
 
   if (error) console.error('[SMS] Log failed:', error.message)
+
+  if (input.profileId || input.householdId) {
+    const normalizedPhone = normalizePhone(input.phoneE164)
+    const { error: analyticsError } = await supabase.from('analytics_events').insert({
+      user_id: null,
+      profile_id: input.profileId ?? null,
+      household_id: input.householdId ?? null,
+      role: null,
+      event_name: `sms_${input.direction}_${input.purpose}`,
+      properties: {
+        direction: input.direction,
+        purpose: input.purpose,
+        status: input.status ?? 'recorded',
+        body_length: input.body.length,
+        phone_last4: normalizedPhone.slice(-4),
+        has_twilio_sid: Boolean(input.twilioSid),
+        metadata_keys: Object.keys(input.metadata ?? {}),
+      },
+    })
+
+    if (analyticsError) console.error('[SMS] Analytics log failed:', analyticsError.message)
+  }
 }
 
 export function buildMorningPrompt(displayName: string) {
