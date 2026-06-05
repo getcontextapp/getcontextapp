@@ -58,7 +58,7 @@ as $$
     where p.phone_e164 is not null
       and p.household_id is not null
       and right(regexp_replace(p.phone_e164, '\D', '', 'g'), 10) = i.last10
-    order by case when p.role = 'mci_user' then 0 else 1 end, p.created_at asc
+    order by p.created_at asc
     limit 1
   ),
   recent_sms_profile as (

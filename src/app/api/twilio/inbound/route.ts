@@ -13,6 +13,18 @@ function xmlResponse(message: string) {
   })
 }
 
+const UNKNOWN_NUMBER_REPLY = [
+  'This number is not signed up with Context yet.',
+  'Context helps older adults and care partners stay oriented with gentle reminders, simple check-ins, and daily summaries.',
+  `Learn more or sign in here: ${APP_URL}`,
+].join('\n')
+
+const CARE_PARTNER_LIMIT_REPLY = [
+  'This number is registered as a Context care partner.',
+  'Care partner SMS is limited to updates and summaries right now. Activity confirmations must come from the MCI member.',
+  `Open your care partner view here: ${APP_URL}/care-partner`,
+].join('\n')
+
 async function getPendingItems(supabase: ReturnType<typeof createServiceClient>, profile: any) {
   return supabase
     .from('planned_activities')
@@ -153,9 +165,7 @@ export async function POST(request: NextRequest) {
       status: 'unmatched',
       metadata: { match_debug: match.debug },
     })
-    return xmlResponse(
-      `I could not connect this number to a Context profile yet. Open Context here: ${APP_URL}`,
-    )
+    return xmlResponse(UNKNOWN_NUMBER_REPLY)
   }
 
   await logSmsMessage(supabase, {
@@ -168,6 +178,20 @@ export async function POST(request: NextRequest) {
     twilioSid: messageSid,
     status: 'received',
   })
+
+  if (profile.role !== 'mci_user') {
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_other',
+      phoneE164: from,
+      body: CARE_PARTNER_LIMIT_REPLY,
+      status: 'twiml_reply',
+      metadata: { blocked_role: profile.role },
+    })
+    return xmlResponse(CARE_PARTNER_LIMIT_REPLY)
+  }
 
   const numberedSelectionReply = await handleNumberedSelection(supabase, profile, body)
   if (numberedSelectionReply) {

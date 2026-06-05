@@ -166,10 +166,7 @@ export async function getSmsProfileMatch(
   debug.profilePhoneEndings = Array.from(new Set(allProfiles.map(profile => phoneEnding(profile.phone_e164)))).slice(0, 8)
 
   const profiles = allProfiles.filter(profile => matchesPhone(profile.phone_e164))
-  const directMatch =
-    profiles.find(profile => profile.role === 'mci_user') ??
-    profiles[0] ??
-    null
+  const directMatch = profiles[0] ?? null
 
   if (directMatch) {
     debug.matchedBy = 'profile_phone'
