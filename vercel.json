@@ -2,19 +2,19 @@
   "crons": [
     {
       "path": "/api/sms/morning-plan",
-      "schedule": "0 * * * *"
+      "schedule": "0 12 * * *"
     },
     {
       "path": "/api/sms/morning-followup",
-      "schedule": "0 * * * *"
+      "schedule": "0 14 * * *"
     },
     {
       "path": "/api/reminders",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 18 * * *"
     },
     {
       "path": "/api/daily-summary",
-      "schedule": "0 * * * *"
+      "schedule": "0 1 * * *"
     }
   ]
 }
