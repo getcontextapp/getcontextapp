@@ -93,6 +93,14 @@ function buildPendingChoiceReply(pendingItems: any[], actionLabel = 'finished') 
   ].join('\n')
 }
 
+function buildPendingStatusReply(pendingItems: any[]) {
+  if (pendingItems.length === 0) {
+    return `I do not see anything waiting in today's plan. You can open Context here: ${APP_URL}/mci-user`
+  }
+
+  return buildPendingChoiceReply(pendingItems)
+}
+
 function buildCompletedChoiceReply(completedItems: any[]) {
   const lines = completedItems
     .slice(0, 6)
@@ -195,6 +203,12 @@ function isUndoRequest(body: string) {
 
 function isDeleteRequest(body: string) {
   return /\b(delete|remove|erase|trash|drop)\b/i.test(body)
+}
+
+function isPendingStatusRequest(body: string) {
+  return /\b(what|which|show|list|tell me|remind me)\b.*\b(task|tasks|things|items|plan|pending|waiting|left)\b/i.test(body) ||
+    /\b(task|tasks|things|items|plan)\b.*\b(pending|waiting|left|remaining|not done)\b/i.test(body) ||
+    /\b(what do i have|what's left|whats left|anything left)\b/i.test(body)
 }
 
 function isCancelReply(body: string) {
@@ -408,6 +422,11 @@ async function handleDeleteConfirmation(supabase: ReturnType<typeof createServic
     .filter(Boolean)
 
   return deletePlannedItems(supabase, profile, orderedItems)
+}
+
+async function handlePendingStatusRequest(supabase: ReturnType<typeof createServiceClient>, profile: any) {
+  const { data: pendingItems } = await getPendingItems(supabase, profile)
+  return buildPendingStatusReply(pendingItems ?? [])
 }
 
 async function hasRecentSmsPurpose(
@@ -722,6 +741,29 @@ export async function POST(request: NextRequest) {
       metadata: { parsed: naturalPendingReply.parsed },
     })
     return xmlResponse(naturalPendingReply.reply)
+  }
+
+  if (isPendingStatusRequest(body)) {
+    const reply = await handlePendingStatusRequest(supabase, profile)
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: reply,
+      status: 'twiml_reply',
+      metadata: { pending_status_request: true },
+    })
+
+    await trackEvent(supabase, {
+      eventName: 'sms_pending_status_requested',
+      profile,
+      userId: profile.user_id,
+      properties: { raw_length: body.length },
+    })
+
+    return xmlResponse(reply)
   }
 
   const parsed = await parseSmsPlanReply(body, profile.display_name, profile.timezone)
