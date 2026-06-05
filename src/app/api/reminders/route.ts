@@ -9,6 +9,16 @@ import { APP_URL, logSmsMessage } from '@/lib/sms'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
+function reminderSlot(pathname: string) {
+  if (pathname.includes('/noon')) return 'noon'
+  if (pathname.includes('/afternoon')) return 'afternoon'
+  return 'gap'
+}
+
+function localDayStart(profile: any) {
+  return `${getLocalDateKey(new Date(), profile.timezone)}T00:00:00`
+}
+
 // Called by fixed Vercel Cron touchpoints on the Hobby plan.
 export async function GET(request: NextRequest) {
   // Verify cron secret
@@ -18,6 +28,8 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient()
+  const slot = reminderSlot(request.nextUrl.pathname)
+  const isFixedSlot = slot === 'noon' || slot === 'afternoon'
 
   const mciProfiles = await getMciProfilesForSms(supabase)
 
@@ -42,30 +54,40 @@ export async function GET(request: NextRequest) {
     const checkFrom = new Date(Date.now() - gapMs).toISOString()
     const todayKey = getLocalDateKey(new Date(), profile.timezone)
 
-    // Only remind when there is at least one planned item waiting for confirmation.
-    const { data: pendingItems } = await supabase
+    let pendingQuery = supabase
       .from('planned_activities')
       .select('*')
       .eq('household_id', profile.household_id)
       .eq('planned_for', todayKey)
       .in('status', ['planned', 'not_now'])
-      .lte('updated_at', checkFrom)
       .order('created_at', { ascending: true })
       .limit(5)
 
+    // Fixed noon/afternoon nudges should check what is pending at that touchpoint.
+    // The gap route still waits until an item has been quiet for the user's reminder gap.
+    if (!isFixedSlot) {
+      pendingQuery = pendingQuery.lte('updated_at', checkFrom)
+    }
+
+    // Only remind when there is at least one planned item waiting for confirmation.
+    const { data: pendingItems } = await pendingQuery
+
     if (!pendingItems || pendingItems.length === 0) continue
 
-    // Check if we sent a reminder in the last gap period (avoid duplicates)
+    const reminderType = isFixedSlot ? `reentry_${slot}` : 'reentry'
+    const duplicateSince = isFixedSlot ? localDayStart(profile) : checkFrom
+
+    // Check if we already sent this fixed touchpoint today, or this gap reminder recently.
     const { data: recentReminder } = await supabase
       .from('reminder_logs')
       .select('id')
       .eq('profile_id', profile.id)
-      .eq('type', 'reentry')
-      .gte('sent_at', checkFrom)
+      .eq('type', reminderType)
+      .gte('sent_at', duplicateSince)
       .limit(1)
       .single()
 
-    if (recentReminder) continue // Already sent one in this window
+    if (recentReminder) continue
 
     const pendingForSms = pendingItems.map(item => {
       const tile = ACTIVITY_TILES.find(t => t.category === item.category)
@@ -106,6 +128,7 @@ export async function GET(request: NextRequest) {
       status,
       metadata: {
         pending_count: pendingItems.length,
+        reminder_slot: slot,
       },
     })
 
@@ -113,7 +136,7 @@ export async function GET(request: NextRequest) {
     await supabase.from('reminder_logs').insert({
       household_id: profile.household_id,
       profile_id: profile.id,
-      type: 'reentry',
+      type: reminderType,
       twilio_sid: sid,
       status,
     })
@@ -127,11 +150,12 @@ export async function GET(request: NextRequest) {
         sid,
         gap_minutes: gapMinutes,
         pending_count: pendingItems.length,
+        reminder_slot: slot,
       },
     })
 
     sent++
   }
 
-  return NextResponse.json({ processed: mciProfiles.length, sent })
+  return NextResponse.json({ processed: mciProfiles.length, sent, slot })
 }
