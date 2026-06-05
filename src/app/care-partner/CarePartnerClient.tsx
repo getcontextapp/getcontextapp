@@ -16,20 +16,82 @@ interface Props {
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-function groupByDay(activities: ActivityLog[], timeZone?: string | null) {
-  const groups: Record<string, ActivityLog[]> = {}
-  for (const a of activities) {
-    const key = getLocalDateKey(new Date(a.occurred_at), timeZone)
-    if (!groups[key]) groups[key] = []
-    groups[key].push(a)
+type ConfirmedEntry = {
+  id: string
+  category: ActivityLog['category']
+  label: string
+  detail: string | null
+  occurredAt: string | null
+  dayKey: string
+  timeLabel: string
+}
+
+function getActivityDetail(category: ActivityLog['category'], label: string, note?: string | null) {
+  const tile = ACTIVITY_TILES.find(t => t.category === category)
+  return note || (tile && label !== tile.label ? label : null)
+}
+
+function formatConfirmedTime(value: string | null | undefined, timeZone?: string | null) {
+  if (!value) return 'Done'
+  return new Date(value).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: timeZone ?? undefined,
+  })
+}
+
+function getConfirmedEntries(
+  activities: ActivityLog[],
+  plannedActivities: PlannedActivity[],
+  timeZone?: string | null
+) {
+  const activityLogIds = new Set(activities.map(a => a.id))
+  const activityEntries: ConfirmedEntry[] = activities.map(a => ({
+    id: `log-${a.id}`,
+    category: a.category,
+    label: a.label,
+    detail: getActivityDetail(a.category, a.label, a.note),
+    occurredAt: a.occurred_at,
+    dayKey: getLocalDateKey(new Date(a.occurred_at), timeZone),
+    timeLabel: formatConfirmedTime(a.occurred_at, timeZone),
+  }))
+  const plannedEntries: ConfirmedEntry[] = plannedActivities
+    .filter(item => item.status === 'confirmed')
+    .filter(item => !item.confirmed_activity_log_id || !activityLogIds.has(item.confirmed_activity_log_id))
+    .map(item => {
+      const occurredAt = item.confirmed_at ?? item.updated_at ?? item.created_at
+      return {
+        id: `plan-${item.id}`,
+        category: item.category,
+        label: item.label,
+        detail: getActivityDetail(item.category, item.label, item.note),
+        occurredAt,
+        dayKey: item.planned_for,
+        timeLabel: formatConfirmedTime(occurredAt, timeZone),
+      }
+    })
+
+  return [...activityEntries, ...plannedEntries].sort((a, b) => {
+    const aTime = a.occurredAt ? new Date(a.occurredAt).getTime() : 0
+    const bTime = b.occurredAt ? new Date(b.occurredAt).getTime() : 0
+    return aTime - bTime
+  })
+}
+
+function groupConfirmedByDay(entries: ConfirmedEntry[]) {
+  const groups: Record<string, ConfirmedEntry[]> = {}
+  for (const entry of entries) {
+    if (!groups[entry.dayKey]) groups[entry.dayKey] = []
+    groups[entry.dayKey].push(entry)
   }
   return groups
 }
 
-function getCategoryBreakdown(activities: ActivityLog[]) {
+function getCategoryBreakdown(entries: Array<{ category: ActivityLog['category'] }>) {
   const counts: Record<string, number> = {}
-  for (const a of activities) {
-    counts[a.category] = (counts[a.category] ?? 0) + 1
+  for (const entry of entries) {
+    counts[entry.category] = (counts[entry.category] ?? 0) + 1
   }
   return Object.entries(counts).sort((a, b) => b[1] - a[1])
 }
@@ -64,7 +126,8 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const [carePhoneSaved, setCarePhoneSaved] = useState(false)
   const [carePhoneError, setCarePhoneError] = useState<string | null>(null)
 
-  const byDay = groupByDay(activities, careProfile.timezone)
+  const confirmedEntries = getConfirmedEntries(activities, plannedActivities, careProfile.timezone)
+  const confirmedByDay = groupConfirmedByDay(confirmedEntries)
 
   useEffect(() => {
     trackClientEvent('care_partner_dashboard_viewed', {
@@ -82,17 +145,17 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
       key: getLocalDateKey(d, careProfile.timezone),
       label: DAYS[d.getDay()],
       dayNum: d.getDate(),
-      count: byDay[getLocalDateKey(d, careProfile.timezone)]?.length ?? 0,
+      count: confirmedByDay[getLocalDateKey(d, careProfile.timezone)]?.length ?? 0,
       isToday: getLocalDateKey(d, careProfile.timezone) === getLocalDateKey(new Date(), careProfile.timezone),
     }
   })
 
-  const selectedActivities = byDay[selectedDay] ?? []
+  const selectedConfirmedEntries = confirmedByDay[selectedDay] ?? []
 
   // Today's stats
   const todayKey = getLocalDateKey(new Date(), careProfile.timezone)
-  const todayActivities = byDay[todayKey] ?? []
-  const categoryBreakdown = getCategoryBreakdown(todayActivities)
+  const todayConfirmedEntries = confirmedByDay[todayKey] ?? []
+  const categoryBreakdown = getCategoryBreakdown(todayConfirmedEntries)
   const sortedPlannedActivities = [...plannedActivities].sort((a, b) => {
     const periodDiff = (PERIOD_ORDER[a.expected_period] ?? 9) - (PERIOD_ORDER[b.expected_period] ?? 9)
     if (periodDiff !== 0) return periodDiff
@@ -218,9 +281,9 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
               </p>
             </div>
             <div className={`px-3 py-1 rounded-pill text-xs font-medium ${
-              todayActivities.length > 0 ? 'bg-sage-100 text-sage-600' : 'bg-cream-200 text-warm-400'
+              todayConfirmedEntries.length > 0 ? 'bg-sage-100 text-sage-600' : 'bg-cream-200 text-warm-400'
             }`}>
-              {todayActivities.length > 0 ? '● Active' : '○ Quiet'}
+              {todayConfirmedEntries.length > 0 ? '● Active' : '○ Quiet'}
             </div>
           </div>
         ) : (
@@ -278,7 +341,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
         </div>
 
         {/* Today's activity breakdown */}
-        {todayActivities.length > 0 && (
+        {todayConfirmedEntries.length > 0 && (
           <div className="animate-fade-up delay-200">
             <p className="text-warm-500 text-sm font-medium mb-3">Confirmed activity types</p>
             <div className="grid grid-cols-3 gap-2">
@@ -331,27 +394,23 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
           <p className="text-warm-500 text-sm font-medium mb-3">
             {selectedDay === getLocalDateKey(new Date(), careProfile.timezone) ? "Confirmed today" : `Confirmed on ${new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`}
           </p>
-          {selectedActivities.length === 0 ? (
+          {selectedConfirmedEntries.length === 0 ? (
             <div className="card p-6 text-center">
               <p className="text-warm-300 text-sm">No activities confirmed this day.</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {[...selectedActivities].reverse().map(a => {
-                const tile = ACTIVITY_TILES.find(t => t.category === a.category)
-                const timeStr = new Date(a.occurred_at).toLocaleTimeString('en-US', {
-                  hour: 'numeric', minute: '2-digit', hour12: true,
-                })
-                const displayLabel = tile?.label ?? a.label
-                const detail = a.note || (tile && a.label !== tile.label ? a.label : null)
+              {[...selectedConfirmedEntries].reverse().map(entry => {
+                const tile = ACTIVITY_TILES.find(t => t.category === entry.category)
+                const displayLabel = tile?.label ?? entry.label
                 return (
-                  <div key={a.id} className="flex items-center gap-3 bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
+                  <div key={entry.id} className="flex items-center gap-3 bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
                     <span className="text-xl">{tile?.icon ?? '📌'}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-warm-800">{displayLabel}</p>
-                      {detail && <p className="text-xs leading-5 text-warm-500 whitespace-normal break-words">{detail}</p>}
+                      {entry.detail && <p className="text-xs leading-5 text-warm-500 whitespace-normal break-words">{entry.detail}</p>}
                     </div>
-                    <span className="text-xs text-warm-300 whitespace-nowrap">{timeStr}</span>
+                    <span className="text-xs text-warm-300 whitespace-nowrap">{entry.timeLabel}</span>
                   </div>
                 )
               })}
