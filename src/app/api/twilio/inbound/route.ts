@@ -39,6 +39,33 @@ function pendingItemLabel(item: any) {
   return item.note?.trim() || item.label || 'Plan item'
 }
 
+function formatItemList(labels: string[]) {
+  if (labels.length === 1) return `"${labels[0]}"`
+  if (labels.length === 2) return `"${labels[0]}" and "${labels[1]}"`
+  return `${labels.slice(0, -1).map(label => `"${label}"`).join(', ')}, and "${labels[labels.length - 1]}"`
+}
+
+function parseNumberedSelections(body: string) {
+  const normalized = body
+    .trim()
+    .toLowerCase()
+    .replace(/\b(and|plus)\b/g, ',')
+    .replace(/[&+/]/g, ',')
+  const hasConfirmationCue = /\b(done|did|finished|finish|completed|complete|yes|yep|all done)\b/.test(normalized)
+
+  if (/^(all|both|everything|the rest|all done)$/.test(normalized)) return 'all' as const
+
+  const selections = normalized
+    .match(/\d+/g)
+    ?.map(value => Number(value))
+    .filter(value => Number.isInteger(value) && value > 0) ?? []
+
+  if (selections.length === 0) return null
+  if (!/^\d+(?:[\s,.-]+\d+)*$/.test(normalized) && !hasConfirmationCue) return null
+
+  return Array.from(new Set(selections))
+}
+
 function buildPendingChoiceReply(pendingItems: any[], actionLabel = 'finished') {
   const lines = pendingItems
     .slice(0, 6)
@@ -109,22 +136,34 @@ async function updatePendingItem(
 }
 
 async function handleNumberedSelection(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
-  const match = body.trim().match(/^\d+$/)
-  if (!match) return null
+  const selections = parseNumberedSelections(body)
+  if (!selections) return null
 
-  const selectedIndex = Number(match[0]) - 1
   const { data: pendingItems } = await getPendingItems(supabase, profile)
 
   if (!pendingItems || pendingItems.length === 0) {
     return `I do not see anything waiting in today's plan. You can open Context here: ${APP_URL}/mci-user`
   }
 
-  const item = pendingItems[selectedIndex]
-  if (!item) {
+  const selectedIndexes = selections === 'all'
+    ? pendingItems.map((_, index) => index)
+    : selections.map(selection => selection - 1)
+
+  const selectedItems = selectedIndexes
+    .map(index => pendingItems[index])
+    .filter(Boolean)
+
+  if (selectedItems.length === 0) {
     return buildPendingChoiceReply(pendingItems)
   }
 
-  return updatePendingItem(supabase, profile, item, 'yes')
+  const labels: string[] = []
+  for (const item of selectedItems) {
+    labels.push(pendingItemLabel(item))
+    await updatePendingItem(supabase, profile, item, 'yes')
+  }
+
+  return `Thank you. I marked ${formatItemList(labels)} as done in Context.`
 }
 
 async function handleConfirmation(supabase: ReturnType<typeof createServiceClient>, profile: any, confirmation: 'yes' | 'not_now' | 'skip') {
