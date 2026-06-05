@@ -21,12 +21,31 @@ export const APP_URL = getAppUrl()
 
 export function normalizePhone(phone: string) {
   const trimmed = phone.trim()
-  if (trimmed.startsWith('+')) return trimmed
-
   const digits = trimmed.replace(/\D/g, '')
   if (digits.length === 10) return `+1${digits}`
   if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+  if (trimmed.startsWith('+') && digits.length > 0) return `+${digits}`
   return trimmed
+}
+
+export type PhoneSaveError = {
+  code?: string
+  message?: string | null
+}
+
+export function getPhoneSaveErrorMessage(error: PhoneSaveError) {
+  const message = error.message ?? ''
+
+  if (
+    error.code === '23505' ||
+    message.includes('profiles_phone_e164_unique') ||
+    message.includes('duplicate key') ||
+    message.includes('unique constraint')
+  ) {
+    return 'That phone number is already connected to another Context profile. Please use a different number.'
+  }
+
+  return message || 'Could not save this phone number.'
 }
 
 export async function logSmsMessage(

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey } from '@/lib/dates'
-import { normalizePhone } from '@/lib/sms'
+import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, PlannedActivity } from '@/types'
 
@@ -162,9 +162,10 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
       .eq('id', careProfile.id)
     setCarePhoneSaving(false)
     if (error) {
-      setCarePhoneError(error.message)
+      setCarePhoneError(getPhoneSaveErrorMessage(error))
       return
     }
+    setCarePhone(phoneE164 ?? '')
     setCarePhoneSaved(true)
     setTimeout(() => setCarePhoneSaved(false), 2500)
   }

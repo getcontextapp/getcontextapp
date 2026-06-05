@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
+import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import type { UserRole } from '@/types'
 
 type Step = 'role' | 'profile'
@@ -29,9 +30,8 @@ export default function OnboardingPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/auth/login'); return }
 
-    // Normalize phone to E.164
-    const cleanPhone = phone.replace(/\D/g, '')
-    const phoneE164 = cleanPhone ? `+1${cleanPhone}` : null
+    const phoneValue = phone.trim()
+    const phoneE164 = phoneValue ? normalizePhone(phoneValue) : null
 
     if (phoneE164 && !smsConsent) {
       setError('Please check the SMS consent box to receive text reminders, or leave the phone number blank.')
@@ -48,7 +48,7 @@ export default function OnboardingPage() {
     }).select('id').single()
 
     if (insertError) {
-      setError(insertError.message)
+      setError(getPhoneSaveErrorMessage(insertError))
       setLoading(false)
       return
     }

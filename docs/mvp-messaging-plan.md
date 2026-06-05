@@ -4,6 +4,24 @@
 
 Context is not a diary app. The MVP should test whether gentle cues, simple confirmations, and care partner visibility help an older adult with MCI stay oriented during daily life.
 
+## Sprint tracker
+
+- [x] Get Twilio campaign approved and number registered.
+- [x] Send outbound SMS from the Context number.
+- [x] Configure inbound SMS webhook.
+- [x] Let MCI participant confirm pending items by SMS.
+- [x] Ask which item when multiple pending activities exist.
+- [x] Gate inbound SMS by profile role so care partner numbers cannot run MCI-only actions.
+- [x] Add unknown-number response with a Context link.
+- [x] Add app-level phone normalization and duplicate-phone error handling.
+- [ ] Run the phone-uniqueness SQL in Supabase production.
+- [ ] Retest that a care partner number receives only care-partner-appropriate replies.
+- [ ] Retest that an unknown number receives the generic Context reply.
+- [ ] Finish automatic scheduling for 8 AM prompt, no-response follow-up, pending reminders, and end-of-day summary.
+- [ ] Decide the free scheduler path for production.
+- [ ] Add SMS analytics events for sent, received, parsed, confirmed, no-response, and opt-out.
+- [ ] Hide or remove MVP SMS flow test buttons before participant testing.
+
 ## Webapp changes now
 
 - Keep the main activity tiles as the primary structure: Morning, Meal, Movement, Social, Rest, Medication, Other.

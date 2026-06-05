@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { normalizePhone } from '@/lib/sms'
+import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import type { Profile } from '@/types'
 
 interface Props {
@@ -42,11 +42,18 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
 
     setError(null)
     setSaving(true)
-    await supabase
+    const { error: updateError } = await supabase
       .from('profiles')
       .update({ reminder_gap_minutes: gap, daily_summary_time: summaryTime, phone_e164: phoneE164 })
       .eq('id', profile.id)
     setSaving(false)
+
+    if (updateError) {
+      setError(getPhoneSaveErrorMessage(updateError))
+      return
+    }
+
+    if (phoneE164) setPhone(phoneE164)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }

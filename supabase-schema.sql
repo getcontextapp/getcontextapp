@@ -28,6 +28,10 @@ create table if not exists profiles (
   created_at             timestamptz default now()
 );
 
+create unique index if not exists profiles_phone_e164_unique
+  on profiles (phone_e164)
+  where phone_e164 is not null;
+
 -- ─── Activity Logs ───────────────────────────────────────────────────────────
 create table if not exists activity_logs (
   id            uuid primary key default gen_random_uuid(),
