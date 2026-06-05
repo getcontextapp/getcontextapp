@@ -66,7 +66,7 @@ export async function PATCH(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!profile?.household_id) return NextResponse.json({ error: 'No household linked' }, { status: 400 })
 
-  const body: { id?: string; action?: 'confirm' | 'not_now' | 'skipped' } = await request.json()
+  const body: { id?: string; action?: 'confirm' | 'not_now' | 'skipped' | 'reopen' } = await request.json()
   if (!body.id || !body.action) {
     return NextResponse.json({ error: 'Missing planned activity or action' }, { status: 400 })
   }
@@ -80,6 +80,45 @@ export async function PATCH(request: NextRequest) {
 
   if (fetchError || !plannedActivity) {
     return NextResponse.json({ error: fetchError?.message ?? 'Planned activity not found' }, { status: 404 })
+  }
+
+  if (body.action === 'reopen') {
+    const confirmedActivityLogId = plannedActivity.confirmed_activity_log_id
+    const { data: updated, error } = await supabase
+      .from('planned_activities')
+      .update({
+        status: 'planned',
+        confirmed_activity_log_id: null,
+        confirmed_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', plannedActivity.id)
+      .select()
+      .single()
+
+    if (error || !updated) {
+      return NextResponse.json({ error: error?.message ?? 'Reopen failed' }, { status: 500 })
+    }
+
+    if (confirmedActivityLogId) {
+      await supabase
+        .from('activity_logs')
+        .delete()
+        .eq('id', confirmedActivityLogId)
+        .eq('household_id', profile.household_id)
+    }
+
+    await trackEvent(supabase, {
+      eventName: 'planned_activity_reopened',
+      profile,
+      userId: user.id,
+      properties: {
+        planned_activity_id: plannedActivity.id,
+        deleted_activity_id: confirmedActivityLogId,
+      },
+    })
+
+    return NextResponse.json({ plannedActivity: updated, activity: null, deleted_activity_id: confirmedActivityLogId })
   }
 
   if (body.action !== 'confirm') {
@@ -157,4 +196,3 @@ export async function PATCH(request: NextRequest) {
 
   return NextResponse.json({ plannedActivity: updated, activity })
 }
-

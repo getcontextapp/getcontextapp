@@ -76,7 +76,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setSelectedTile(null)
   }, [])
 
-  const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped') => {
+  const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen') => {
     const res = await fetch('/api/planned-activities', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -85,8 +85,12 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
     if (!res.ok) return
 
-    const result: { plannedActivity: PlannedActivity; activity: ActivityLog | null } = await res.json()
+    const result: { plannedActivity: PlannedActivity; activity: ActivityLog | null; deleted_activity_id?: string | null } = await res.json()
     setPlannedActivities(prev => prev.map(item => item.id === result.plannedActivity.id ? result.plannedActivity : item))
+
+    if (result.deleted_activity_id) {
+      setActivities(prev => prev.filter(activity => activity.id !== result.deleted_activity_id))
+    }
 
     if (!result.activity) return
 
@@ -238,7 +242,16 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                         <p className="text-[11px] text-warm-300 mt-1">Expected: {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}</p>
                       </div>
                     </div>
-                    {!isConfirmed && !isSkipped && (
+                    {isConfirmed ? (
+                      <div className="mt-3">
+                        <button
+                          onClick={() => handlePlanAction(item, 'reopen')}
+                          className="w-full rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                        >
+                          Undo done
+                        </button>
+                      </div>
+                    ) : !isSkipped && (
                       <div className="grid grid-cols-2 gap-2 mt-3">
                         <button
                           onClick={() => handlePlanAction(item, 'confirm')}

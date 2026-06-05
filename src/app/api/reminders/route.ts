@@ -9,7 +9,7 @@ import { APP_URL, logSmsMessage } from '@/lib/sms'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
-// Called by Vercel Cron every 15 minutes
+// Called by fixed Vercel Cron touchpoints on the Hobby plan.
 export async function GET(request: NextRequest) {
   // Verify cron secret
   const authHeader = request.headers.get('authorization')

@@ -139,6 +139,58 @@ async function updatePendingItem(
   return `Thank you. I marked "${pendingItemLabel(item)}" as done in Context.`
 }
 
+function isUndoRequest(body: string) {
+  return /\b(undo|mistake|not done|did not do|didn't do|accident|accidentally)\b/i.test(body)
+}
+
+async function reopenMostRecentConfirmedItem(supabase: ReturnType<typeof createServiceClient>, profile: any) {
+  const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  const { data: item } = await supabase
+    .from('planned_activities')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .eq('planned_for', todayKey)
+    .eq('status', 'confirmed')
+    .order('confirmed_at', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!item) {
+    return `I do not see a completed planned item to undo today. You can open Context here: ${APP_URL}/mci-user`
+  }
+
+  const confirmedActivityLogId = item.confirmed_activity_log_id
+  await supabase
+    .from('planned_activities')
+    .update({
+      status: 'planned',
+      confirmed_activity_log_id: null,
+      confirmed_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', item.id)
+
+  if (confirmedActivityLogId) {
+    await supabase
+      .from('activity_logs')
+      .delete()
+      .eq('id', confirmedActivityLogId)
+      .eq('household_id', profile.household_id)
+  }
+
+  await trackEvent(supabase, {
+    eventName: 'sms_activity_reopened',
+    profile,
+    userId: profile.user_id,
+    properties: {
+      planned_activity_id: item.id,
+      deleted_activity_id: confirmedActivityLogId,
+    },
+  })
+
+  return `No problem. I moved "${pendingItemLabel(item)}" back to waiting in your Context plan.`
+}
+
 async function handleNumberedSelection(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
   const selections = parseNumberedSelections(body)
   if (!selections) return null
@@ -292,6 +344,21 @@ export async function POST(request: NextRequest) {
       metadata: { blocked_role: profile.role },
     })
     return xmlResponse(CARE_PARTNER_LIMIT_REPLY)
+  }
+
+  if (isUndoRequest(body)) {
+    const reply = await reopenMostRecentConfirmedItem(supabase, profile)
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: reply,
+      status: 'twiml_reply',
+      metadata: { undo: true },
+    })
+    return xmlResponse(reply)
   }
 
   const numberedSelectionReply = await handleNumberedSelection(supabase, profile, body)
