@@ -21,6 +21,7 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 - [x] Decide the free scheduler path for production.
 - [x] Add fixed daily pending-task nudges for the Hobby plan.
 - [x] Add undo/reopen support for mistakenly completed planned activities.
+- [ ] Change SMS undo to list completed tasks and let the MCI user choose one or more by number.
 - [ ] Add SMS analytics events for sent, received, parsed, confirmed, no-response, and opt-out.
 - [ ] Hide or remove MVP SMS flow test buttons before participant testing.
 
