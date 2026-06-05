@@ -139,10 +139,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     }
   }, [deleteCandidate, handlePlanAction])
 
-  const dismissContextCard = useCallback(async (action: 'dismissed' | 'remind_later' = 'dismissed') => {
+  const dismissContextCard = useCallback(async () => {
     if (!contextCard) return
     await supabase.from('context_cards').update({ is_active: false }).eq('id', contextCard.id)
-    trackClientEvent(action === 'remind_later' ? 'context_card_remind_later' : 'context_card_dismissed', {
+    trackClientEvent('context_card_dismissed', {
       card_id: contextCard.id,
       card_type: contextCard.type,
     })
@@ -213,8 +213,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             card={contextCard}
             isGenerating={generatingCard}
             onShowWaiting={showWaitingTasks}
-            onRemindLater={() => dismissContextCard('remind_later')}
-            onDismiss={() => dismissContextCard('dismissed')}
+            onDismiss={dismissContextCard}
           />
         ) : generatingCard ? (
           <div className="card p-5 animate-pulse-soft">
@@ -327,26 +326,6 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           )}
         </div>
 
-        {/* Activity Tiles Grid */}
-        <div>
-          <p className="text-warm-500 text-sm font-medium mb-3">Add something to today</p>
-          <div className="grid grid-cols-3 gap-3">
-            {ACTIVITY_TILES.map((tile, i) => (
-              <button
-                key={tile.category}
-                onClick={() => setSelectedTile(tile)}
-                className={`${tile.colorClass} border-2 rounded-card p-4 text-left
-                            hover:shadow-float active:scale-[0.96] transition-all
-                            animate-fade-up`}
-                style={{ animationDelay: `${i * 0.06}s` }}
-              >
-                <span className="text-2xl block mb-1.5">{tile.icon}</span>
-                <span className="text-sm font-medium text-warm-700">{tile.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Confirmed Timeline */}
         {activities.length > 0 && (
           <div className="animate-fade-up">
@@ -384,6 +363,26 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             </div>
           </div>
         )}
+
+        {/* Activity Tiles Grid */}
+        <div className="animate-fade-up">
+          <p className="text-warm-400 text-sm font-medium mb-3">Add something else</p>
+          <div className="grid grid-cols-3 gap-2">
+            {ACTIVITY_TILES.map((tile, i) => (
+              <button
+                key={tile.category}
+                onClick={() => setSelectedTile(tile)}
+                className={`${tile.colorClass} border rounded-xl p-3 text-left
+                            opacity-90 hover:opacity-100 active:scale-[0.96] transition-all
+                            animate-fade-up`}
+                style={{ animationDelay: `${i * 0.04}s` }}
+              >
+                <span className="text-xl block mb-1">{tile.icon}</span>
+                <span className="text-xs font-medium text-warm-700">{tile.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Activity Log Modal */}
