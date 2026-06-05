@@ -50,6 +50,29 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
   const todayKey = getLocalDateKey(now, profile.timezone)
 
+  const refreshContextCard = useCallback(async (activityLogId?: string | null) => {
+    setGeneratingCard(true)
+    try {
+      const res = await fetch('/api/context-cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          activity_log_id: activityLogId ?? null,
+          type: 'open',
+        }),
+      })
+      if (res.ok) {
+        const card = await res.json()
+        setContextCard(card)
+      } else if (res.status === 400) {
+        setContextCard(null)
+      }
+    } catch {
+    } finally {
+      setGeneratingCard(false)
+    }
+  }, [])
+
   // Subscribe to realtime activity updates
   useEffect(() => {
     trackClientEvent('mci_dashboard_viewed', {
@@ -66,17 +89,60 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         table: 'activity_logs',
         filter: `household_id=eq.${profile.household_id}`,
       }, payload => {
-        setActivities(prev => [payload.new as ActivityLog, ...prev])
+        const created = payload.new as ActivityLog
+        setActivities(prev => prev.some(activity => activity.id === created.id) ? prev : [created, ...prev])
+        refreshContextCard(created.id)
+      })
+      .on('postgres_changes', {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'activity_logs',
+        filter: `household_id=eq.${profile.household_id}`,
+      }, payload => {
+        const deleted = payload.old as Partial<ActivityLog>
+        setActivities(prev => prev.filter(activity => activity.id !== deleted.id))
+        refreshContextCard()
+      })
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'planned_activities',
+        filter: `household_id=eq.${profile.household_id}`,
+      }, payload => {
+        const created = payload.new as PlannedActivity
+        setPlannedActivities(prev => prev.some(item => item.id === created.id) ? prev : [...prev, created])
+        refreshContextCard()
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'planned_activities',
+        filter: `household_id=eq.${profile.household_id}`,
+      }, payload => {
+        const updated = payload.new as PlannedActivity
+        setPlannedActivities(prev => prev.map(item => item.id === updated.id ? updated : item))
+        refreshContextCard()
+      })
+      .on('postgres_changes', {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'planned_activities',
+        filter: `household_id=eq.${profile.household_id}`,
+      }, payload => {
+        const deleted = payload.old as Partial<PlannedActivity>
+        setPlannedActivities(prev => prev.filter(item => item.id !== deleted.id))
+        refreshContextCard()
       })
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [profile.household_id, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase])
+  }, [profile.household_id, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase, refreshContextCard])
 
   const handleActivityPlanned = useCallback((activity: PlannedActivity) => {
     setPlannedActivities(prev => [...prev, activity])
     setSelectedTile(null)
-  }, [])
+    refreshContextCard()
+  }, [refreshContextCard])
 
   const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete') => {
     const res = await fetch('/api/planned-activities', {
@@ -104,29 +170,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       setActivities(prev => prev.filter(activity => activity.id !== result.deleted_activity_id))
     }
 
-    if (!result.activity) return
-
-    setActivities(prev => [result.activity!, ...prev])
-
-    setGeneratingCard(true)
-    try {
-      const res = await fetch('/api/context-cards', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          activity_log_id: result.activity.id,
-          type: 'open',
-        }),
-      })
-      if (res.ok) {
-        const card = await res.json()
-        setContextCard(card)
-      }
-    } catch {
-    } finally {
-      setGeneratingCard(false)
+    if (!result.activity) {
+      refreshContextCard()
+      return
     }
-  }, [])
+
+    setActivities(prev => prev.some(activity => activity.id === result.activity!.id) ? prev : [result.activity!, ...prev])
+    refreshContextCard(result.activity.id)
+  }, [refreshContextCard])
 
   const handleDeleteConfirmed = useCallback(async () => {
     if (!deleteCandidate) return
