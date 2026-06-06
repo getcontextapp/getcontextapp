@@ -59,7 +59,7 @@ Context is not a diary app. The MVP should test whether gentle cues, simple conf
 6. Let the participant confirm by tapping a link or replying by text.
    This should feel like confirmation, not homework.
 
-7. Send the MCI participant and care partner a daily summary around 9:00 PM.
+7. Send the MCI participant and care partner a daily summary around 8:00 PM.
    Keep it short, warm, and factual.
 
 ## No-response logic

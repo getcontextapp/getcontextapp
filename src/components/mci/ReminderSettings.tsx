@@ -19,7 +19,7 @@ const GAP_OPTIONS = [
   { value: 240, label: '4 hours' },
 ]
 
-const DEFAULT_SUMMARY_TIME = '21:00'
+const DEFAULT_SUMMARY_TIME = '20:00'
 
 export default function ReminderSettings({ profile, onClose, onSignOut }: Props) {
   const supabase = createClient()

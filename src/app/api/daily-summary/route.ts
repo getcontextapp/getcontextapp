@@ -19,9 +19,9 @@ function getLocalHour(profile: any) {
 }
 
 function getScheduledSummaryHour(profile: any) {
-  const configured = String(profile.daily_summary_time || '21:00')
+  const configured = String(profile.daily_summary_time || '20:00')
   const hour = Number(configured.slice(0, 2))
-  return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 21
+  return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 20
 }
 
 // POST: manual trigger (from care partner UI)
