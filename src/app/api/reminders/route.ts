@@ -48,6 +48,8 @@ export async function GET(request: NextRequest) {
 
     // Keep SMS nudges inside the MVP day window: 8 AM through 8 PM local time.
     if (localHour < 8 || localHour > 20) continue
+    if (slot === 'noon' && localHour !== 12) continue
+    if (slot === 'afternoon' && localHour !== 16) continue
 
     const gapMinutes = profile.reminder_gap_minutes ?? 240
     const gapMs = gapMinutes * 60 * 1000

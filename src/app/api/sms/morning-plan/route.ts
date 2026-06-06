@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const force = request.nextUrl.searchParams.get('force') === '1'
   const supabase = createServiceClient()
   const profiles = await getMciProfilesForSms(supabase)
 
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
 
   for (const profile of profiles) {
     const hour = localHour(profile)
-    if (hour !== 8) {
+    if (!force && hour !== 8) {
       results.push({
         profile_id: profile.id,
         timezone: profile.timezone,
@@ -48,18 +49,20 @@ export async function GET(request: NextRequest) {
 
     const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
 
-    const { data: alreadySent } = await supabase
-      .from('sms_messages')
-      .select('id')
-      .eq('profile_id', profile.id)
-      .eq('purpose', 'morning_prompt')
-      .eq('direction', 'outbound')
-      .neq('status', 'failed')
-      .contains('metadata', { scheduled: true })
-      .gte('created_at', todayRange.start)
-      .lt('created_at', todayRange.end)
-      .limit(1)
-      .maybeSingle()
+    const { data: alreadySent } = force
+      ? { data: null }
+      : await supabase
+          .from('sms_messages')
+          .select('id')
+          .eq('profile_id', profile.id)
+          .eq('purpose', 'morning_prompt')
+          .eq('direction', 'outbound')
+          .neq('status', 'failed')
+          .contains('metadata', { scheduled: true })
+          .gte('created_at', todayRange.start)
+          .lt('created_at', todayRange.end)
+          .limit(1)
+          .maybeSingle()
 
     if (alreadySent) {
       results.push({
@@ -84,7 +87,8 @@ export async function GET(request: NextRequest) {
       twilioSid: sid,
       status,
       metadata: {
-        scheduled: true,
+        scheduled: !force,
+        scheduler_test: force,
         cron: 'morning_plan',
         error,
       },
@@ -100,7 +104,8 @@ export async function GET(request: NextRequest) {
         error,
         timezone: profile.timezone,
         local_hour: hour,
-        scheduled: true,
+        scheduled: !force,
+        scheduler_test: force,
       },
     })
 
@@ -127,7 +132,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const response = { processed: profiles.length, sent, failed, results }
+  const response = { processed: profiles.length, sent, failed, force, results }
   console.info('[Cron morning-plan]', response)
   return NextResponse.json(response)
 }
