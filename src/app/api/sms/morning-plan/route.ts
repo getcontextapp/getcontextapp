@@ -24,7 +24,18 @@ export async function GET(request: NextRequest) {
 
   const force = request.nextUrl.searchParams.get('force') === '1'
   const supabase = createServiceClient()
-  const profiles = await getMciProfilesForSms(supabase)
+  let profiles
+
+  try {
+    profiles = await getMciProfilesForSms(supabase)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown profile lookup error'
+    console.error('[Cron morning-plan] Profile lookup failed:', message)
+    return NextResponse.json({
+      error: 'profile_lookup_failed',
+      ...(force ? { details: message } : {}),
+    }, { status: 500 })
+  }
 
   if (profiles.length === 0) {
     console.info('[Cron morning-plan]', { processed: 0, sent: 0, reason: 'no_sms_ready_profiles' })

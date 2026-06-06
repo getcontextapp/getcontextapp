@@ -86,13 +86,17 @@ export async function getCarePartnersForHousehold(
 }
 
 export async function getMciProfilesForSms(supabase: SupabaseClient): Promise<SmsReadyProfile[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('profiles')
     .select('*')
     .eq('role', 'mci_user')
     .not('phone_e164', 'is', null)
     .not('household_id', 'is', null)
     .order('created_at', { ascending: true })
+
+  if (error) {
+    throw new Error(`Unable to load SMS-ready MCI profiles: ${error.message}`)
+  }
 
   return (data ?? []) as SmsReadyProfile[]
 }
