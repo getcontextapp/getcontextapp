@@ -31,6 +31,15 @@ export interface ParsedPendingSmsReply {
   reply: string
 }
 
+export interface SmsInterpreterContext {
+  pendingItems?: PendingSmsItem[]
+  todaysItems?: PendingSmsItem[]
+  recentMessages?: Array<{
+    direction: 'inbound' | 'outbound'
+    body: string
+  }>
+}
+
 const VALID_CATEGORIES: ActivityCategory[] = ['morning', 'meal', 'movement', 'social', 'rest', 'medication', 'custom']
 const VALID_PERIODS: ExpectedPeriod[] = ['morning', 'afternoon', 'evening', 'anytime']
 
@@ -90,6 +99,20 @@ function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
       items: [],
       confirmation: 'skip',
       reply: 'Okay. I will leave that aside for now.',
+    }
+  }
+
+  const planningListCue = /\b(my plans?|my to-?do list|add these|i need to|i want to|i plan to)\b/.test(lower)
+  if (planningListCue) {
+    const listText = message
+      .replace(/^.*?\b(?:my plans?|my to-?do list|add these(?: to my plans?)?|i need to|i want to|i plan to)\b\s*:?\s*/i, '')
+    const listItems = listText
+      .split(/[,;\n]+/)
+      .map(item => normalizePlannedNote(item).replace(/[.]+$/, '').trim())
+      .filter(item => item.length > 1)
+
+    for (const note of listItems.slice(0, 12)) {
+      add('custom', note, 'medium')
     }
   }
 
@@ -273,13 +296,40 @@ Return exactly this shape:
   }
 }
 
-export async function parseSmsPlanReply(message: string, displayName: string, timeZone?: string | null): Promise<ParsedSmsPlanReply> {
-  const prompt = `You are a strict parser for Context, an app for older adults with MCI.
+export async function parseSmsPlanReply(
+  message: string,
+  displayName: string,
+  timeZone?: string | null,
+  context: SmsInterpreterContext = {},
+): Promise<ParsedSmsPlanReply> {
+  const pendingItems = (context.pendingItems ?? []).slice(0, 10)
+  const todaysItems = (context.todaysItems ?? []).slice(0, 12)
+  const recentMessages = (context.recentMessages ?? []).slice(-8)
+  const pendingList = pendingItems.length > 0
+    ? pendingItems.map((item, index) => `${index + 1}. ${item.note?.trim() || item.label}`).join('\n')
+    : 'None'
+  const todayList = todaysItems.length > 0
+    ? todaysItems.map((item, index) => `${index + 1}. ${item.note?.trim() || item.label}`).join('\n')
+    : 'None'
+  const conversation = recentMessages.length > 0
+    ? recentMessages.map(message => `${message.direction === 'inbound' ? 'User' : 'Context'}: ${message.body}`).join('\n')
+    : 'No recent messages'
 
-The user may write messy SMS text without punctuation. Decide whether they are planning something for later today or reporting something already completed today.
+  const prompt = `You are the primary SMS interpreter for Context, an app for older adults with MCI.
+
+Understand ordinary, natural conversation without requiring special commands. The user may write messy text, omit punctuation, use tense imperfectly, provide a long list, ask a question, or refer to earlier messages.
 
 User name: ${displayName}
 User timezone: ${timeZone ?? 'America/New_York'}
+Today's waiting items:
+${pendingList}
+
+All of today's plan items:
+${todayList}
+
+Recent conversation:
+${conversation}
+
 SMS text:
 "${message}"
 
@@ -301,11 +351,18 @@ Allowed expected_period values:
 Rules:
 - Return JSON only. No markdown.
 - Do not invent tasks that are not implied by the message.
+- Prefer the meaning of the complete sentence over isolated keywords. For example, "finish my paper" is a future task, while "finished my paper" reports completion.
+- A list introduced by phrases such as "my plans", "my to-do list", "add these", "I need to", or a reply to Context's morning planning question is intent "plan".
+- If a message contains several comma-separated or sentence-separated activities, return each distinct activity. Support up to 12.
 - Use "custom" for appointments, errands, household tasks, hobbies, finance, community activities, clubs, church, library, games, or anything that does not fit.
 - Use "social" for calls, visits, family, friends, neighbors, clubs, groups, church, or community gatherings when the social connection is the main point.
 - If the message is mainly "yes", "done", "I did it", or "already did it", set intent to "confirmation" and confirmation to "yes".
 - If the message is "not yet", "later", or similar, set intent to "confirmation" and confirmation to "not_now".
 - If the message is "skip", "no", "cancel", or similar, set intent to "confirmation" and confirmation to "skip".
+- If the user asks what is pending, waiting, left, remaining, or on today's plan, set intent to "pending_status".
+- If the user says a waiting item is done, not done yet, should be left for later, or skipped, set intent to "pending_action", set confirmation, and select the matching waiting item numbers. Use "all" when clearly requested.
+- If the user asks to undo, correct a mistake, or says something was not done, set intent to "undo_request".
+- If the user asks to delete or remove a task, set intent to "delete_request". Do not perform deletion directly; Context will ask for confirmation.
 - If the message reports a specific completed activity in past tense, set intent to "completed" and return that completed activity in items.
 - Examples of completed activity language: "Called my daughter", "I walked outside", "I had lunch", "Went to club", "Took my pills".
 - If the message expresses a future intention, set intent to "plan".
@@ -316,34 +373,52 @@ Rules:
 - Good planned notes: "Take morning pills", "Call daughter", "Walk outside", "Eat lunch", "Go to eye appointment".
 - Bad planned notes: "Took pills", "Called daughter", "Walked outside", "Ate lunch".
 - Keep each note short and natural, using the user's words when possible but converting to plan language.
-- If the user mentions tomorrow or another future day, ignore that item for this MVP unless they also mention doing it today.
+- If the user mentions tomorrow or another future day, explain briefly that Context currently saves SMS plans for today and return "unclear" unless the message also includes tasks for today.
 - Use confidence "high", "medium", or "low".
 
 Return exactly this shape:
 {
-  "intent": "plan" | "completed" | "confirmation" | "unclear",
+  "intent": "plan" | "completed" | "confirmation" | "pending_status" | "pending_action" | "undo_request" | "delete_request" | "unclear",
   "items": [
     { "category": "meal", "note": "Lunch", "expected_period": "afternoon", "confidence": "high" }
   ],
   "confirmation": "yes" | "not_now" | "skip" | null,
+  "selected_numbers": [1, 2] | "all",
   "reply": "short warm SMS reply"
 }`
 
   try {
     const result = await client.messages.create({
       model: MODEL,
-      max_tokens: 700,
+      max_tokens: 1200,
       messages: [{ role: 'user', content: prompt }],
     })
 
     const raw = result.content[0].type === 'text' ? result.content[0].text : ''
     const parsed = JSON.parse(cleanJson(raw))
 
-    const intent = ['plan', 'completed', 'confirmation', 'unclear'].includes(parsed.intent) ? parsed.intent : 'unclear'
+    const validIntents = [
+      'plan',
+      'completed',
+      'confirmation',
+      'pending_status',
+      'pending_action',
+      'undo_request',
+      'delete_request',
+      'unclear',
+    ]
+    const intent = validIntents.includes(parsed.intent) ? parsed.intent : 'unclear'
     const confirmation = ['yes', 'not_now', 'skip'].includes(parsed.confirmation) ? parsed.confirmation : null
+    const selectedNumbers: number[] | 'all' = parsed.selected_numbers === 'all'
+      ? 'all'
+      : Array.isArray(parsed.selected_numbers)
+        ? Array.from(new Set(parsed.selected_numbers
+          .map((value: unknown) => Number(value))
+          .filter((value: number) => Number.isInteger(value) && value > 0 && value <= pendingItems.length)))
+        : []
     const items = Array.isArray(parsed.items)
       ? parsed.items
-        .slice(0, 6)
+        .slice(0, 12)
         .map((item: any) => ({
           category: safeCategory(item.category),
           note: intent === 'completed'
@@ -359,6 +434,7 @@ Return exactly this shape:
       intent,
       items,
       confirmation,
+      selected_numbers: selectedNumbers,
       reply: String(parsed.reply ?? 'I saved that in Context.').slice(0, 240),
     }
   } catch (error) {

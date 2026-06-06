@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
-import { parsePendingSmsReply, parseSmsPlanReply } from '@/lib/anthropic'
+import { parseSmsPlanReply } from '@/lib/anthropic'
 import { getLocalDateKey } from '@/lib/dates'
 import { buildPlanSavedReply, logSmsMessage, normalizePhone, twiml, APP_URL } from '@/lib/sms'
 import { getSmsProfileMatch } from '@/lib/household-links'
@@ -42,7 +42,23 @@ async function getTodaysPlannedItems(supabase: ReturnType<typeof createServiceCl
     .eq('household_id', profile.household_id)
     .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
     .order('created_at', { ascending: true })
+    .limit(12)
+}
+
+async function getRecentConversation(supabase: ReturnType<typeof createServiceClient>, profile: any) {
+  const { data } = await supabase
+    .from('sms_messages')
+    .select('direction, body')
+    .eq('profile_id', profile.id)
+    .order('created_at', { ascending: false })
     .limit(8)
+
+  return (data ?? [])
+    .reverse()
+    .map(message => ({
+      direction: message.direction as 'inbound' | 'outbound',
+      body: String(message.body ?? '').slice(0, 500),
+    }))
 }
 
 function pendingItemLabel(item: any) {
@@ -195,20 +211,6 @@ async function updatePendingItem(
   })
 
   return `Thank you. I marked "${pendingItemLabel(item)}" as done in Context.`
-}
-
-function isUndoRequest(body: string) {
-  return /\b(undo|mistake|not done|did not do|didn't do|accident|accidentally)\b/i.test(body)
-}
-
-function isDeleteRequest(body: string) {
-  return /\b(delete|remove|erase|trash|drop)\b/i.test(body)
-}
-
-function isPendingStatusRequest(body: string) {
-  return /\b(what|which|show|list|tell me|remind me)\b.*\b(task|tasks|things|items|plan|pending|waiting|left)\b/i.test(body) ||
-    /\b(task|tasks|things|items|plan)\b.*\b(pending|waiting|left|remaining|not done)\b/i.test(body) ||
-    /\b(what do i have|what's left|whats left|anything left)\b/i.test(body)
 }
 
 function isCancelReply(body: string) {
@@ -424,11 +426,6 @@ async function handleDeleteConfirmation(supabase: ReturnType<typeof createServic
   return deletePlannedItems(supabase, profile, orderedItems)
 }
 
-async function handlePendingStatusRequest(supabase: ReturnType<typeof createServiceClient>, profile: any) {
-  const { data: pendingItems } = await getPendingItems(supabase, profile)
-  return buildPendingStatusReply(pendingItems ?? [])
-}
-
 async function hasRecentSmsPurpose(
   supabase: ReturnType<typeof createServiceClient>,
   profile: any,
@@ -528,41 +525,6 @@ async function updateSelectedPendingItems(
   return `Thank you. I marked ${formatItemList(labels)} as done in Context.`
 }
 
-async function handleNaturalPendingReply(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
-  const { data: pendingItems } = await getPendingItems(supabase, profile)
-  if (!pendingItems || pendingItems.length === 0) return null
-
-  const parsed = await parsePendingSmsReply(
-    body,
-    pendingItems.map(item => ({
-      label: item.label,
-      category: item.category,
-      note: item.note,
-      expected_period: item.expected_period,
-    })),
-    profile.display_name,
-    profile.timezone,
-  )
-
-  if (parsed.intent !== 'pending_action' || !parsed.action) return null
-
-  const selectedItems = parsed.selected_numbers === 'all'
-    ? pendingItems
-    : parsed.selected_numbers
-      .map(selection => pendingItems[selection - 1])
-      .filter(Boolean)
-
-  if (selectedItems.length === 0) {
-    return {
-      reply: buildPendingChoiceReply(pendingItems),
-      parsed,
-    }
-  }
-
-  const reply = await updateSelectedPendingItems(supabase, profile, selectedItems, parsed.action)
-  return { reply, parsed }
-}
-
 async function handleConfirmation(supabase: ReturnType<typeof createServiceClient>, profile: any, confirmation: 'yes' | 'not_now' | 'skip') {
   const { data: pendingItems } = await getPendingItems(supabase, profile)
 
@@ -644,21 +606,6 @@ export async function POST(request: NextRequest) {
     return xmlResponse(deleteConfirmationReply)
   }
 
-  if (isDeleteRequest(body)) {
-    const reply = await handleDeleteRequest(supabase, profile)
-    await logSmsMessage(supabase, {
-      householdId: profile.household_id,
-      profileId: profile.id,
-      direction: 'outbound',
-      purpose: 'inbound_confirmation',
-      phoneE164: from,
-      body: reply,
-      status: 'twiml_reply',
-      metadata: { delete: true, delete_prompt: true },
-    })
-    return xmlResponse(reply)
-  }
-
   const deleteSelectionReply = await handleDeleteSelection(supabase, profile, body)
   if (deleteSelectionReply) {
     const deleteReplyBody = typeof deleteSelectionReply === 'string'
@@ -681,21 +628,6 @@ export async function POST(request: NextRequest) {
           },
     })
     return xmlResponse(deleteReplyBody)
-  }
-
-  if (isUndoRequest(body)) {
-    const reply = await reopenMostRecentConfirmedItem(supabase, profile)
-    await logSmsMessage(supabase, {
-      householdId: profile.household_id,
-      profileId: profile.id,
-      direction: 'outbound',
-      purpose: 'inbound_confirmation',
-      phoneE164: from,
-      body: reply,
-      status: 'twiml_reply',
-      metadata: { undo: true, undo_prompt: true },
-    })
-    return xmlResponse(reply)
   }
 
   const undoSelectionReply = await handleUndoSelection(supabase, profile, body)
@@ -728,23 +660,30 @@ export async function POST(request: NextRequest) {
     return xmlResponse(numberedSelectionReply)
   }
 
-  const naturalPendingReply = await handleNaturalPendingReply(supabase, profile, body)
-  if (naturalPendingReply) {
-    await logSmsMessage(supabase, {
-      householdId: profile.household_id,
-      profileId: profile.id,
-      direction: 'outbound',
-      purpose: 'inbound_confirmation',
-      phoneE164: from,
-      body: naturalPendingReply.reply,
-      status: 'twiml_reply',
-      metadata: { parsed: naturalPendingReply.parsed },
-    })
-    return xmlResponse(naturalPendingReply.reply)
-  }
+  const [{ data: pendingItems }, { data: todaysItems }, recentMessages] = await Promise.all([
+    getPendingItems(supabase, profile),
+    getTodaysPlannedItems(supabase, profile),
+    getRecentConversation(supabase, profile),
+  ])
 
-  if (isPendingStatusRequest(body)) {
-    const reply = await handlePendingStatusRequest(supabase, profile)
+  const parsed = await parseSmsPlanReply(body, profile.display_name, profile.timezone, {
+    pendingItems: (pendingItems ?? []).map(item => ({
+      label: item.label,
+      category: item.category,
+      note: item.note,
+      expected_period: item.expected_period,
+    })),
+    todaysItems: (todaysItems ?? []).map(item => ({
+      label: item.label,
+      category: item.category,
+      note: item.note,
+      expected_period: item.expected_period,
+    })),
+    recentMessages,
+  })
+
+  if (parsed.intent === 'pending_status') {
+    const reply = buildPendingStatusReply(pendingItems ?? [])
     await logSmsMessage(supabase, {
       householdId: profile.household_id,
       profileId: profile.id,
@@ -753,20 +692,70 @@ export async function POST(request: NextRequest) {
       phoneE164: from,
       body: reply,
       status: 'twiml_reply',
-      metadata: { pending_status_request: true },
+      metadata: { pending_status_request: true, parsed },
     })
-
     await trackEvent(supabase, {
       eventName: 'sms_pending_status_requested',
       profile,
       userId: profile.user_id,
-      properties: { raw_length: body.length },
+      properties: { raw_length: body.length, parsed_by: 'anthropic' },
     })
-
     return xmlResponse(reply)
   }
 
-  const parsed = await parseSmsPlanReply(body, profile.display_name, profile.timezone)
+  if (parsed.intent === 'pending_action' && parsed.confirmation) {
+    const selectedItems = parsed.selected_numbers === 'all'
+      ? (pendingItems ?? [])
+      : (parsed.selected_numbers ?? [])
+        .map(selection => (pendingItems ?? [])[selection - 1])
+        .filter(Boolean)
+
+    const reply = selectedItems.length > 0
+      ? await updateSelectedPendingItems(supabase, profile, selectedItems, parsed.confirmation)
+      : buildPendingChoiceReply(pendingItems ?? [])
+
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: reply,
+      status: 'twiml_reply',
+      metadata: { parsed },
+    })
+    return xmlResponse(reply)
+  }
+
+  if (parsed.intent === 'undo_request') {
+    const reply = await reopenMostRecentConfirmedItem(supabase, profile)
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: reply,
+      status: 'twiml_reply',
+      metadata: { undo: true, undo_prompt: true, parsed },
+    })
+    return xmlResponse(reply)
+  }
+
+  if (parsed.intent === 'delete_request') {
+    const reply = await handleDeleteRequest(supabase, profile)
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: reply,
+      status: 'twiml_reply',
+      metadata: { delete: true, delete_prompt: true, parsed },
+    })
+    return xmlResponse(reply)
+  }
 
   if (parsed.intent === 'confirmation' && parsed.confirmation) {
     const reply = await handleConfirmation(supabase, profile, parsed.confirmation)

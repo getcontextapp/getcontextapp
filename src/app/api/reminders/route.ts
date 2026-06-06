@@ -30,14 +30,27 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient()
   const slot = reminderSlot(request.nextUrl.pathname)
   const isFixedSlot = slot === 'noon' || slot === 'afternoon'
+  const force = request.nextUrl.searchParams.get('force') === '1'
 
-  const mciProfiles = await getMciProfilesForSms(supabase)
+  let mciProfiles
+  try {
+    mciProfiles = await getMciProfilesForSms(supabase)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown profile lookup error'
+    console.error(`[Cron reminder:${slot}] Profile lookup failed:`, message)
+    return NextResponse.json({
+      error: 'profile_lookup_failed',
+      ...(force ? { details: message } : {}),
+    }, { status: 500 })
+  }
 
   if (mciProfiles.length === 0) {
-    return NextResponse.json({ processed: 0 })
+    return NextResponse.json({ processed: 0, sent: 0, failed: 0, slot, force, results: [] })
   }
 
   let sent = 0
+  let failed = 0
+  const results: Array<Record<string, unknown>> = []
 
   for (const profile of mciProfiles) {
     const localHour = Number(new Date().toLocaleString('en-US', {
@@ -47,9 +60,18 @@ export async function GET(request: NextRequest) {
     }))
 
     // Keep SMS nudges inside the MVP day window: 8 AM through 8 PM local time.
-    if (localHour < 8 || localHour > 20) continue
-    if (slot === 'noon' && localHour !== 12) continue
-    if (slot === 'afternoon' && localHour !== 16) continue
+    if (!force && (localHour < 8 || localHour > 20)) {
+      results.push({ profile_id: profile.id, local_hour: localHour, outcome: 'skipped_outside_day_window' })
+      continue
+    }
+    if (!force && slot === 'noon' && localHour !== 12) {
+      results.push({ profile_id: profile.id, local_hour: localHour, outcome: 'skipped_wrong_local_hour' })
+      continue
+    }
+    if (!force && slot === 'afternoon' && localHour !== 16) {
+      results.push({ profile_id: profile.id, local_hour: localHour, outcome: 'skipped_wrong_local_hour' })
+      continue
+    }
 
     const gapMinutes = profile.reminder_gap_minutes ?? 240
     const gapMs = gapMinutes * 60 * 1000
@@ -72,9 +94,17 @@ export async function GET(request: NextRequest) {
     }
 
     // Only remind when there is at least one planned item waiting for confirmation.
-    const { data: pendingItems } = await pendingQuery
+    const { data: pendingItems, error: pendingError } = await pendingQuery
 
-    if (!pendingItems || pendingItems.length === 0) continue
+    if (pendingError) {
+      failed++
+      results.push({ profile_id: profile.id, local_hour: localHour, outcome: 'pending_lookup_failed', error: pendingError.message })
+      continue
+    }
+    if (!pendingItems || pendingItems.length === 0) {
+      results.push({ profile_id: profile.id, local_hour: localHour, outcome: 'skipped_no_pending_items' })
+      continue
+    }
 
     const reminderType = isFixedSlot ? `reentry_${slot}` : 'reentry'
     const duplicateSince = isFixedSlot ? localDayStart(profile) : checkFrom
@@ -89,7 +119,10 @@ export async function GET(request: NextRequest) {
       .limit(1)
       .single()
 
-    if (recentReminder) continue
+    if (!force && recentReminder) {
+      results.push({ profile_id: profile.id, local_hour: localHour, outcome: 'skipped_already_sent' })
+      continue
+    }
 
     const pendingForSms = pendingItems.map(item => {
       const tile = ACTIVITY_TILES.find(t => t.category === item.category)
@@ -118,7 +151,7 @@ export async function GET(request: NextRequest) {
     )
 
     // Send SMS
-    const { sid, status } = await sendSMS(profile.phone_e164!, smsBody)
+    const { sid, status, error } = await sendSMS(profile.phone_e164!, smsBody)
     await logSmsMessage(supabase, {
       householdId: profile.household_id,
       profileId: profile.id,
@@ -131,6 +164,8 @@ export async function GET(request: NextRequest) {
       metadata: {
         pending_count: pendingItems.length,
         reminder_slot: slot,
+        scheduler_test: force,
+        error,
       },
     })
 
@@ -156,8 +191,29 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    sent++
+    if (sid && status !== 'failed') {
+      sent++
+      results.push({
+        profile_id: profile.id,
+        local_hour: localHour,
+        outcome: 'sent',
+        pending_count: pendingItems.length,
+        status,
+        sid,
+      })
+    } else {
+      failed++
+      results.push({
+        profile_id: profile.id,
+        local_hour: localHour,
+        outcome: 'twilio_failed',
+        status,
+        error,
+      })
+    }
   }
 
-  return NextResponse.json({ processed: mciProfiles.length, sent, slot })
+  const response = { processed: mciProfiles.length, sent, failed, slot, force, results }
+  console.info(`[Cron reminder:${slot}]`, response)
+  return NextResponse.json(response)
 }
