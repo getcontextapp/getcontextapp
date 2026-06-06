@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { sendSMS } from '@/lib/twilio'
 import { buildMorningPrompt, logSmsMessage } from '@/lib/sms'
-import { getLocalDateKey } from '@/lib/dates'
+import { getUtcRangeForLocalDay } from '@/lib/dates'
 import { getMciProfilesForSms } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 
@@ -25,29 +25,54 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient()
   const profiles = await getMciProfilesForSms(supabase)
 
-  if (profiles.length === 0) return NextResponse.json({ processed: 0, sent: 0 })
+  if (profiles.length === 0) {
+    console.info('[Cron morning-plan]', { processed: 0, sent: 0, reason: 'no_sms_ready_profiles' })
+    return NextResponse.json({ processed: 0, sent: 0, failed: 0, results: [] })
+  }
 
   let sent = 0
+  let failed = 0
+  const results: Array<Record<string, unknown>> = []
 
   for (const profile of profiles) {
-    if (localHour(profile) !== 8) continue
+    const hour = localHour(profile)
+    if (hour !== 8) {
+      results.push({
+        profile_id: profile.id,
+        timezone: profile.timezone,
+        local_hour: hour,
+        outcome: 'skipped_wrong_local_hour',
+      })
+      continue
+    }
 
-    const todayKey = getLocalDateKey(new Date(), profile.timezone)
-    const startOfToday = `${todayKey}T00:00:00`
+    const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
 
     const { data: alreadySent } = await supabase
       .from('sms_messages')
       .select('id')
       .eq('profile_id', profile.id)
       .eq('purpose', 'morning_prompt')
-      .gte('created_at', startOfToday)
+      .eq('direction', 'outbound')
+      .neq('status', 'failed')
+      .contains('metadata', { scheduled: true })
+      .gte('created_at', todayRange.start)
+      .lt('created_at', todayRange.end)
       .limit(1)
       .maybeSingle()
 
-    if (alreadySent) continue
+    if (alreadySent) {
+      results.push({
+        profile_id: profile.id,
+        timezone: profile.timezone,
+        local_hour: hour,
+        outcome: 'skipped_already_sent',
+      })
+      continue
+    }
 
     const body = buildMorningPrompt(profile.display_name)
-    const { sid, status } = await sendSMS(profile.phone_e164, body)
+    const { sid, status, error } = await sendSMS(profile.phone_e164, body)
 
     await logSmsMessage(supabase, {
       householdId: profile.household_id,
@@ -58,17 +83,51 @@ export async function GET(request: NextRequest) {
       body,
       twilioSid: sid,
       status,
+      metadata: {
+        scheduled: true,
+        cron: 'morning_plan',
+        error,
+      },
     })
 
     await trackEvent(supabase, {
       eventName: 'morning_plan_sms_attempted',
       profile,
       userId: profile.user_id,
-      properties: { status, sid },
+      properties: {
+        status,
+        sid,
+        error,
+        timezone: profile.timezone,
+        local_hour: hour,
+        scheduled: true,
+      },
     })
 
-    sent++
+    if (sid && status !== 'failed') {
+      sent++
+      results.push({
+        profile_id: profile.id,
+        timezone: profile.timezone,
+        local_hour: hour,
+        outcome: 'sent',
+        status,
+        sid,
+      })
+    } else {
+      failed++
+      results.push({
+        profile_id: profile.id,
+        timezone: profile.timezone,
+        local_hour: hour,
+        outcome: 'twilio_failed',
+        status,
+        error,
+      })
+    }
   }
 
-  return NextResponse.json({ processed: profiles.length, sent })
+  const response = { processed: profiles.length, sent, failed, results }
+  console.info('[Cron morning-plan]', response)
+  return NextResponse.json(response)
 }
