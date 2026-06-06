@@ -10,13 +10,18 @@ import { APP_URL, logSmsMessage } from '@/lib/sms'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
-function getLocalSummaryTime(profile: any) {
-  return new Date().toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
+function getLocalHour(profile: any) {
+  return Number(new Date().toLocaleString('en-US', {
+    hour: 'numeric',
     hour12: false,
     timeZone: profile.timezone || undefined,
-  })
+  }))
+}
+
+function getScheduledSummaryHour(profile: any) {
+  const configured = String(profile.daily_summary_time || '21:00')
+  const hour = Number(configured.slice(0, 2))
+  return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 21
 }
 
 // POST: manual trigger (from care partner UI)
@@ -71,18 +76,20 @@ export async function GET(request: NextRequest) {
 
   let sent = 0
   for (const profile of careProfiles) {
-    if (profile.daily_summary_time !== getLocalSummaryTime(profile)) continue
+    if (getLocalHour(profile) !== getScheduledSummaryHour(profile)) continue
 
-    // Don't send twice in same hour
-    const hourAgo = new Date(Date.now() - 3600_000).toISOString()
+    // Vercel Hobby can invoke cron anywhere inside the scheduled hour.
+    // Send once for the user's local day rather than matching the exact minute.
+    const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
     const { data: already } = await supabase
       .from('reminder_logs')
       .select('id')
       .eq('profile_id', profile.id)
       .eq('type', 'daily_summary')
-      .gte('sent_at', hourAgo)
+      .gte('sent_at', todayRange.start)
+      .lt('sent_at', todayRange.end)
       .limit(1)
-      .single()
+      .maybeSingle()
 
     if (already) continue
 
