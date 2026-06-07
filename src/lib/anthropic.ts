@@ -102,10 +102,13 @@ function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
     }
   }
 
-  const planningListCue = /\b(my plans?|my to-?do list|add these|i need to|i want to|i plan to)\b/.test(lower)
+  const planningListCue = /\b(my plans?|my to[\s-]?do list|today'?s to[\s-]?do list|add these|i need to|i want to|i plan to)\b/.test(lower)
   if (planningListCue) {
     const listText = message
-      .replace(/^.*?\b(?:my plans?|my to-?do list|add these(?: to my plans?)?|i need to|i want to|i plan to)\b\s*:?\s*/i, '')
+      .replace(
+        /^.*?\b(?:my plans?|my to[\s-]?do list|today'?s to[\s-]?do list|add these(?: to my plans?)?|i need to|i want to|i plan to)\b(?:\s+for\s+today)?\s*:?\s*,?\s*/i,
+        '',
+      )
     const listItems = listText
       .split(/[,;\n]+/)
       .map(item => normalizePlannedNote(item).replace(/[.]+$/, '').trim())
