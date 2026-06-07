@@ -224,6 +224,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   })
 
+  const visiblePlannedActivities = sortedPlannedActivities.filter(item => item.status !== 'confirmed')
   const openPlannedCount = sortedPlannedActivities.filter(a => a.status === 'planned' || a.status === 'not_now').length
 
   return (
@@ -289,57 +290,43 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               <span className="text-xs text-warm-400">{openPlannedCount} waiting</span>
             )}
           </div>
-          {sortedPlannedActivities.length === 0 ? (
+          {visiblePlannedActivities.length === 0 ? (
             <div className="card p-5 text-center border border-cream-100">
               <p className="text-warm-400 text-sm">Nothing planned yet.</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {sortedPlannedActivities.map(item => {
+              {visiblePlannedActivities.map(item => {
                 const tile = ACTIVITY_TILES.find(t => t.category === item.category)
-                const isConfirmed = item.status === 'confirmed'
                 const isSkipped = item.status === 'skipped'
+                const taskName = item.note?.trim() || item.label
+                const categoryName = tile?.label ?? item.label
                 return (
                   <div key={item.id} className="bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
                     <div className="flex items-start gap-3">
                       <span className="text-xl mt-0.5">{tile?.icon ?? '📌'}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-medium text-warm-800">{tile?.label ?? item.label}</p>
-                            {item.note && <p className="text-xs leading-5 text-warm-500 whitespace-normal break-words">{item.note}</p>}
+                          <div className="min-w-0">
+                            <p className="text-base font-semibold leading-5 text-warm-900 whitespace-normal break-words">{taskName}</p>
+                            <p className="text-xs leading-5 text-warm-400 mt-1">
+                              {item.category !== 'custom' && `${categoryName} · `}
+                              {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}
+                            </p>
                           </div>
                           <span className={`text-[11px] rounded-pill px-2 py-0.5 whitespace-nowrap ${
-                            isConfirmed
-                              ? 'bg-sage-100 text-sage-700'
-                              : item.status === 'not_now'
+                            item.status === 'not_now'
                               ? 'bg-cream-200 text-warm-600'
                               : isSkipped
                               ? 'bg-cream-100 text-warm-300'
                               : 'bg-terracotta-50 text-terracotta-600'
                           }`}>
-                            {isConfirmed ? 'Done' : item.status === 'not_now' ? 'Later' : isSkipped ? 'Skipped' : 'Planned'}
+                            {item.status === 'not_now' ? 'Later' : isSkipped ? 'Skipped' : 'Planned'}
                           </span>
                         </div>
-                        <p className="text-[11px] text-warm-300 mt-1">Expected: {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}</p>
                       </div>
                     </div>
-                    {isConfirmed ? (
-                      <div className="grid grid-cols-2 gap-2 mt-3">
-                        <button
-                          onClick={() => handlePlanAction(item, 'reopen')}
-                          className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
-                        >
-                          Undo done
-                        </button>
-                        <button
-                          onClick={() => setDeleteCandidate(item)}
-                          className="rounded-xl border border-terracotta-200 text-terracotta-700 py-2 text-sm font-medium active:scale-[0.98] transition-all"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    ) : !isSkipped ? (
+                    {!isSkipped ? (
                       <div className="grid grid-cols-3 gap-2 mt-3">
                         <button
                           onClick={() => handlePlanAction(item, 'confirm')}
@@ -391,19 +378,36 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                     <div className="space-y-2">
                       {group.map(a => {
                         const tileConfig = ACTIVITY_TILES.find(t => t.category === a.category)
+                        const linkedPlan = plannedActivities.find(item =>
+                          item.status === 'confirmed' && item.confirmed_activity_log_id === a.id
+                        )
                         const timeStr = new Date(a.occurred_at).toLocaleTimeString('en-US', {
                           hour: 'numeric', minute: '2-digit', hour12: true,
                         })
-                        const displayLabel = tileConfig?.label ?? a.label
-                        const detail = a.note || (tileConfig && a.label !== tileConfig.label ? a.label : null)
+                        const taskName = a.note?.trim() || a.label
                         return (
-                          <div key={a.id} className="flex items-center gap-3 bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
-                            <span className="text-xl">{tileConfig?.icon ?? '📌'}</span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-warm-800">{displayLabel}</p>
-                              {detail && <p className="text-xs leading-5 text-warm-500 whitespace-normal break-words">{detail}</p>}
+                          <div key={a.id} className="bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
+                            <div className="flex items-center gap-3">
+                              <span className="text-xl">{tileConfig?.icon ?? '📌'}</span>
+                              <p className="flex-1 min-w-0 text-base font-semibold leading-5 text-warm-900 whitespace-normal break-words">{taskName}</p>
+                              <span className="text-xs text-warm-300 whitespace-nowrap">{timeStr}</span>
                             </div>
-                            <span className="text-xs text-warm-300 whitespace-nowrap">{timeStr}</span>
+                            {linkedPlan && (
+                              <div className="grid grid-cols-2 gap-2 mt-3">
+                                <button
+                                  onClick={() => handlePlanAction(linkedPlan, 'reopen')}
+                                  className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                                >
+                                  Undo done
+                                </button>
+                                <button
+                                  onClick={() => setDeleteCandidate(linkedPlan)}
+                                  className="rounded-xl border border-terracotta-200 text-terracotta-700 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )
                       })}

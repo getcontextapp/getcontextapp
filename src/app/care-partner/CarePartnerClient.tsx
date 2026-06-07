@@ -158,6 +158,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const todayKey = getLocalDateKey(new Date(), careProfile.timezone)
   const todayConfirmedEntries = confirmedByDay[todayKey] ?? []
   const categoryBreakdown = getCategoryBreakdown(todayConfirmedEntries)
+    .filter(([category]) => category !== 'custom')
   const sortedPlannedActivities = [...plannedActivities].sort((a, b) => {
     const periodDiff = (PERIOD_ORDER[a.expected_period] ?? 9) - (PERIOD_ORDER[b.expected_period] ?? 9)
     if (periodDiff !== 0) return periodDiff
@@ -310,15 +311,20 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             <div className="space-y-2">
               {sortedPlannedActivities.map(item => {
                 const tile = ACTIVITY_TILES.find(t => t.category === item.category)
+                const taskName = item.note?.trim() || item.label
+                const categoryName = tile?.label ?? item.label
                 return (
                   <div key={item.id} className="bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
                     <div className="flex items-start gap-3">
                       <span className="text-xl mt-0.5">{tile?.icon ?? '📌'}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-medium text-warm-800">{tile?.label ?? item.label}</p>
-                            {item.note && <p className="text-xs leading-5 text-warm-500 whitespace-normal break-words">{item.note}</p>}
+                          <div className="min-w-0">
+                            <p className="text-base font-semibold leading-5 text-warm-900 whitespace-normal break-words">{taskName}</p>
+                            <p className="text-xs leading-5 text-warm-400 mt-1">
+                              {item.category !== 'custom' && `${categoryName} · `}
+                              {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}
+                            </p>
                           </div>
                           <span className={`text-[11px] rounded-pill px-2 py-0.5 whitespace-nowrap ${
                             item.status === 'confirmed'
@@ -332,7 +338,6 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                             {item.status === 'confirmed' ? 'Done' : item.status === 'not_now' ? 'Later' : item.status === 'skipped' ? 'Skipped' : 'Waiting'}
                           </span>
                         </div>
-                        <p className="text-[11px] text-warm-300 mt-1">Expected: {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}</p>
                       </div>
                     </div>
                   </div>
@@ -343,7 +348,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
         </div>
 
         {/* Today's activity breakdown */}
-        {todayConfirmedEntries.length > 0 && (
+        {categoryBreakdown.length > 0 && (
           <div className="animate-fade-up delay-200">
             <p className="text-warm-500 text-sm font-medium mb-3">Confirmed activity types</p>
             <div className="grid grid-cols-3 gap-2">
@@ -404,13 +409,16 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             <div className="space-y-2">
               {[...selectedConfirmedEntries].reverse().map(entry => {
                 const tile = ACTIVITY_TILES.find(t => t.category === entry.category)
-                const displayLabel = tile?.label ?? entry.label
+                const taskName = entry.detail?.trim() || entry.label
+                const categoryName = tile?.label ?? entry.label
                 return (
                   <div key={entry.id} className="flex items-center gap-3 bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
                     <span className="text-xl">{tile?.icon ?? '📌'}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-warm-800">{displayLabel}</p>
-                      {entry.detail && <p className="text-xs leading-5 text-warm-500 whitespace-normal break-words">{entry.detail}</p>}
+                      <p className="text-base font-semibold leading-5 text-warm-900 whitespace-normal break-words">{taskName}</p>
+                      {entry.category !== 'custom' && (
+                        <p className="text-xs leading-5 text-warm-400 mt-1">{categoryName}</p>
+                      )}
                     </div>
                     <span className="text-xs text-warm-300 whitespace-nowrap">{entry.timeLabel}</span>
                   </div>
