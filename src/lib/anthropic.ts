@@ -3,7 +3,7 @@ import type { ActivityCategory, ExpectedPeriod, ParsedSmsPlanReply } from '@/typ
 import { APP_URL } from '@/lib/sms'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-const MODEL = 'claude-3-5-haiku-latest'
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001'
 
 interface ReentryCardInput {
   displayName: string
@@ -72,6 +72,33 @@ function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
   const add = (category: ActivityCategory, note: string, confidence: 'high' | 'medium' = 'medium') => {
     if (!items.some(item => item.category === category && item.note.toLowerCase() === note.toLowerCase())) {
       items.push({ category, note, expected_period: inferPeriod(`${message} ${note}`), confidence })
+    }
+  }
+
+  if (/\b(undo|mistake|reopen|not done|wasn'?t done|didn'?t do|did not do)\b/.test(lower)) {
+    return {
+      intent: 'undo_request',
+      items: [],
+      confirmation: null,
+      reply: 'I can help move a completed task back to waiting.',
+    }
+  }
+
+  if (/\b(delete|remove|erase|get rid of)\b/.test(lower)) {
+    return {
+      intent: 'delete_request',
+      items: [],
+      confirmation: null,
+      reply: 'I can help delete a task after you confirm it.',
+    }
+  }
+
+  if (/\b(what|which|show|list|anything)\b.*\b(pending|waiting|left|remaining|to do|plan)\b|\b(pending|waiting|left|remaining)\b.*\b(tasks?|items?|today|plan)\b/.test(lower)) {
+    return {
+      intent: 'pending_status',
+      items: [],
+      confirmation: null,
+      reply: 'I will show what is still waiting today.',
     }
   }
 
