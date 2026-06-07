@@ -135,7 +135,7 @@ function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
 
   return {
     intent: completedCue ? 'completed' : 'plan',
-    items: items.slice(0, 6),
+    items: items.slice(0, 12),
     confirmation: null,
     reply: completedCue ? 'I marked this as done in Context.' : 'I added this to your Context plan.',
   }

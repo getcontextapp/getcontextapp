@@ -81,9 +81,15 @@ function parseNumberedSelections(body: string) {
     .toLowerCase()
     .replace(/\b(and|plus)\b/g, ',')
     .replace(/[&+/]/g, ',')
-  const hasConfirmationCue = /\b(done|did|finished|finish|completed|complete|yes|yep|all done|delete|remove)\b/.test(normalized)
 
   if (/^(all|both|everything|the rest|all done)$/.test(normalized)) return 'all' as const
+
+  const selectionOnly = normalized
+    .replace(/^(done|finished|completed|complete|yes|yep|delete|remove)\s*:?\s*/, '')
+    .replace(/\s+(done|finished|completed|complete)$/, '')
+    .trim()
+
+  if (!/^\d+(?:[\s,.-]+\d+)*$/.test(selectionOnly)) return null
 
   const selections = normalized
     .match(/\d+/g)
@@ -91,7 +97,6 @@ function parseNumberedSelections(body: string) {
     .filter(value => Number.isInteger(value) && value > 0) ?? []
 
   if (selections.length === 0) return null
-  if (!/^\d+(?:[\s,.-]+\d+)*$/.test(normalized) && !hasConfirmationCue) return null
 
   return Array.from(new Set(selections))
 }

@@ -128,7 +128,12 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
     .eq('planned_for', getLocalDateKey(new Date(), careProfile.timezone))
     .in('status', ['planned', 'not_now'])
 
-  const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    timeZone: careProfile.timezone || undefined,
+  })
 
   const smsBody = buildDailySummaryMessage(
     careProfile.display_name,
@@ -176,9 +181,30 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
 
   let mciStatus: string | null = null
   if (mciProfile?.phone_e164) {
+    const mciTodayRange = getUtcRangeForLocalDay(new Date(), mciProfile.timezone)
+    const { data: existingMciSummary } = await supabase
+      .from('reminder_logs')
+      .select('id')
+      .eq('profile_id', mciProfile.id)
+      .eq('type', 'daily_summary')
+      .gte('sent_at', mciTodayRange.start)
+      .lt('sent_at', mciTodayRange.end)
+      .limit(1)
+      .maybeSingle()
+
+    if (existingMciSummary) {
+      return { sent: true, status, mciStatus: 'already_sent' }
+    }
+
+    const mciDateStr = new Date().toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      timeZone: mciProfile.timezone || undefined,
+    })
     const mciBody = buildPersonalDailySummaryMessage(
       mciProfile.display_name,
-      dateStr,
+      mciDateStr,
       activityList,
       pendingItems?.length ?? 0,
       APP_URL,
@@ -200,6 +226,14 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
         pending_count: pendingItems?.length ?? 0,
         recipient_role: 'mci_user',
       },
+    })
+
+    await supabase.from('reminder_logs').insert({
+      household_id: householdId,
+      profile_id: mciProfile.id,
+      type: 'daily_summary',
+      twilio_sid: mciResult.sid,
+      status: mciResult.status,
     })
   }
 
