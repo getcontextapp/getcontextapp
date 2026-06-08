@@ -18,6 +18,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const supabase = createClient()
 
@@ -29,6 +30,7 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError(null)
+    setNotice(null)
 
     const { error } = isEmail
       ? await supabase.auth.signInWithOtp({
@@ -72,6 +74,32 @@ export default function LoginPage() {
       })
 
       if (!error) {
+        const response = await fetch('/api/auth/reconcile-phone', { method: 'POST' })
+        const result = await response.json().catch(() => ({}))
+
+        if (!response.ok) {
+          setError(result.error || 'We could not connect this phone number to your existing account.')
+          setVerifying(false)
+          return
+        }
+
+        if (result.reconciled) {
+          await supabase.auth.signOut({ scope: 'local' })
+          const { error: resendError } = await supabase.auth.signInWithOtp({
+            phone: destination,
+            options: { shouldCreateUser: false },
+          })
+
+          setCode('')
+          setVerifying(false)
+          if (resendError) {
+            setError(resendError.message)
+          } else {
+            setNotice('Your phone is now connected to your existing Context account. Enter the new code we just sent.')
+          }
+          return
+        }
+
         router.push('/')
         router.refresh()
         return
@@ -164,6 +192,9 @@ export default function LoginPage() {
             {error && (
               <p className="text-terracotta-500 text-sm bg-terracotta-50 px-3 py-2 rounded-lg">{error}</p>
             )}
+            {notice && (
+              <p className="text-sage-700 text-sm bg-sage-50 px-3 py-2 rounded-lg">{notice}</p>
+            )}
 
             <button
               type="submit"
@@ -229,7 +260,13 @@ export default function LoginPage() {
 
             <button
               type="button"
-              onClick={() => { setSent(false); setIdentifier(''); setCode(''); setError(null) }}
+              onClick={() => {
+                setSent(false)
+                setIdentifier('')
+                setCode('')
+                setError(null)
+                setNotice(null)
+              }}
               className="text-sm text-terracotta-500 underline underline-offset-2"
             >
               Use a different number or email
