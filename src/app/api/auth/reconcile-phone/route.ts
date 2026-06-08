@@ -77,7 +77,7 @@ export async function POST() {
 
   const { data: targetUser, error: targetError } = await service.auth.admin.getUserById(profileUserId)
   if (targetError || !targetUser.user) {
-    return NextResponse.json({ error: targetError?.message || 'Existing account not found.' }, { status: 404 })
+    return NextResponse.json({ error: 'The existing Context account could not be found by phone. Please sign in by email once to repair the link.' }, { status: 404 })
   }
 
   const { error: deleteError } = await service.auth.admin.deleteUser(user.id)
