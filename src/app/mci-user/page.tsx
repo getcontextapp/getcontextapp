@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase-server'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
+import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
 import MCIUserClient from './MCIUserClient'
 
 export default async function MCIUserPage() {
@@ -16,6 +17,8 @@ export default async function MCIUserPage() {
     .single()
 
   if (!profile || profile.role !== 'mci_user') redirect('/')
+
+  await linkSavedPhoneToAuth(user.id, user.phone, profile.phone_e164)
 
   // Fetch today's activities
   const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)

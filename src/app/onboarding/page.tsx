@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
@@ -10,16 +10,33 @@ type Step = 'role' | 'profile'
 
 export default function OnboardingPage() {
   const router = useRouter()
-  const supabase = createClient()
+  const [supabase] = useState(createClient)
 
   const [step, setStep] = useState<Step>('role')
   const [role, setRole] = useState<UserRole | null>(null)
   const [displayName, setDisplayName] = useState('')
+  const [email, setEmail] = useState('')
+  const [userHasEmail, setUserHasEmail] = useState(false)
   const [phone, setPhone] = useState('')
   const [smsConsent, setSmsConsent] = useState(false)
   const [timezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!active || !user) return
+      setUserHasEmail(Boolean(user.email))
+      setEmail(user.email ?? '')
+      setPhone(user.phone ?? '')
+    })
+
+    return () => {
+      active = false
+    }
+  }, [supabase])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -32,11 +49,27 @@ export default function OnboardingPage() {
 
     const phoneValue = phone.trim()
     const phoneE164 = phoneValue ? normalizePhone(phoneValue) : null
+    const emailValue = email.trim().toLowerCase()
+
+    if (!user.email && !emailValue) {
+      setError('Please add an email address as a backup way to sign in.')
+      setLoading(false)
+      return
+    }
 
     if (phoneE164 && !smsConsent) {
       setError('Please check the SMS consent box to receive text reminders, or leave the phone number blank.')
       setLoading(false)
       return
+    }
+
+    if (!user.email && emailValue) {
+      const { error: emailError } = await supabase.auth.updateUser({ email: emailValue })
+      if (emailError) {
+        setError(emailError.message)
+        setLoading(false)
+        return
+      }
     }
 
     const { data: profile, error: insertError } = await supabase.from('profiles').insert({
@@ -71,7 +104,7 @@ export default function OnboardingPage() {
         <div className="animate-fade-up">
           <div className="text-3xl mb-3">🌿</div>
           <h1 className="font-serif text-2xl font-semibold text-warm-900">Welcome to Context</h1>
-          <p className="text-warm-400 text-sm mt-1">Let's get you set up in about a minute.</p>
+          <p className="text-warm-400 text-sm mt-1">Let&apos;s get you set up in about a minute.</p>
         </div>
 
         {/* Step indicator */}
@@ -94,8 +127,8 @@ export default function OnboardingPage() {
               <div className="flex items-center gap-4">
                 <span className="text-3xl">🧑‍🦳</span>
                 <div>
-                  <p className="font-medium text-warm-900">I'm the primary member</p>
-                  <p className="text-sm text-warm-400 mt-0.5">I'll log my own activities and use re-entry cards</p>
+                  <p className="font-medium text-warm-900">I&apos;m the primary member</p>
+                  <p className="text-sm text-warm-400 mt-0.5">I&apos;ll log my own activities and use re-entry cards</p>
                 </div>
               </div>
             </button>
@@ -107,8 +140,8 @@ export default function OnboardingPage() {
               <div className="flex items-center gap-4">
                 <span className="text-3xl">🤝</span>
                 <div>
-                  <p className="font-medium text-warm-900">I'm a care partner</p>
-                  <p className="text-sm text-warm-400 mt-0.5">I'll receive daily summaries and monitor activity</p>
+                  <p className="font-medium text-warm-900">I&apos;m a care partner</p>
+                  <p className="text-sm text-warm-400 mt-0.5">I&apos;ll receive daily summaries and monitor activity</p>
                 </div>
               </div>
             </button>
@@ -135,10 +168,36 @@ export default function OnboardingPage() {
 
             <div>
               <label className="block text-sm font-medium text-warm-600 mb-1.5">
-                Mobile phone <span className="text-warm-300 font-normal">(for SMS reminders)</span>
+                Email address
+                {userHasEmail && <span className="text-warm-300 font-normal"> (sign-in email)</span>}
+              </label>
+              <input
+                type="email"
+                required
+                value={email}
+                disabled={userHasEmail}
+                onChange={e => setEmail(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900 text-base
+                           focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100
+                           disabled:bg-cream-100 disabled:text-warm-400"
+                placeholder="you@example.com"
+                autoComplete="email"
+                inputMode="email"
+              />
+              {!userHasEmail && (
+                <p className="text-xs text-warm-300 mt-1">
+                  This gives you a backup way to sign in. We may ask you to confirm it by email.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-warm-600 mb-1.5">
+                Mobile phone <span className="text-warm-300 font-normal">(sign-in and SMS reminders)</span>
               </label>
               <input
                 type="tel"
+                required
                 value={phone}
                 onChange={e => {
                   setPhone(e.target.value)
@@ -151,7 +210,7 @@ export default function OnboardingPage() {
                 inputMode="tel"
               />
               <p className="text-xs text-warm-300 mt-1">
-                US numbers only during beta. Optional. SMS consent is not required to use Context.
+                US numbers only during beta.
               </p>
 
               <label className="mt-3 flex gap-3 rounded-xl border-2 border-cream-300 bg-white/80 p-3 text-sm text-warm-600">
@@ -163,7 +222,7 @@ export default function OnboardingPage() {
                   className="mt-1 h-5 w-5 rounded border-2 border-warm-500 text-warm-700 focus:ring-warm-500"
                 />
                 <span>
-                  Optional SMS opt-in: Yes, I agree to receive Context SMS messages for daily planning prompts, reminder cues,
+                  SMS consent: Yes, I agree to receive Context SMS messages for daily planning prompts, reminder cues,
                   activity confirmations, no-response notices, and daily summaries. Message frequency varies.
                   Message and data rates may apply. Reply HELP for help or STOP to opt out. See{' '}
                   <a href="/privacy" target="_blank" className="underline decoration-cream-400 underline-offset-2">
@@ -192,7 +251,7 @@ export default function OnboardingPage() {
               </button>
               <button
                 type="submit"
-                disabled={loading || !displayName.trim()}
+                disabled={loading || !displayName.trim() || !email.trim() || !phone.trim()}
                 className="flex-1 py-3 rounded-xl bg-warm-700 text-cream-100 font-medium text-base
                            hover:bg-warm-900 active:scale-[0.98] transition-all
                            disabled:opacity-50 disabled:cursor-not-allowed"

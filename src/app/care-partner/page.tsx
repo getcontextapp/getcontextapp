@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase-server'
 import { getLocalDateKey } from '@/lib/dates'
 import { getLinkedMciProfile } from '@/lib/household-links'
+import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
 import CarePartnerClient from './CarePartnerClient'
 
 export default async function CarePartnerPage() {
@@ -17,6 +18,8 @@ export default async function CarePartnerPage() {
     .single()
 
   if (!profile || profile.role !== 'care_partner') redirect('/')
+
+  await linkSavedPhoneToAuth(user.id, user.phone, profile.phone_e164)
 
   const linkedProfile = await getLinkedMciProfile(supabase, profile.household_id, profile.id)
 
