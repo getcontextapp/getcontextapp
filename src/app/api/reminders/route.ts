@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { sendSMS, buildPendingPlanReminderMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
 import { trackEvent } from '@/lib/analytics'
-import { getLocalDateKey } from '@/lib/dates'
+import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { getMciProfilesForSms } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 
@@ -15,11 +15,7 @@ function reminderSlot(pathname: string) {
   return 'gap'
 }
 
-function localDayStart(profile: any) {
-  return `${getLocalDateKey(new Date(), profile.timezone)}T00:00:00`
-}
-
-// Called by fixed Vercel Cron touchpoints on the Hobby plan.
+// Called by scheduled reminder touchpoints.
 export async function GET(request: NextRequest) {
   // Verify cron secret
   const authHeader = request.headers.get('authorization')
@@ -106,18 +102,25 @@ export async function GET(request: NextRequest) {
       continue
     }
 
-    const reminderType = isFixedSlot ? `reentry_${slot}` : 'reentry'
-    const duplicateSince = isFixedSlot ? localDayStart(profile) : checkFrom
+    const duplicateSince = isFixedSlot
+      ? getUtcRangeForLocalDay(new Date(), profile.timezone).start
+      : checkFrom
 
     // Check if we already sent this fixed touchpoint today, or this gap reminder recently.
-    const { data: recentReminder } = await supabase
-      .from('reminder_logs')
+    let recentReminderQuery = supabase
+      .from('sms_messages')
       .select('id')
       .eq('profile_id', profile.id)
-      .eq('type', reminderType)
-      .gte('sent_at', duplicateSince)
+      .eq('direction', 'outbound')
+      .eq('purpose', 'pending_reminder')
+      .gte('created_at', duplicateSince)
       .limit(1)
-      .single()
+
+    if (isFixedSlot) {
+      recentReminderQuery = recentReminderQuery.contains('metadata', { reminder_slot: slot })
+    }
+
+    const { data: recentReminder } = await recentReminderQuery.maybeSingle()
 
     if (!force && recentReminder) {
       results.push({ profile_id: profile.id, local_hour: localHour, outcome: 'skipped_already_sent' })
@@ -173,7 +176,7 @@ export async function GET(request: NextRequest) {
     await supabase.from('reminder_logs').insert({
       household_id: profile.household_id,
       profile_id: profile.id,
-      type: reminderType,
+      type: 'reentry',
       twilio_sid: sid,
       status,
     })
