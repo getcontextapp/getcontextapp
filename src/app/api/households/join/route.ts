@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient, createServiceClient } from '@/lib/supabase-server'
+import { sendOnboardingWelcome } from '@/lib/onboarding-welcome'
+import type { Profile } from '@/types'
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -29,12 +31,16 @@ export async function POST(request: NextRequest) {
     .from('profiles')
     .update({ household_id: household.id })
     .eq('user_id', user.id)
-    .select('id, household_id')
+    .select('*')
     .single()
 
   if (error || !profile) {
     return NextResponse.json({ error: error?.message ?? 'Could not update household.' }, { status: 500 })
   }
+
+  await sendOnboardingWelcome(profile as Profile).catch(welcomeError => {
+    console.error('[Onboarding] Welcome SMS failed:', welcomeError)
+  })
 
   return NextResponse.json({ household_id: profile.household_id })
 }

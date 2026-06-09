@@ -107,6 +107,23 @@ export function buildMorningPrompt(displayName: string) {
   ].join('\n')
 }
 
+export function buildWelcomeMessage(displayName: string, role: 'mci_user' | 'care_partner') {
+  if (role === 'care_partner') {
+    return [
+      `Welcome to Context, ${displayName}.`,
+      `This is the Context text number. We will send gentle household updates and daily summaries here.`,
+      `Your care partner dashboard: ${APP_URL}/care-partner`,
+    ].join('\n\n')
+  }
+
+  return [
+    `Welcome to Context, ${displayName}. You can text this number naturally whenever you like.`,
+    `Try: "Walk, call Mary, dinner" to add today's plans.`,
+    `Text DONE to choose finished tasks, UNDO to reopen one, DELETE to remove one safely, STATUS to see what is waiting, or HELP for this guide.`,
+    `Your dashboard: ${APP_URL}/mci-user`,
+  ].join('\n\n')
+}
+
 export function buildMorningFollowup(displayName: string) {
   return [
     `Just checking in, ${displayName}.`,

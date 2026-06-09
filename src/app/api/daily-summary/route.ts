@@ -141,6 +141,7 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
     dateStr,
     activityList,
     APP_URL,
+    careProfile.timezone,
   )
 
   const { sid, status } = await sendSMS(careProfile.phone_e164, smsBody)
@@ -208,6 +209,7 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
       activityList,
       pendingItems?.length ?? 0,
       APP_URL,
+      mciProfile.timezone,
     )
     const mciResult = await sendSMS(mciProfile.phone_e164, mciBody)
     mciStatus = mciResult.status

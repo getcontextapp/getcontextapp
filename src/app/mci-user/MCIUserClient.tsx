@@ -33,7 +33,7 @@ const PERIOD_ORDER: Record<string, number> = {
 }
 
 export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialContextCard, household }: Props) {
-  const supabase = createClient()
+  const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
@@ -72,6 +72,26 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       setGeneratingCard(false)
     }
   }, [])
+
+  const refreshDashboardData = useCallback(async () => {
+    const [activityResult, plannedResult] = await Promise.all([
+      supabase
+        .from('activity_logs')
+        .select('*')
+        .eq('household_id', profile.household_id)
+        .order('occurred_at', { ascending: false })
+        .limit(20),
+      supabase
+        .from('planned_activities')
+        .select('*')
+        .eq('household_id', profile.household_id)
+        .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+        .order('created_at', { ascending: true }),
+    ])
+
+    if (activityResult.data) setActivities(activityResult.data as ActivityLog[])
+    if (plannedResult.data) setPlannedActivities(plannedResult.data as PlannedActivity[])
+  }, [profile.household_id, profile.timezone, supabase])
 
   // Subscribe to realtime activity updates
   useEffect(() => {
@@ -135,8 +155,20 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       })
       .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
-  }, [profile.household_id, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase, refreshContextCard])
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refreshDashboardData()
+    }
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    window.addEventListener('focus', refreshDashboardData)
+    const refreshTimer = window.setInterval(refreshDashboardData, 30_000)
+
+    return () => {
+      supabase.removeChannel(channel)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.removeEventListener('focus', refreshDashboardData)
+      window.clearInterval(refreshTimer)
+    }
+  }, [profile.household_id, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase, refreshContextCard, refreshDashboardData])
 
   const handleActivityPlanned = useCallback((activity: PlannedActivity) => {
     setPlannedActivities(prev => [...prev, activity])

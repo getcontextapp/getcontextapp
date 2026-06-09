@@ -1,4 +1,5 @@
 import twilio from 'twilio'
+import { getAppUrl } from '@/lib/sms'
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID!
 const authToken  = process.env.TWILIO_AUTH_TOKEN!
@@ -14,7 +15,12 @@ function getClient() {
 export async function sendSMS(to: string, body: string) {
   const client = getClient()
   try {
-    const message = await client.messages.create({ to, from: fromNumber, body })
+    const message = await client.messages.create({
+      to,
+      from: fromNumber,
+      body,
+      statusCallback: `${getAppUrl()}/api/twilio/status`,
+    })
     return { sid: message.sid, status: message.status, error: null }
   } catch (err: any) {
     console.error('[Twilio] SMS failed:', err.message)
@@ -68,10 +74,11 @@ export function buildDailySummaryMessage(
   date: string,
   activities: Array<{ icon: string; label: string; occurred_at: string }>,
   appUrl: string,
+  timeZone?: string | null,
 ): string {
   const lines = activities.slice(0, 8).map(a => {
     const t = new Date(a.occurred_at).toLocaleTimeString('en-US', {
-      hour: 'numeric', minute: '2-digit', hour12: true,
+      hour: 'numeric', minute: '2-digit', hour12: true, timeZone: timeZone || undefined,
     })
     return `  ${a.icon} ${a.label} (${t})`
   })
@@ -83,7 +90,7 @@ export function buildDailySummaryMessage(
     ``,
     activities.length === 0
       ? 'No activities were logged today.'
-      : `${activities.length} activity${activities.length !== 1 ? 'ies' : 'y'} logged in total.`,
+      : `${activities.length} ${activities.length === 1 ? 'activity' : 'activities'} logged in total.`,
     ``,
     `Full view: ${appUrl}/care-partner`,
   ].join('\n')
@@ -95,10 +102,11 @@ export function buildPersonalDailySummaryMessage(
   activities: Array<{ icon: string; label: string; occurred_at: string }>,
   pendingCount: number,
   appUrl: string,
+  timeZone?: string | null,
 ): string {
   const lines = activities.slice(0, 6).map(a => {
     const t = new Date(a.occurred_at).toLocaleTimeString('en-US', {
-      hour: 'numeric', minute: '2-digit', hour12: true,
+      hour: 'numeric', minute: '2-digit', hour12: true, timeZone: timeZone || undefined,
     })
     return `  ${a.icon} ${a.label} (${t})`
   })

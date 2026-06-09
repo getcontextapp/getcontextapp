@@ -89,6 +89,7 @@ export interface ReminderLog {
 
 export type SmsDirection = 'inbound' | 'outbound'
 export type SmsPurpose =
+  | 'welcome'
   | 'morning_prompt'
   | 'morning_followup'
   | 'care_partner_no_response'

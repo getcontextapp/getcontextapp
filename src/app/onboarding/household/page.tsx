@@ -30,20 +30,16 @@ export default function HouseholdPage() {
       const profile = await getMyProfile()
       if (!profile) throw new Error('Profile not found')
 
-      // Create household
-      const { data: household, error: hErr } = await supabase
-        .from('households')
-        .insert({ name: householdName.trim() })
-        .select()
-        .single()
-
-      if (hErr || !household) throw new Error(hErr?.message ?? 'Failed to create household')
-
-      // Link profile
-      await supabase.from('profiles').update({ household_id: household.id }).eq('id', profile.id)
+      const response = await fetch('/api/households/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: householdName.trim() }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(result.error || 'Failed to create household')
 
       trackClientEvent('household_created', {
-        household_id: household.id,
+        household_id: result.household?.id,
       })
 
       router.push('/')
