@@ -44,7 +44,7 @@ async function getAdminAccess() {
 export async function requireAnalyticsAdmin() {
   const { user, allowed } = await getAdminAccess()
 
-  if (!user) redirect('/auth/login')
+  if (!user) redirect('/auth/login?next=/admin/analytics')
   if (!allowed) redirect('/')
 
   return user

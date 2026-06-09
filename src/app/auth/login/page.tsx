@@ -25,6 +25,10 @@ export default function LoginPage() {
   const trimmedIdentifier = identifier.trim()
   const isEmail = trimmedIdentifier.includes('@')
   const destination = isEmail ? trimmedIdentifier.toLowerCase() : normalizePhone(trimmedIdentifier)
+  const getNextPath = () => {
+    const requested = new URLSearchParams(window.location.search).get('next')
+    return requested?.startsWith('/') && !requested.startsWith('//') ? requested : '/'
+  }
 
   async function handleSendCode(e: React.FormEvent) {
     e.preventDefault()
@@ -36,7 +40,7 @@ export default function LoginPage() {
       ? await supabase.auth.signInWithOtp({
           email: destination,
           options: {
-            emailRedirectTo: `${location.origin}/auth/callback`,
+            emailRedirectTo: `${location.origin}/auth/callback?next=${encodeURIComponent(getNextPath())}`,
             shouldCreateUser: mode === 'signup',
           },
         })
@@ -100,7 +104,7 @@ export default function LoginPage() {
           return
         }
 
-        router.push('/')
+        router.push(getNextPath())
         router.refresh()
         return
       }
@@ -120,7 +124,7 @@ export default function LoginPage() {
         type,
       })
       if (!error) {
-        router.push('/')
+        router.push(getNextPath())
         router.refresh()
         return
       }
