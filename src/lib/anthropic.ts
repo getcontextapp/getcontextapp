@@ -64,6 +64,13 @@ function cleanJson(raw: string) {
   return raw.replace(/```json|```/g, '').trim()
 }
 
+function cleanContextContent(value: unknown) {
+  return String(value ?? '')
+    .replace(/[—–]/g, ',')
+    .replace(/\s+,/g, ',')
+    .trim()
+}
+
 function safeCategory(value: unknown): ActivityCategory {
   return VALID_CATEGORIES.includes(value as ActivityCategory) ? value as ActivityCategory : 'custom'
 }
@@ -515,14 +522,14 @@ ${activityList}
 The activity that just triggered this reminder: "${triggerActivity.label}"
 
 Write a brief, grounding re-entry card to help orient them back to their day. The card should:
-- Open with a gentle, friendly greeting (do not use "Hi" or "Hello" — be creative but warm)
-- Mention 2–3 of the most recent activities in natural language, like recounting a story
+- Open with a gentle, friendly greeting. Do not use "Hi" or "Hello".
+- Mention 2 to 3 of the most recent activities in natural language, like recounting a story
 - End with one short, encouraging sentence about continuing their day
 - Avoid medical or clinical language
 - Be written in second person ("you")
-- Total length: 3–5 sentences
+- Total length: 3 to 5 sentences
 
-Respond ONLY with a JSON object with keys "title" (short, 4–6 words) and "body" (the card text). No markdown, no explanation.`
+Respond ONLY with a JSON object with keys "title" (short, 4 to 6 words) and "body" (the card text). No markdown, no explanation.`
 
   const message = await client.messages.create({
     model: MODEL,
@@ -533,9 +540,12 @@ Respond ONLY with a JSON object with keys "title" (short, 4–6 words) and "body
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   try {
     const parsed = JSON.parse(cleanJson(raw))
-    return { title: parsed.title ?? 'Welcome back', body: parsed.body ?? raw }
+    return {
+      title: cleanContextContent(parsed.title ?? 'Welcome back'),
+      body: cleanContextContent(parsed.body ?? raw),
+    }
   } catch {
-    return { title: 'Welcome back', body: raw }
+    return { title: 'Welcome back', body: cleanContextContent(raw) }
   }
 }
 
@@ -585,7 +595,7 @@ ${activityList}
 
 The card appears at the top of their home screen. It should help them feel oriented and settled, not evaluated or pushed.
 
-Write 2–3 short, warm sentences. The card should:
+Write 2 to 3 short, warm sentences. The card should:
 - Start with a natural orienting sentence that fits the current time of day
 - Do not say "full day" unless it is late afternoon or evening and there are several activities
 - Mention the activity details in plain, everyday language
@@ -596,7 +606,7 @@ Write 2–3 short, warm sentences. The card should:
 - Use second person ("you")
 - Keep the tone gentle, familiar, and reassuring
 
-Respond ONLY with JSON: {"title": "4–6 word title", "body": "the summary text"}`
+Respond ONLY with JSON: {"title": "4 to 6 word title", "body": "the summary text"}`
 
   const message = await client.messages.create({
     model: MODEL,
@@ -607,9 +617,12 @@ Respond ONLY with JSON: {"title": "4–6 word title", "body": "the summary text"
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   try {
     const parsed = JSON.parse(cleanJson(raw))
-    return { title: parsed.title ?? "Your day so far", body: parsed.body ?? raw }
+    return {
+      title: cleanContextContent(parsed.title ?? 'Your day so far'),
+      body: cleanContextContent(parsed.body ?? raw),
+    }
   } catch {
-    return { title: "Your day so far", body: raw }
+    return { title: 'Your day so far', body: cleanContextContent(raw) }
   }
 }
 
@@ -677,6 +690,7 @@ ${completed}
 
 Rules:
 - Return JSON only: {"title":"...","body":"..."}.
+- Never use em dashes or en dashes. Use a comma, period, or colon instead.
 - Write 2 or 3 short, natural sentences suitable for an older adult with MCI.
 - Orient gently to the current part of day without sounding robotic.
 - Never mention yesterday, previous days, or any item not listed above.
@@ -698,8 +712,8 @@ Rules:
 
   const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   const parsed = JSON.parse(cleanJson(raw))
-  const title = String(parsed.title ?? '').trim().slice(0, 80)
-  const body = String(parsed.body ?? '').trim().slice(0, 500)
+  const title = cleanContextContent(parsed.title).slice(0, 80)
+  const body = cleanContextContent(parsed.body).slice(0, 500)
 
   if (!title || !body) throw new Error('AI returned an incomplete Context reflection')
   return { title, body }

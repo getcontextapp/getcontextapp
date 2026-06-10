@@ -84,7 +84,7 @@ export function buildDailySummaryMessage(
   })
 
   return [
-    `Hi ${carePartnerName}, here's ${memberName}'s day — ${date}:`,
+    `Hi ${carePartnerName}, here's ${memberName}'s day for ${date}:`,
     ``,
     ...lines,
     ``,
@@ -112,7 +112,7 @@ export function buildPersonalDailySummaryMessage(
   })
 
   return [
-    `Hi ${displayName}, here is what Context saved today — ${date}:`,
+    `Hi ${displayName}, here is what Context saved today for ${date}:`,
     ``,
     ...lines,
     activities.length === 0 ? 'Nothing was confirmed today.' : '',

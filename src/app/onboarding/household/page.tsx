@@ -120,7 +120,7 @@ export default function HouseholdPage() {
 
         {mode === 'create' && (
           <form onSubmit={handleCreate} className="space-y-5 animate-fade-up">
-            <p className="text-warm-600 text-sm">Give your household a name — this is just for you to recognize it.</p>
+            <p className="text-warm-600 text-sm">Give your household a name. This is just for you to recognize it.</p>
             <div>
               <label className="block text-sm font-medium text-warm-600 mb-1.5">Household name</label>
               <input

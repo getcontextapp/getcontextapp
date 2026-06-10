@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json(result)
 }
 
-// GET: Vercel cron — runs every hour, checks if any care partner is due
+// GET: Vercel cron runs every hour and checks if any care partner is due.
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {

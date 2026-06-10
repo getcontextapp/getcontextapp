@@ -135,7 +135,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
               onChange={event => setMessage(event.target.value)}
               rows={3}
               maxLength={1000}
-              placeholder="For example: Take my medicine after breakfast, call Aishat, and walk this afternoon."
+              placeholder="For example: Take my medicine after breakfast, call Jane, and walk this afternoon."
               className="mt-4 w-full resize-none rounded-xl border border-cream-300 bg-cream-50 px-4 py-3
                          text-base leading-relaxed text-warm-800 placeholder:text-warm-300
                          focus:outline-none focus:ring-2 focus:ring-terracotta-300/60"
