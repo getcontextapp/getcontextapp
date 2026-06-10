@@ -13,6 +13,12 @@ function xmlResponse(message: string) {
   })
 }
 
+function emptyXmlResponse() {
+  return new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
+    headers: { 'Content-Type': 'text/xml' },
+  })
+}
+
 const UNKNOWN_NUMBER_REPLY = [
   'This number is not signed up with Context yet.',
   'Context helps older adults and care partners stay oriented with gentle reminders, simple check-ins, and daily summaries.',
@@ -195,6 +201,29 @@ async function updatePendingItem(
     return 'Okay. I marked that aside for today.'
   }
 
+  if (item.status === 'confirmed') {
+    return `Thank you. "${pendingItemLabel(item)}" is already marked as done in Context.`
+  }
+
+  const confirmedAt = new Date().toISOString()
+  const { data: claimedItem, error: claimError } = await supabase
+    .from('planned_activities')
+    .update({
+      status: 'confirmed',
+      confirmed_at: confirmedAt,
+      updated_at: confirmedAt,
+    })
+    .eq('id', item.id)
+    .eq('household_id', profile.household_id)
+    .in('status', ['planned', 'not_now'])
+    .select()
+    .maybeSingle()
+
+  if (claimError) throw new Error(`Could not claim planned activity: ${claimError.message}`)
+  if (!claimedItem) {
+    return `Thank you. "${pendingItemLabel(item)}" is already marked as done in Context.`
+  }
+
   const { data: activity, error: activityError } = await supabase
     .from('activity_logs')
     .insert({
@@ -208,15 +237,20 @@ async function updatePendingItem(
     .select()
     .single()
   if (activityError || !activity) {
+    await supabase.from('planned_activities').update({
+      status: item.status,
+      confirmed_at: item.confirmed_at,
+      updated_at: new Date().toISOString(),
+    }).eq('id', item.id).eq('household_id', profile.household_id).is('confirmed_activity_log_id', null)
     throw new Error(`Could not create activity log: ${activityError?.message ?? 'No activity returned'}`)
   }
 
   const { error: updateError } = await supabase.from('planned_activities').update({
     status: 'confirmed',
     confirmed_activity_log_id: activity.id,
-    confirmed_at: new Date().toISOString(),
+    confirmed_at: confirmedAt,
     updated_at: new Date().toISOString(),
-  }).eq('id', item.id)
+  }).eq('id', item.id).eq('household_id', profile.household_id).is('confirmed_activity_log_id', null)
   if (updateError) {
     await supabase.from('activity_logs').delete().eq('id', activity.id)
     throw new Error(`Could not confirm planned activity: ${updateError.message}`)
@@ -599,6 +633,20 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient()
 
   if (!from || !body) return xmlResponse('Context received an empty message.')
+
+  if (messageSid) {
+    const { data: existingMessage } = await supabase
+      .from('sms_messages')
+      .select('id')
+      .eq('direction', 'inbound')
+      .eq('twilio_sid', messageSid)
+      .maybeSingle()
+
+    if (existingMessage) {
+      console.info('[SMS] Ignoring repeated inbound webhook:', messageSid)
+      return emptyXmlResponse()
+    }
+  }
 
   const match = await getSmsProfileMatch(supabase, from)
   const profile = match.profile

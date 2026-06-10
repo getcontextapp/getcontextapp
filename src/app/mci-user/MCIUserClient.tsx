@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
-import { getLocalDateKey } from '@/lib/dates'
+import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, ContextCard, ActivityTileConfig, PlannedActivity } from '@/types'
 import ActivityLogModal from '@/components/mci/ActivityLogModal'
@@ -45,6 +45,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [generatingCard, setGeneratingCard] = useState(false)
   const [deleteCandidate, setDeleteCandidate] = useState<PlannedActivity | null>(null)
   const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null)
+  const [confirmingPlanIds, setConfirmingPlanIds] = useState<string[]>([])
   const [contextCardCollapsed, setContextCardCollapsed] = useState(false)
   const [manualTilesExpanded, setManualTilesExpanded] = useState(initialPlannedActivities.length === 0)
 
@@ -77,11 +78,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   }, [])
 
   const refreshDashboardData = useCallback(async () => {
+    const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
     const [activityResult, plannedResult] = await Promise.all([
       supabase
         .from('activity_logs')
         .select('*')
         .eq('household_id', profile.household_id)
+        .gte('occurred_at', todayRange.start)
+        .lt('occurred_at', todayRange.end)
         .order('occurred_at', { ascending: false })
         .limit(20),
       supabase
@@ -113,6 +117,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         filter: `household_id=eq.${profile.household_id}`,
       }, payload => {
         const created = payload.new as ActivityLog
+        if (getLocalDateKey(new Date(created.occurred_at), profile.timezone) !== getLocalDateKey(new Date(), profile.timezone)) {
+          return
+        }
         setActivities(prev => prev.some(activity => activity.id === created.id) ? prev : [created, ...prev])
         refreshContextCard(created.id)
       })
@@ -133,6 +140,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         filter: `household_id=eq.${profile.household_id}`,
       }, payload => {
         const created = payload.new as PlannedActivity
+        if (created.planned_for !== getLocalDateKey(new Date(), profile.timezone)) return
         setPlannedActivities(prev => prev.some(item => item.id === created.id) ? prev : [...prev, created])
         refreshContextCard()
       })
@@ -143,7 +151,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         filter: `household_id=eq.${profile.household_id}`,
       }, payload => {
         const updated = payload.new as PlannedActivity
-        setPlannedActivities(prev => prev.map(item => item.id === updated.id ? updated : item))
+        setPlannedActivities(prev => {
+          if (updated.planned_for !== getLocalDateKey(new Date(), profile.timezone)) {
+            return prev.filter(item => item.id !== updated.id)
+          }
+          return prev.some(item => item.id === updated.id)
+            ? prev.map(item => item.id === updated.id ? updated : item)
+            : [...prev, updated]
+        })
         refreshContextCard()
       })
       .on('postgres_changes', {
@@ -171,7 +186,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       window.removeEventListener('focus', refreshDashboardData)
       window.clearInterval(refreshTimer)
     }
-  }, [profile.household_id, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase, refreshContextCard, refreshDashboardData])
+  }, [profile.household_id, profile.timezone, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase, refreshContextCard, refreshDashboardData])
 
   const handleActivityPlanned = useCallback((activity: PlannedActivity) => {
     setPlannedActivities(prev => [...prev, activity])
@@ -190,13 +205,27 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   }, [refreshContextCard])
 
   const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete') => {
-    const res = await fetch('/api/planned-activities', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: plannedActivity.id, action }),
-    })
+    if (action === 'confirm') {
+      if (confirmingPlanIds.includes(plannedActivity.id)) return
+      setConfirmingPlanIds(current => [...current, plannedActivity.id])
+    }
 
-    if (!res.ok) return
+    let res: Response
+    try {
+      res = await fetch('/api/planned-activities', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: plannedActivity.id, action }),
+      })
+    } catch {
+      setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
+      return
+    }
+
+    if (!res.ok) {
+      setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
+      return
+    }
 
     const result: {
       plannedActivity: PlannedActivity | null
@@ -216,13 +245,15 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     }
 
     if (!result.activity) {
+      setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
       refreshContextCard()
       return
     }
 
     setActivities(prev => prev.some(activity => activity.id === result.activity!.id) ? prev : [result.activity!, ...prev])
+    setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
     refreshContextCard(result.activity.id)
-  }, [refreshContextCard])
+  }, [confirmingPlanIds, refreshContextCard])
 
   const handleDeleteConfirmed = useCallback(async () => {
     if (!deleteCandidate) return
@@ -279,8 +310,40 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     window.location.href = '/auth/login'
   }
 
-  // Group today's activities by time of day
-  const groupedActivities = activities.reduce<Record<string, ActivityLog[]>>((acc, a) => {
+  const linkedActivityIds = new Set(
+    plannedActivities
+      .map(item => item.confirmed_activity_log_id)
+      .filter((id): id is string => Boolean(id)),
+  )
+  const normalizedActivityName = (activity: ActivityLog) =>
+    `${activity.category}:${activity.note?.trim() || activity.label}`.toLowerCase().replace(/\s+/g, ' ')
+  const todayActivities = activities
+    .filter(activity => getLocalDateKey(new Date(activity.occurred_at), profile.timezone) === todayKey)
+    .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
+  const displayActivities = todayActivities.filter((activity, index, all) => {
+    const nearbyDuplicates = all
+      .map((other, otherIndex) => ({ other, otherIndex }))
+      .filter(({ other, otherIndex }) => {
+        if (otherIndex === index || normalizedActivityName(other) !== normalizedActivityName(activity)) return false
+        const timeDifference = Math.abs(
+          new Date(other.occurred_at).getTime() - new Date(activity.occurred_at).getTime(),
+        )
+        return timeDifference <= 2 * 60 * 1000
+      })
+
+    if (linkedActivityIds.has(activity.id)) {
+      return !nearbyDuplicates.some(({ other, otherIndex }) =>
+        otherIndex < index && linkedActivityIds.has(other.id),
+      )
+    }
+
+    return !nearbyDuplicates.some(({ other, otherIndex }) =>
+      linkedActivityIds.has(other.id) || otherIndex < index,
+    )
+  })
+
+  // Group today's activities by time of day.
+  const groupedActivities = displayActivities.reduce<Record<string, ActivityLog[]>>((acc, a) => {
     const h = new Date(a.occurred_at).getHours()
     const period = h < 12 ? 'Morning' : h < 17 ? 'Afternoon' : 'Evening'
     if (!acc[period]) acc[period] = []
@@ -382,9 +445,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                       <div className="grid grid-cols-3 gap-2 mt-3">
                         <button
                           onClick={() => handlePlanAction(item, 'confirm')}
-                          className="rounded-xl bg-warm-700 text-cream-100 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                          disabled={confirmingPlanIds.includes(item.id)}
+                          className="rounded-xl bg-warm-700 text-cream-100 py-2 text-sm font-medium active:scale-[0.98] transition-all disabled:opacity-60"
                         >
-                          Done
+                          {confirmingPlanIds.includes(item.id) ? 'Saving...' : 'Done'}
                         </button>
                         <button
                           onClick={() => handlePlanAction(item, 'not_now')}
@@ -435,7 +499,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         ) : null}
 
         {/* Confirmed Timeline */}
-        {activities.length > 0 && (
+        {displayActivities.length > 0 && (
           <div className="animate-fade-up">
             <p className="text-warm-500 text-sm font-medium mb-3">Confirmed today</p>
             <div className="space-y-4">

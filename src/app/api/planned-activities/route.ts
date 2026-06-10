@@ -189,6 +189,53 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ plannedActivity: updated, activity: null })
   }
 
+  if (plannedActivity.status === 'confirmed') {
+    const { data: existingActivity } = plannedActivity.confirmed_activity_log_id
+      ? await supabase
+        .from('activity_logs')
+        .select('*')
+        .eq('id', plannedActivity.confirmed_activity_log_id)
+        .maybeSingle()
+      : { data: null }
+
+    return NextResponse.json({ plannedActivity, activity: existingActivity })
+  }
+
+  const confirmedAt = new Date().toISOString()
+  const { data: claimedPlan, error: claimError } = await supabase
+    .from('planned_activities')
+    .update({
+      status: 'confirmed',
+      confirmed_at: confirmedAt,
+      updated_at: confirmedAt,
+    })
+    .eq('id', plannedActivity.id)
+    .eq('household_id', profile.household_id)
+    .in('status', ['planned', 'not_now'])
+    .select()
+    .maybeSingle()
+
+  if (claimError) {
+    return NextResponse.json({ error: claimError.message ?? 'Confirmation failed' }, { status: 500 })
+  }
+
+  if (!claimedPlan) {
+    const { data: currentPlan } = await supabase
+      .from('planned_activities')
+      .select('*')
+      .eq('id', plannedActivity.id)
+      .single()
+    const { data: existingActivity } = currentPlan?.confirmed_activity_log_id
+      ? await supabase
+        .from('activity_logs')
+        .select('*')
+        .eq('id', currentPlan.confirmed_activity_log_id)
+        .maybeSingle()
+      : { data: null }
+
+    return NextResponse.json({ plannedActivity: currentPlan, activity: existingActivity })
+  }
+
   const { data: activity, error: activityError } = await supabase
     .from('activity_logs')
     .insert({
@@ -203,6 +250,16 @@ export async function PATCH(request: NextRequest) {
     .single()
 
   if (activityError || !activity) {
+    await supabase
+      .from('planned_activities')
+      .update({
+        status: plannedActivity.status,
+        confirmed_at: plannedActivity.confirmed_at,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', plannedActivity.id)
+      .eq('household_id', profile.household_id)
+      .is('confirmed_activity_log_id', null)
     return NextResponse.json({ error: activityError?.message ?? 'Activity log failed' }, { status: 500 })
   }
 
@@ -211,14 +268,17 @@ export async function PATCH(request: NextRequest) {
     .update({
       status: 'confirmed',
       confirmed_activity_log_id: activity.id,
-      confirmed_at: new Date().toISOString(),
+      confirmed_at: confirmedAt,
       updated_at: new Date().toISOString(),
     })
     .eq('id', plannedActivity.id)
+    .eq('household_id', profile.household_id)
+    .is('confirmed_activity_log_id', null)
     .select()
     .single()
 
   if (updateError || !updated) {
+    await supabase.from('activity_logs').delete().eq('id', activity.id)
     return NextResponse.json({ error: updateError?.message ?? 'Confirmation update failed' }, { status: 500 })
   }
 
