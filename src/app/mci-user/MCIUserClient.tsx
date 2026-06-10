@@ -9,6 +9,7 @@ import ActivityLogModal from '@/components/mci/ActivityLogModal'
 import ContextCardDisplay from '@/components/mci/ContextCardDisplay'
 import HouseholdCode from '@/components/mci/HouseholdCode'
 import ReminderSettings from '@/components/mci/ReminderSettings'
+import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanComposer'
 
 interface Props {
   profile: Profile
@@ -44,6 +45,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [generatingCard, setGeneratingCard] = useState(false)
   const [deleteCandidate, setDeleteCandidate] = useState<PlannedActivity | null>(null)
   const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null)
+  const [contextCardCollapsed, setContextCardCollapsed] = useState(false)
+  const [manualTilesExpanded, setManualTilesExpanded] = useState(initialPlannedActivities.length === 0)
 
   const now = new Date()
   const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening'
@@ -173,6 +176,16 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const handleActivityPlanned = useCallback((activity: PlannedActivity) => {
     setPlannedActivities(prev => [...prev, activity])
     setSelectedTile(null)
+    setManualTilesExpanded(false)
+    refreshContextCard()
+  }, [refreshContextCard])
+
+  const handleNaturalPlansSaved = useCallback((items: PlannedActivity[]) => {
+    setPlannedActivities(prev => [
+      ...prev,
+      ...items.filter(item => !prev.some(existing => existing.id === item.id)),
+    ])
+    setManualTilesExpanded(false)
     refreshContextCard()
   }, [refreshContextCard])
 
@@ -236,6 +249,31 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     document.getElementById('todays-plan')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [])
 
+  useEffect(() => {
+    setContextCardCollapsed(false)
+  }, [contextCard?.id])
+
+  useEffect(() => {
+    if (!contextCard || contextCardCollapsed) return
+
+    let timer = window.setTimeout(() => setContextCardCollapsed(true), 30_000)
+    const restartTimer = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => setContextCardCollapsed(true), 30_000)
+    }
+
+    window.addEventListener('pointerdown', restartTimer)
+    window.addEventListener('keydown', restartTimer)
+    window.addEventListener('scroll', restartTimer, { passive: true })
+
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('pointerdown', restartTimer)
+      window.removeEventListener('keydown', restartTimer)
+      window.removeEventListener('scroll', restartTimer)
+    }
+  }, [contextCard, contextCardCollapsed])
+
   async function handleSignOut() {
     await supabase.auth.signOut()
     window.location.href = '/auth/login'
@@ -291,28 +329,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
       <div className="max-w-lg mx-auto px-5 space-y-6 pt-5">
 
-        {/* Context Card */}
-        {contextCard ? (
-          <ContextCardDisplay
-            card={contextCard}
-            isGenerating={generatingCard}
-            onShowWaiting={showWaitingTasks}
-            onDismiss={dismissContextCard}
-          />
-        ) : generatingCard ? (
-          <div className="card p-5 animate-pulse-soft">
-            <div className="h-4 bg-cream-200 rounded-pill w-1/3 mb-3" />
-            <div className="h-3 bg-cream-200 rounded-pill w-full mb-2" />
-            <div className="h-3 bg-cream-200 rounded-pill w-4/5" />
-          </div>
-        ) : activities.length === 0 && sortedPlannedActivities.length === 0 ? (
-          <div className="card p-5 border border-cream-200 animate-fade-up">
-            <p className="font-serif text-warm-700 text-base italic">
-              "Add one thing to today's plan. You can confirm it later."
-            </p>
-            <p className="text-warm-300 text-xs mt-2">This keeps the day simple and easy to return to.</p>
-          </div>
-        ) : null}
+        <NaturalLanguagePlanComposer
+          plannedFor={todayKey}
+          onSaved={handleNaturalPlansSaved}
+        />
 
         {/* Today's Plan */}
         <div id="todays-plan" className="animate-fade-up scroll-mt-4">
@@ -396,6 +416,24 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           )}
         </div>
 
+        {/* Context Card */}
+        {contextCard ? (
+          <ContextCardDisplay
+            card={contextCard}
+            isGenerating={generatingCard}
+            collapsed={contextCardCollapsed}
+            onExpand={() => setContextCardCollapsed(false)}
+            onShowWaiting={showWaitingTasks}
+            onDismiss={dismissContextCard}
+          />
+        ) : generatingCard ? (
+          <div className="card p-5 animate-pulse-soft">
+            <div className="h-4 bg-cream-200 rounded-pill w-1/3 mb-3" />
+            <div className="h-3 bg-cream-200 rounded-pill w-full mb-2" />
+            <div className="h-3 bg-cream-200 rounded-pill w-4/5" />
+          </div>
+        ) : null}
+
         {/* Confirmed Timeline */}
         {activities.length > 0 && (
           <div className="animate-fade-up">
@@ -453,22 +491,33 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
         {/* Activity Tiles Grid */}
         <div className="animate-fade-up">
-          <p className="text-warm-400 text-sm font-medium mb-3">Add something else</p>
-          <div className="grid grid-cols-3 gap-2">
-            {ACTIVITY_TILES.map((tile, i) => (
-              <button
-                key={tile.category}
-                onClick={() => setSelectedTile(tile)}
-                className={`${tile.colorClass} border rounded-xl p-3 text-left
-                            opacity-90 hover:opacity-100 active:scale-[0.96] transition-all
-                            animate-fade-up`}
-                style={{ animationDelay: `${i * 0.04}s` }}
-              >
-                <span className="text-xl block mb-1">{tile.icon}</span>
-                <span className="text-xs font-medium text-warm-700">{tile.label}</span>
-              </button>
-            ))}
-          </div>
+          <button
+            type="button"
+            onClick={() => setManualTilesExpanded(current => !current)}
+            className="w-full rounded-xl border border-cream-300 bg-cream-100 px-4 py-3
+                       flex items-center justify-between text-left active:scale-[0.99] transition-all"
+            aria-expanded={manualTilesExpanded}
+          >
+            <span className="text-sm font-medium text-warm-600">＋ Add one thing manually</span>
+            <span className="text-warm-400" aria-hidden="true">{manualTilesExpanded ? '⌃' : '⌄'}</span>
+          </button>
+          {manualTilesExpanded && (
+            <div className="grid grid-cols-3 gap-2 mt-3">
+              {ACTIVITY_TILES.map((tile, i) => (
+                <button
+                  key={tile.category}
+                  onClick={() => setSelectedTile(tile)}
+                  className={`${tile.colorClass} border rounded-xl p-3 text-left
+                              opacity-90 hover:opacity-100 active:scale-[0.96] transition-all
+                              animate-fade-up`}
+                  style={{ animationDelay: `${i * 0.04}s` }}
+                >
+                  <span className="text-xl block mb-1">{tile.icon}</span>
+                  <span className="text-xs font-medium text-warm-700">{tile.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
