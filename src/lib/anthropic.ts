@@ -17,6 +17,23 @@ interface GeneratedCard {
   body: string
 }
 
+interface LiveContextCardInput {
+  displayName: string
+  timeZone?: string | null
+  pendingItems: Array<{
+    label: string
+    note?: string | null
+    expected_period?: string | null
+    status?: string | null
+  }>
+  completedActivities: Array<{
+    label: string
+    note?: string | null
+    category: string
+    occurred_at: string
+  }>
+}
+
 export interface PendingSmsItem {
   label: string
   category: string
@@ -594,4 +611,96 @@ Respond ONLY with JSON: {"title": "4–6 word title", "body": "the summary text"
   } catch {
     return { title: "Your day so far", body: raw }
   }
+}
+
+export async function generateLiveContextCard(input: LiveContextCardInput): Promise<GeneratedCard> {
+  const now = new Date()
+  const currentDate = now.toLocaleDateString('en-US', {
+    timeZone: input.timeZone || undefined,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+  const currentTime = now.toLocaleTimeString('en-US', {
+    timeZone: input.timeZone || undefined,
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  })
+  const hour = Number(now.toLocaleString('en-US', {
+    timeZone: input.timeZone || undefined,
+    hour: 'numeric',
+    hour12: false,
+  }))
+  const dayPart =
+    hour < 5 ? 'late night' :
+    hour < 12 ? 'morning' :
+    hour < 17 ? 'afternoon' :
+    hour < 21 ? 'evening' :
+    'night'
+
+  const waiting = input.pendingItems
+    .slice(0, 10)
+    .map((item, index) =>
+      `${index + 1}. ${item.note?.trim() || item.label} (${item.expected_period || 'anytime'}, ${item.status || 'planned'})`,
+    )
+    .join('\n') || 'None'
+  const completed = input.completedActivities
+    .slice(0, 10)
+    .map((activity, index) => {
+      const time = new Date(activity.occurred_at).toLocaleTimeString('en-US', {
+        timeZone: input.timeZone || undefined,
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      })
+      return `${index + 1}. ${activity.note?.trim() || activity.label} at ${time}`
+    })
+    .join('\n') || 'None'
+
+  const prompt = `You write the live Context reflection for ${input.displayName}, an older adult with memory changes.
+
+This card must accurately orient the person to the present moment. Use ONLY the facts below.
+
+Current local date: ${currentDate}
+Current local time: ${currentTime}
+Current part of day: ${dayPart}
+Exact waiting-plan count: ${input.pendingItems.length}
+Exact completed-activity count: ${input.completedActivities.length}
+
+Waiting plans for this local date:
+${waiting}
+
+Completed activities for this local date:
+${completed}
+
+Rules:
+- Return JSON only: {"title":"...","body":"..."}.
+- Write 2 or 3 short, natural sentences suitable for an older adult with MCI.
+- Orient gently to the current part of day without sounding robotic.
+- Never mention yesterday, previous days, or any item not listed above.
+- Do not state either numeric count in the title or body. Context displays the exact counts separately beside your reflection.
+- If there are no waiting plans, do not say or imply that anything is pending. Gently invite the person to add a plan only when useful.
+- If there are waiting plans, you may naturally mention no more than two by name without stating a count.
+- If there are completed activities, mention no more than two recent examples.
+- Do not call a planned item completed.
+- Avoid productivity language, judgment, clinical language, cheerleading, or pressure.
+- Do not use "Welcome back" unless the facts explicitly establish a return after absence; they do not here.
+- Keep the title specific to the current state, 3 to 6 words.
+- The body must remain useful if read aloud.`
+
+  const message = await client.messages.create({
+    model: MODEL,
+    max_tokens: 300,
+    messages: [{ role: 'user', content: prompt }],
+  })
+
+  const raw = message.content[0].type === 'text' ? message.content[0].text : ''
+  const parsed = JSON.parse(cleanJson(raw))
+  const title = String(parsed.title ?? '').trim().slice(0, 80)
+  const body = String(parsed.body ?? '').trim().slice(0, 500)
+
+  if (!title || !body) throw new Error('AI returned an incomplete Context reflection')
+  return { title, body }
 }

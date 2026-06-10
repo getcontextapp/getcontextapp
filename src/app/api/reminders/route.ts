@@ -137,16 +137,6 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // Save re-entry card to DB
-    await supabase.from('context_cards').insert({
-      household_id: profile.household_id,
-      type: 'reentry',
-      title: "Today's plan",
-      body: `You still have ${pendingItems.length} item${pendingItems.length !== 1 ? 's' : ''} waiting in today's plan. You can confirm what happened or leave it for later.`,
-      generated_by: 'user',
-      is_active: true,
-    })
-
     const smsBody = buildPendingPlanReminderMessage(
       profile.display_name,
       pendingForSms,

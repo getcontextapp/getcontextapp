@@ -1,48 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
-import { generateReentryCard } from '@/lib/anthropic'
+import { generateLiveContextCard } from '@/lib/anthropic'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
-
-function getActivityDetail(activity: { label: string; note?: string | null }) {
-  const note = activity.note?.trim()
-  if (note) return note
-
-  const genericLabels = new Set(['Morning', 'Meal', 'Movement', 'Social', 'Rest', 'Medication', 'Other'])
-  if (genericLabels.has(activity.label)) return activity.label.toLowerCase() === 'other' ? 'another activity' : `a ${activity.label.toLowerCase()} activity`
-
-  return activity.label
-}
-
-function formatList(items: string[]) {
-  if (items.length === 0) return 'None.'
-  return `${items.slice(0, 3).join(', ')}.`
-}
-
-function buildOpenCard(
-  recentActivities: Array<{ label: string; note?: string | null }>,
-  pendingItems: Array<{ label: string; note?: string | null }>,
-) {
-  const done = recentActivities
-    .slice(0, 3)
-    .map(getActivityDetail)
-    .filter(Boolean)
-  const waiting = pendingItems
-    .slice(0, 3)
-    .map(getActivityDetail)
-    .filter(Boolean)
-
-  if (done.length === 0 && waiting.length === 0) return null
-
-  return {
-    title: 'Your day so far',
-    body: [
-      `Done today: ${formatList(done)}`,
-      `Still waiting: ${formatList(waiting)}`,
-      `You can mark something done or leave it for later.`,
-    ].join('\n'),
-  }
-}
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -50,8 +10,7 @@ export async function POST(request: NextRequest) {
 
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const body = await request.json()
-  const { activity_log_id, type = 'open' } = body
+  await request.json().catch(() => ({}))
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -83,94 +42,52 @@ export async function POST(request: NextRequest) {
     .order('created_at', { ascending: true })
     .limit(10)
 
-  if (type === 'open' && (!recentActivities || recentActivities.length === 0) && (!pendingItems || pendingItems.length === 0)) {
-    return NextResponse.json({ error: 'No activities to generate card from' }, { status: 400 })
-  }
-
-  if (type === 'reentry' && (!recentActivities || recentActivities.length === 0)) {
-    return NextResponse.json({ error: 'No activities to generate card from' }, { status: 400 })
-  }
-
-  let generated: { title: string; body: string } | null
-
   try {
-    if (type === 'reentry') {
-      const triggerActivity = recentActivities!.find(a => a.id === activity_log_id) ?? recentActivities![0]
-      const gapMinutes = profile.reminder_gap_minutes ?? 90
-      generated = await generateReentryCard({
-        displayName: profile.display_name,
-        recentActivities: recentActivities!,
-        triggerActivity,
-        gapMinutes,
-      })
-    } else {
-      generated = buildOpenCard(recentActivities ?? [], pendingItems ?? [])
-    }
-  } catch (error) {
-    console.error('[Context Cards] AI generation failed:', error)
-    generated = type === 'open' ? buildOpenCard(recentActivities ?? [], pendingItems ?? []) : null
-  }
+    const generated = await generateLiveContextCard({
+      displayName: profile.display_name,
+      timeZone: profile.timezone,
+      pendingItems: pendingItems ?? [],
+      completedActivities: recentActivities ?? [],
+    })
 
-  if (!generated) {
-    return NextResponse.json({ error: 'No useful context card to show' }, { status: 400 })
-  }
+    await supabase
+      .from('context_cards')
+      .update({ is_active: false })
+      .eq('household_id', profile.household_id)
+      .eq('is_active', true)
 
-  const { data: existingCard } = await supabase
-    .from('context_cards')
-    .select('*')
-    .eq('household_id', profile.household_id)
-    .eq('type', type)
-    .eq('is_active', true)
-    .eq('title', generated.title)
-    .eq('body', generated.body)
-    .maybeSingle()
-
-  if (existingCard) return NextResponse.json(existingCard)
-
-  // Deactivate old active cards of same type
-  await supabase
-    .from('context_cards')
-    .update({ is_active: false })
-    .eq('household_id', profile.household_id)
-    .eq('type', type)
-    .eq('is_active', true)
-
-  // Insert new card
-  const { data: card, error } = await supabase
-    .from('context_cards')
-    .insert({
+    const card = {
+      id: crypto.randomUUID(),
       household_id: profile.household_id,
-      activity_log_id: activity_log_id ?? null,
-      type,
+      activity_log_id: null,
+      type: 'open' as const,
       title: generated.title,
       body: generated.body,
-      generated_by: type === 'open' ? 'user' : 'ai',
+      generated_by: 'ai' as const,
       is_active: true,
+      created_at: new Date().toISOString(),
+    }
+
+    await trackEvent(supabase, {
+      eventName: 'context_card_generated',
+      profile,
+      userId: user.id,
+      properties: {
+        card_type: 'live',
+        activity_count: recentActivities?.length ?? 0,
+        pending_count: pendingItems?.length ?? 0,
+        generated_by: 'ai',
+      },
     })
-    .select()
-    .single()
 
-  if (error || !card) {
-    return NextResponse.json({ error: error?.message ?? 'Insert failed' }, { status: 500 })
+    return NextResponse.json(card)
+  } catch (error) {
+    console.error('[Context Cards] AI generation failed:', error)
+    return NextResponse.json({ error: 'AI reflection unavailable' }, { status: 503 })
   }
-
-  await trackEvent(supabase, {
-    eventName: 'context_card_generated',
-    profile,
-    userId: user.id,
-    properties: {
-      card_id: card.id,
-      card_type: card.type,
-      activity_count: recentActivities?.length ?? 0,
-      pending_count: pendingItems?.length ?? 0,
-      generated_by: card.generated_by,
-    },
-  })
-
-  return NextResponse.json(card)
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
 

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
@@ -48,34 +48,58 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [confirmingPlanIds, setConfirmingPlanIds] = useState<string[]>([])
   const [contextCardCollapsed, setContextCardCollapsed] = useState(false)
   const [manualTilesExpanded, setManualTilesExpanded] = useState(initialPlannedActivities.length === 0)
+  const contextCardRequestId = useRef(0)
+  const contextCardDismissed = useRef(false)
+  const contextCardRefreshTimer = useRef<number | null>(null)
 
   const now = new Date()
-  const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening'
-  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+  const localHour = Number(now.toLocaleString('en-US', {
+    timeZone: profile.timezone,
+    hour: 'numeric',
+    hour12: false,
+  }))
+  const greeting = localHour < 12 ? 'Good morning' : localHour < 17 ? 'Good afternoon' : 'Good evening'
+  const dateStr = now.toLocaleDateString('en-US', {
+    timeZone: profile.timezone,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
   const todayKey = getLocalDateKey(now, profile.timezone)
 
-  const refreshContextCard = useCallback(async (activityLogId?: string | null) => {
+  const refreshContextCard = useCallback(async (showAfterDataChange = false) => {
+    const requestId = ++contextCardRequestId.current
     setGeneratingCard(true)
     try {
       const res = await fetch('/api/context-cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          activity_log_id: activityLogId ?? null,
-          type: 'open',
-        }),
+        body: JSON.stringify({}),
       })
+      if (requestId !== contextCardRequestId.current) return
+
       if (res.ok) {
         const card = await res.json()
+        if (contextCardDismissed.current && !showAfterDataChange) return
+        contextCardDismissed.current = false
         setContextCard(card)
-      } else if (res.status === 400) {
+      } else {
         setContextCard(null)
       }
     } catch {
+      if (requestId === contextCardRequestId.current) setContextCard(null)
     } finally {
-      setGeneratingCard(false)
+      if (requestId === contextCardRequestId.current) setGeneratingCard(false)
     }
   }, [])
+
+  const scheduleContextCardRefresh = useCallback(() => {
+    if (contextCardRefreshTimer.current) window.clearTimeout(contextCardRefreshTimer.current)
+    contextCardRefreshTimer.current = window.setTimeout(() => {
+      contextCardRefreshTimer.current = null
+      refreshContextCard(true)
+    }, 500)
+  }, [refreshContextCard])
 
   const refreshDashboardData = useCallback(async () => {
     const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
@@ -121,7 +145,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           return
         }
         setActivities(prev => prev.some(activity => activity.id === created.id) ? prev : [created, ...prev])
-        refreshContextCard(created.id)
+        scheduleContextCardRefresh()
       })
       .on('postgres_changes', {
         event: 'DELETE',
@@ -131,7 +155,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       }, payload => {
         const deleted = payload.old as Partial<ActivityLog>
         setActivities(prev => prev.filter(activity => activity.id !== deleted.id))
-        refreshContextCard()
+        scheduleContextCardRefresh()
       })
       .on('postgres_changes', {
         event: 'INSERT',
@@ -142,7 +166,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         const created = payload.new as PlannedActivity
         if (created.planned_for !== getLocalDateKey(new Date(), profile.timezone)) return
         setPlannedActivities(prev => prev.some(item => item.id === created.id) ? prev : [...prev, created])
-        refreshContextCard()
+        scheduleContextCardRefresh()
       })
       .on('postgres_changes', {
         event: 'UPDATE',
@@ -159,7 +183,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             ? prev.map(item => item.id === updated.id ? updated : item)
             : [...prev, updated]
         })
-        refreshContextCard()
+        scheduleContextCardRefresh()
       })
       .on('postgres_changes', {
         event: 'DELETE',
@@ -169,31 +193,42 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       }, payload => {
         const deleted = payload.old as Partial<PlannedActivity>
         setPlannedActivities(prev => prev.filter(item => item.id !== deleted.id))
-        refreshContextCard()
+        scheduleContextCardRefresh()
       })
       .subscribe()
 
     const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') refreshDashboardData()
+      if (document.visibilityState === 'visible') {
+        refreshDashboardData()
+        refreshContextCard()
+      }
     }
+    const refreshWhenFocused = () => {
+      refreshDashboardData()
+      refreshContextCard()
+    }
+    refreshContextCard(true)
     document.addEventListener('visibilitychange', refreshWhenVisible)
-    window.addEventListener('focus', refreshDashboardData)
+    window.addEventListener('focus', refreshWhenFocused)
     const refreshTimer = window.setInterval(refreshDashboardData, 30_000)
+    const reflectionTimer = window.setInterval(refreshContextCard, 5 * 60_000)
 
     return () => {
       supabase.removeChannel(channel)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
-      window.removeEventListener('focus', refreshDashboardData)
+      window.removeEventListener('focus', refreshWhenFocused)
       window.clearInterval(refreshTimer)
+      window.clearInterval(reflectionTimer)
+      if (contextCardRefreshTimer.current) window.clearTimeout(contextCardRefreshTimer.current)
     }
-  }, [profile.household_id, profile.timezone, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase, refreshContextCard, refreshDashboardData])
+  }, [profile.household_id, profile.timezone, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase, refreshContextCard, refreshDashboardData, scheduleContextCardRefresh])
 
   const handleActivityPlanned = useCallback((activity: PlannedActivity) => {
     setPlannedActivities(prev => [...prev, activity])
     setSelectedTile(null)
     setManualTilesExpanded(false)
-    refreshContextCard()
-  }, [refreshContextCard])
+    scheduleContextCardRefresh()
+  }, [scheduleContextCardRefresh])
 
   const handleNaturalPlansSaved = useCallback((items: PlannedActivity[]) => {
     setPlannedActivities(prev => [
@@ -201,8 +236,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       ...items.filter(item => !prev.some(existing => existing.id === item.id)),
     ])
     setManualTilesExpanded(false)
-    refreshContextCard()
-  }, [refreshContextCard])
+    scheduleContextCardRefresh()
+  }, [scheduleContextCardRefresh])
 
   const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete') => {
     if (action === 'confirm') {
@@ -246,14 +281,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
     if (!result.activity) {
       setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
-      refreshContextCard()
+      scheduleContextCardRefresh()
       return
     }
 
     setActivities(prev => prev.some(activity => activity.id === result.activity!.id) ? prev : [result.activity!, ...prev])
     setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
-    refreshContextCard(result.activity.id)
-  }, [confirmingPlanIds, refreshContextCard])
+    scheduleContextCardRefresh()
+  }, [confirmingPlanIds, scheduleContextCardRefresh])
 
   const handleDeleteConfirmed = useCallback(async () => {
     if (!deleteCandidate) return
@@ -268,21 +303,19 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   const dismissContextCard = useCallback(async () => {
     if (!contextCard) return
-    await supabase.from('context_cards').update({ is_active: false }).eq('id', contextCard.id)
     trackClientEvent('context_card_dismissed', {
       card_id: contextCard.id,
       card_type: contextCard.type,
     })
+    contextCardDismissed.current = true
     setContextCard(null)
-  }, [contextCard, supabase])
+  }, [contextCard])
 
   const showWaitingTasks = useCallback(() => {
-    document.getElementById('todays-plan')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const plan = document.getElementById('todays-plan')
+    plan?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    window.setTimeout(() => plan?.focus({ preventScroll: true }), 350)
   }, [])
-
-  useEffect(() => {
-    setContextCardCollapsed(false)
-  }, [contextCard?.id])
 
   useEffect(() => {
     if (!contextCard || contextCardCollapsed) return
@@ -344,7 +377,11 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   // Group today's activities by time of day.
   const groupedActivities = displayActivities.reduce<Record<string, ActivityLog[]>>((acc, a) => {
-    const h = new Date(a.occurred_at).getHours()
+    const h = Number(new Date(a.occurred_at).toLocaleString('en-US', {
+      timeZone: profile.timezone,
+      hour: 'numeric',
+      hour12: false,
+    }))
     const period = h < 12 ? 'Morning' : h < 17 ? 'Afternoon' : 'Evening'
     if (!acc[period]) acc[period] = []
     acc[period].push(a)
@@ -398,7 +435,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         />
 
         {/* Today's Plan */}
-        <div id="todays-plan" className="animate-fade-up scroll-mt-4">
+        <div id="todays-plan" tabIndex={-1} className="animate-fade-up scroll-mt-4 focus:outline-none">
           <div className="flex items-center justify-between mb-3">
             <p className="text-warm-500 text-sm font-medium">Today's plan</p>
             {openPlannedCount > 0 && (
@@ -489,6 +526,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             onExpand={() => setContextCardCollapsed(false)}
             onShowWaiting={showWaitingTasks}
             onDismiss={dismissContextCard}
+            pendingCount={openPlannedCount}
+            timeZone={profile.timezone}
           />
         ) : generatingCard ? (
           <div className="card p-5 animate-pulse-soft">
@@ -516,6 +555,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                           item.status === 'confirmed' && item.confirmed_activity_log_id === a.id
                         )
                         const timeStr = new Date(a.occurred_at).toLocaleTimeString('en-US', {
+                          timeZone: profile.timezone,
                           hour: 'numeric', minute: '2-digit', hour12: true,
                         })
                         const taskName = a.note?.trim() || a.label

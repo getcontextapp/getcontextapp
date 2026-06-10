@@ -39,16 +39,6 @@ export default async function MCIUserPage() {
     .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
     .order('created_at', { ascending: true })
 
-  // Fetch active context card
-  const { data: contextCard } = await supabase
-    .from('context_cards')
-    .select('*')
-    .eq('household_id', profile.household_id)
-    .eq('is_active', true)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single()
-
   // Fetch household join code
   const { data: household } = await supabase
     .from('households')
@@ -61,7 +51,7 @@ export default async function MCIUserPage() {
       profile={profile}
       initialActivities={activities ?? []}
       initialPlannedActivities={plannedActivities ?? []}
-      initialContextCard={contextCard ?? null}
+      initialContextCard={null}
       household={household ?? null}
     />
   )
