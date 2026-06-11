@@ -13,7 +13,7 @@ interface Props {
 }
 
 const CARD_STYLES: Record<string, string> = {
-  open:    'bg-gradient-to-br from-sage-50 to-sage-100 border-sage-200',
+  open:    'bg-gradient-to-br from-cream-50 to-cream-100 border-cream-400',
   reentry: 'bg-gradient-to-br from-terracotta-50 to-cream-100 border-terracotta-200',
 }
 
