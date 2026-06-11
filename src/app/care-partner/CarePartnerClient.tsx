@@ -7,6 +7,7 @@ import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, PlannedActivity } from '@/types'
+import WeeklySummaryCard from '@/components/weekly/WeeklySummaryCard'
 
 interface Props {
   careProfile: Profile
@@ -384,6 +385,8 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
           )}
         </div>
 
+        <WeeklySummaryCard href="/care-partner/weekly-summary" role="care_partner" />
+
         {/* Completed today */}
         <div className="animate-fade-up delay-200">
           <div className="flex items-center justify-between mb-3">
@@ -462,7 +465,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             aria-controls="weekly-overview"
           >
             <span>
-              <span className="block text-base font-medium text-warm-700">Weekly overview</span>
+              <span className="block text-base font-medium text-warm-700">Recent activity details</span>
               <span className="block text-xs text-warm-400 mt-0.5">Activity types and the last 7 days</span>
             </span>
             <span className="text-xl text-warm-400" aria-hidden="true">{weeklyOverviewOpen ? '⌃' : '⌄'}</span>

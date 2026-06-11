@@ -121,3 +121,33 @@ export function buildPersonalDailySummaryMessage(
     `Open Context: ${appUrl}/mci-user`,
   ].filter(Boolean).join('\n')
 }
+
+export function buildPersonalWeeklySummaryMessage(
+  dateLabel: string,
+  completed: number,
+  totalPlanned: number,
+  appUrl: string,
+) {
+  return [
+    `Your Context weekly summary for ${dateLabel} is ready.`,
+    totalPlanned > 0
+      ? `You completed ${completed} of ${totalPlanned} planned activities.`
+      : 'No planned activities were recorded for the week.',
+    `View your week: ${appUrl}/mci-user/weekly-summary`,
+  ].join('\n\n')
+}
+
+export function buildCarePartnerWeeklySummaryMessage(
+  dateLabel: string,
+  completed: number,
+  totalPlanned: number,
+  appUrl: string,
+) {
+  return [
+    `The Context weekly summary for ${dateLabel} is ready.`,
+    totalPlanned > 0
+      ? `${completed} of ${totalPlanned} planned activities were completed.`
+      : 'No planned activities were recorded for the week.',
+    `View the summary: ${appUrl}/care-partner/weekly-summary`,
+  ].join('\n\n')
+}

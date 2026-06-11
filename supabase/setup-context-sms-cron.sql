@@ -35,7 +35,8 @@ where jobname in (
   'context-morning-followup',
   'context-noon-reminder',
   'context-afternoon-reminder',
-  'context-daily-summary'
+  'context-daily-summary',
+  'context-weekly-summary'
 );
 
 -- Jobs run hourly and the Context route checks each profile's local timezone.

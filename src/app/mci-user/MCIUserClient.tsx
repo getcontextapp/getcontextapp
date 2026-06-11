@@ -11,6 +11,7 @@ import ContextCardDisplay from '@/components/mci/ContextCardDisplay'
 import HouseholdCode from '@/components/mci/HouseholdCode'
 import ReminderSettings from '@/components/mci/ReminderSettings'
 import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanComposer'
+import WeeklySummaryCard from '@/components/weekly/WeeklySummaryCard'
 
 interface Props {
   profile: Profile
@@ -549,6 +550,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             </div>
           )}
         </div>
+
+        <WeeklySummaryCard href="/mci-user/weekly-summary" role="mci_user" />
 
         {/* Context Card */}
         {contextCard ? (

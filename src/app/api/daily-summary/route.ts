@@ -7,6 +7,7 @@ import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
+import { runWeeklySummaryNotifications } from '@/lib/weekly-summary-notifications'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
@@ -64,6 +65,12 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient()
+  let weeklySent = 0
+  try {
+    weeklySent = (await runWeeklySummaryNotifications(supabase)).sent
+  } catch (error) {
+    console.error('[Weekly Summary] Scheduled send failed:', error)
+  }
 
   const { data: careProfiles } = await supabase
     .from('profiles')
@@ -72,7 +79,7 @@ export async function GET(request: NextRequest) {
     .not('phone_e164', 'is', null)
     .not('household_id', 'is', null)
 
-  if (!careProfiles) return NextResponse.json({ sent: 0 })
+  if (!careProfiles) return NextResponse.json({ sent: 0, weeklySent })
 
   let sent = 0
   for (const profile of careProfiles) {
@@ -97,7 +104,7 @@ export async function GET(request: NextRequest) {
     sent++
   }
 
-  return NextResponse.json({ sent })
+  return NextResponse.json({ sent, weeklySent })
 }
 
 async function sendDailySummary(householdId: string, careProfile: any, profileSupabase = createServiceClient()) {

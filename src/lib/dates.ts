@@ -11,27 +11,31 @@ export function getLocalDateKey(date: Date, timeZone?: string | null) {
 
 export function getUtcRangeForLocalDay(date: Date, timeZone?: string | null) {
   const targetKey = getLocalDateKey(date, timeZone)
-  const targetUtc = Date.UTC(
-    Number(targetKey.slice(0, 4)),
-    Number(targetKey.slice(5, 7)) - 1,
-    Number(targetKey.slice(8, 10)),
-  )
+  return getUtcRangeForLocalDateKey(targetKey, timeZone)
+}
 
-  let start: Date | null = null
-  for (let hour = -14; hour <= 14; hour++) {
-    const candidate = new Date(targetUtc + hour * 60 * 60 * 1000)
-    if (getLocalDateKey(candidate, timeZone) === targetKey) {
-      start = candidate
-      break
+export function getUtcRangeForLocalDateKey(targetKey: string, timeZone?: string | null) {
+  function findStart(dateKey: string) {
+    const targetUtc = Date.UTC(
+      Number(dateKey.slice(0, 4)),
+      Number(dateKey.slice(5, 7)) - 1,
+      Number(dateKey.slice(8, 10)),
+    )
+    for (let minutes = -14 * 60; minutes <= 14 * 60; minutes += 15) {
+      const candidate = new Date(targetUtc + minutes * 60 * 1000)
+      if (getLocalDateKey(candidate, timeZone) === dateKey) return candidate
     }
+    return null
   }
 
-  const end = start ? new Date(start.getTime()) : new Date(date)
-  if (!start) end.setHours(0, 0, 0, 0)
-  end.setUTCDate(end.getUTCDate() + 1)
+  const nextDate = new Date(`${targetKey}T12:00:00Z`)
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1)
+  const nextKey = nextDate.toISOString().slice(0, 10)
+  const start = findStart(targetKey) ?? new Date(`${targetKey}T00:00:00Z`)
+  const end = findStart(nextKey) ?? new Date(`${nextKey}T00:00:00Z`)
 
   return {
-    start: (start ?? end).toISOString(),
+    start: start.toISOString(),
     end: end.toISOString(),
   }
 }

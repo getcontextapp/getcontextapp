@@ -95,6 +95,7 @@ export type SmsPurpose =
   | 'care_partner_no_response'
   | 'pending_reminder'
   | 'daily_summary'
+  | 'weekly_summary'
   | 'inbound_plan_reply'
   | 'inbound_confirmation'
   | 'inbound_other'
