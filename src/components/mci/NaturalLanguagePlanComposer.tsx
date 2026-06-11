@@ -57,6 +57,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
         return
       }
       setDrafts(result.items)
+      setError(null)
     } catch {
       setError('Context could not connect. Please try again.')
     } finally {

@@ -12,28 +12,161 @@ interface Props {
 }
 
 const STATUS_COLORS = {
-  completed: '#7D9E6E',
-  notCompleted: '#D4B896',
-  skipped: '#C47448',
+  completed: '#78C850',
+  notCompleted: '#FFB020',
+  skipped: '#FF5B57',
 }
 
-function getRingBackground(summary: WeeklySummaryData) {
-  if (summary.totalPlanned === 0) return '#EDE9E3'
-  const completedEnd = (summary.completed / summary.totalPlanned) * 360
-  const notCompletedEnd = completedEnd + (summary.notCompleted / summary.totalPlanned) * 360
-  return `conic-gradient(
-    ${STATUS_COLORS.completed} 0deg ${completedEnd}deg,
-    ${STATUS_COLORS.notCompleted} ${completedEnd}deg ${notCompletedEnd}deg,
-    ${STATUS_COLORS.skipped} ${notCompletedEnd}deg 360deg
-  )`
-}
+function SegmentedRing({ summary }: { summary: WeeklySummaryData }) {
+  const radius = 62
+  const circumference = 2 * Math.PI * radius
+  const gap = 10
+  let cursor = 0
+  const segments = [
+    { value: summary.completed, color: STATUS_COLORS.completed },
+    { value: summary.notCompleted, color: STATUS_COLORS.notCompleted },
+    { value: summary.skipped, color: STATUS_COLORS.skipped },
+  ]
 
-function StatCard({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div className="min-w-0 rounded-card border border-cream-200 bg-white px-3 py-4 text-center shadow-card">
-      <p className="text-xs font-medium leading-4 text-warm-500">{label}</p>
-      <p className="mt-3 font-serif text-xl font-semibold leading-tight text-warm-900">{value}</p>
+    <div
+      role="img"
+      aria-label={`${summary.completed} completed, ${summary.notCompleted} not completed, ${summary.skipped} skipped`}
+      className="relative h-40 w-40 shrink-0"
+    >
+      <svg viewBox="0 0 160 160" className="h-full w-full -rotate-90" aria-hidden="true">
+        <circle cx="80" cy="80" r={radius} fill="none" stroke="#F2EDE5" strokeWidth="16" />
+        {summary.totalPlanned > 0 && segments.map((segment, index) => {
+          if (segment.value === 0) return null
+          const segmentLength = (segment.value / summary.totalPlanned) * circumference
+          const visibleLength = Math.max(segmentLength - gap, 1)
+          const dashOffset = -cursor
+          cursor += segmentLength
+          return (
+            <circle
+              key={index}
+              cx="80"
+              cy="80"
+              r={radius}
+              fill="none"
+              stroke={segment.color}
+              strokeWidth="16"
+              strokeLinecap="round"
+              strokeDasharray={`${visibleLength} ${circumference - visibleLength}`}
+              strokeDashoffset={dashOffset}
+            />
+          )
+        })}
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+        <span className="font-serif text-4xl font-semibold text-warm-900">{summary.totalPlanned}</span>
+        <span className="mt-1 text-xs leading-4 text-warm-500">planned activities</span>
+      </div>
+    </div>
+  )
+}
+
+function CompletionRing({ percent }: { percent: number }) {
+  const radius = 25
+  const circumference = 2 * Math.PI * radius
+  const length = Math.max(0, Math.min(100, percent)) / 100 * circumference
+
+  return (
+    <div className="relative mx-auto h-16 w-16" aria-hidden="true">
+      <svg viewBox="0 0 64 64" className="h-full w-full -rotate-90">
+        <circle cx="32" cy="32" r={radius} fill="none" stroke="#E5EFD9" strokeWidth="7" />
+        {percent > 0 && (
+          <circle
+            cx="32"
+            cy="32"
+            r={radius}
+            fill="none"
+            stroke={STATUS_COLORS.completed}
+            strokeWidth="7"
+            strokeLinecap="round"
+            strokeDasharray={`${length} ${circumference - length}`}
+          />
+        )}
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-warm-900">
+        {percent}%
+      </span>
+    </div>
+  )
+}
+
+function StatCard({
+  label,
+  value,
+  detail,
+  icon,
+  completionRate,
+}: {
+  label: string
+  value: string
+  detail: string
+  icon?: string
+  completionRate?: number
+}) {
+  return (
+    <div className="min-w-0 rounded-card border border-cream-200 bg-white px-2 py-4 text-center shadow-card">
+      <p className="min-h-8 text-xs font-semibold leading-4 text-warm-700">{label}</p>
+      <div className="mt-2">
+        {completionRate !== undefined ? (
+          <CompletionRing percent={completionRate} />
+        ) : (
+          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-cream-100 text-3xl" aria-hidden="true">
+            {icon}
+          </span>
+        )}
+      </div>
+      {completionRate === undefined && (
+        <p className="mt-2 font-serif text-lg font-semibold leading-tight text-warm-900">{value}</p>
+      )}
       <p className="mt-2 text-xs leading-4 text-warm-400">{detail}</p>
+    </div>
+  )
+}
+
+const PERIOD_STYLES = {
+  Morning: { color: '#F8C85A', icon: '🌤️' },
+  Afternoon: { color: '#FFD978', icon: '☀️' },
+  Evening: { color: '#BDA8F5', icon: '🌙' },
+}
+
+function TimeOfDayChart({ periods }: { periods: WeeklySummaryData['periods'] }) {
+  const paths = [
+    'M 18 78 Q 43 34 92 25',
+    'M 106 23 Q 150 13 194 23',
+    'M 208 25 Q 257 34 282 78',
+  ]
+
+  return (
+    <div className="mt-4">
+      <svg viewBox="0 0 300 92" className="w-full overflow-visible" aria-hidden="true">
+        {periods.map((period, index) => (
+          <path
+            key={period.period}
+            d={paths[index]}
+            fill="none"
+            stroke={PERIOD_STYLES[period.period].color}
+            strokeWidth="12"
+            strokeLinecap="round"
+          />
+        ))}
+      </svg>
+      <div className="-mt-9 grid grid-cols-3 gap-2">
+        {periods.map(period => (
+          <div key={period.period} className="min-w-0 text-center">
+            <span className="text-2xl" aria-hidden="true">{PERIOD_STYLES[period.period].icon}</span>
+            <p className="mt-1 text-2xl font-bold text-warm-900">{period.percent}%</p>
+            <p className="text-sm font-medium text-warm-600">{period.period}</p>
+            <p className="mt-1 text-xs text-warm-400">
+              {period.count} {period.count === 1 ? 'activity' : 'activities'}
+            </p>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -42,7 +175,7 @@ export default function WeeklySummaryView({ summary, role }: Props) {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [showAllCategories, setShowAllCategories] = useState(false)
   const homeHref = role === 'care_partner' ? '/care-partner' : '/mci-user'
-  const visibleCategories = showAllCategories ? summary.categories : summary.categories.slice(0, 3)
+  const visibleCategories = showAllCategories ? summary.categories : summary.categories.slice(0, 5)
 
   return (
     <main className="min-h-svh bg-cream-50 pb-10 safe-bottom">
@@ -81,20 +214,10 @@ export default function WeeklySummaryView({ summary, role }: Props) {
         </section>
 
         <section className="card border border-cream-200 p-5" aria-label="Weekly planned activity totals">
-          <div className="flex flex-col items-center gap-5 sm:flex-row sm:justify-center sm:gap-8">
-            <div
-              role="img"
-              aria-label={`${summary.completed} completed, ${summary.notCompleted} not completed, ${summary.skipped} skipped`}
-              className="relative h-44 w-44 shrink-0 rounded-full"
-              style={{ background: getRingBackground(summary) }}
-            >
-              <div className="absolute inset-[18px] flex flex-col items-center justify-center rounded-full bg-white text-center">
-                <span className="font-serif text-4xl font-semibold text-warm-900">{summary.totalPlanned}</span>
-                <span className="mt-1 text-sm text-warm-500">planned activities</span>
-              </div>
-            </div>
+          <div className="grid grid-cols-[160px_1fr] items-center gap-4">
+            <SegmentedRing summary={summary} />
 
-            <dl className="grid w-full max-w-xs gap-3">
+            <dl className="grid min-w-0 gap-4">
               {[
                 ['Completed', summary.completed, STATUS_COLORS.completed],
                 ['Not completed', summary.notCompleted, STATUS_COLORS.notCompleted],
@@ -102,8 +225,8 @@ export default function WeeklySummaryView({ summary, role }: Props) {
               ].map(([label, value, color]) => (
                 <div key={String(label)} className="flex items-center gap-3">
                   <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: String(color) }} aria-hidden="true" />
-                  <dt className="flex-1 text-base text-warm-600">{label}</dt>
-                  <dd className="text-lg font-semibold text-warm-900">{value}</dd>
+                  <dt className="min-w-0 flex-1 text-sm leading-4 text-warm-600">{label}</dt>
+                  <dd className="text-base font-semibold text-warm-900">{value}</dd>
                 </div>
               ))}
             </dl>
@@ -120,16 +243,19 @@ export default function WeeklySummaryView({ summary, role }: Props) {
             label="Completion rate"
             value={`${summary.completionRate}%`}
             detail={summary.totalPlanned > 0 ? `${summary.completed} of ${summary.totalPlanned} planned` : 'No plans recorded'}
+            completionRate={summary.completionRate}
           />
           <StatCard
             label="Most active day"
             value={summary.mostActiveDay ?? 'No activity'}
             detail={summary.mostActiveDay ? `${summary.mostActiveDayCount} completed` : 'Nothing recorded'}
+            icon="⭐"
           />
           <StatCard
             label="Days with activity"
             value={`${summary.daysWithActivity} of 7`}
             detail={`${summary.activityCount} total completed`}
+            icon="📅"
           />
         </section>
 
@@ -153,25 +279,9 @@ export default function WeeklySummaryView({ summary, role }: Props) {
             <div id="weekly-details" className="mt-3 space-y-5">
               <section className="card border border-cream-200 p-5" aria-labelledby="time-heading">
                 <h2 id="time-heading" className="font-serif text-lg font-semibold text-warm-900">
-                  When activities were completed
+                  By time of day
                 </h2>
-                <div className="mt-5 grid grid-cols-3 gap-2">
-                  {summary.periods.map((period, index) => (
-                    <div key={period.period} className="min-w-0 text-center">
-                      <div
-                        className={`h-3 rounded-pill ${
-                          index === 0 ? 'bg-cream-400' : index === 1 ? 'bg-cream-300' : 'bg-sage-300'
-                        }`}
-                        aria-hidden="true"
-                      />
-                      <p className="mt-3 text-lg font-semibold text-warm-900">{period.percent}%</p>
-                      <p className="text-sm font-medium text-warm-600">{period.period}</p>
-                      <p className="mt-1 text-xs text-warm-400">
-                        {period.count} {period.count === 1 ? 'activity' : 'activities'}
-                      </p>
-                    </div>
-                  ))}
-                </div>
+                <TimeOfDayChart periods={summary.periods} />
               </section>
 
               <section className="card border border-cream-200 p-5" aria-labelledby="category-heading">
@@ -181,22 +291,24 @@ export default function WeeklySummaryView({ summary, role }: Props) {
                 {visibleCategories.length === 0 ? (
                   <p className="mt-3 text-sm text-warm-400">No completed activity categories were recorded.</p>
                 ) : (
-                  <div className="mt-4 grid grid-cols-3 gap-2">
+                  <div className="mt-4 grid grid-cols-5 gap-1">
                     {visibleCategories.map(item => {
                       const tile = ACTIVITY_TILES.find(candidate => candidate.category === item.category)
                       return (
                         <div key={item.category} className="min-w-0 text-center">
-                          <span className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full border text-2xl ${tile?.colorClass ?? 'tile-custom'}`} aria-hidden="true">
+                          <span className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full border text-xl ${tile?.colorClass ?? 'tile-custom'}`} aria-hidden="true">
                             {tile?.icon ?? '📌'}
                           </span>
-                          <p className="mt-2 truncate text-sm font-medium text-warm-700">{tile?.label ?? item.category}</p>
-                          <p className="mt-1 text-xs text-warm-400">{item.count} completed</p>
+                          <p className="mt-2 min-h-8 text-[11px] font-medium leading-4 text-warm-700">
+                            {tile?.label ?? item.category}
+                          </p>
+                          <p className="mt-1 text-[11px] leading-4 text-warm-400">{item.count} completed</p>
                         </div>
                       )
                     })}
                   </div>
                 )}
-                {summary.categories.length > 3 && (
+                {summary.categories.length > 5 && (
                   <button
                     type="button"
                     onClick={() => setShowAllCategories(current => !current)}

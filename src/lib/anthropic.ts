@@ -175,7 +175,9 @@ function fallbackParseSmsPlanReply(message: string): ParsedSmsPlanReply {
   if (/\b(walk|exercise|stretch|gym|garden|yard|outside)\b/.test(lower)) add('movement', completedCue ? message : 'Move around', 'medium')
   if (/\b(call|called|phone|daughter|son|wife|husband|friend|family|neighbor|visit|visited|text|club|church|group|meeting|community)\b/.test(lower)) add('social', completedCue ? message : normalizePlannedNote(message), 'medium')
   if (/\b(nap|rest|sleep|relax|tv|read)\b/.test(lower)) add('rest', 'Rest for a while', 'medium')
-  if (/\b(shower|wash|dress|dressed|brush|morning)\b/.test(lower)) add('morning', 'Morning routine', 'medium')
+  if (/\b(bath|bathe|shower|wash|dress|dressed|brush|morning)\b/.test(lower)) {
+    add('morning', completedCue ? message : normalizePlannedNote(message), 'medium')
+  }
   if (/\b(doctor|appointment|errand|store|shop|bank|bill|clean|laundry|cook|library|class|hobby|game|cards|bingo)\b/.test(lower)) add('custom', completedCue ? message : normalizePlannedNote(message), 'medium')
 
   if (items.length === 0) {
