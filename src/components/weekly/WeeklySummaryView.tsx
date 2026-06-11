@@ -12,15 +12,29 @@ interface Props {
 }
 
 const STATUS_COLORS = {
-  completed: '#78C850',
-  notCompleted: '#FFB020',
-  skipped: '#FF5B57',
+  completed: '#7D9E6E',
+  notCompleted: '#E2A63B',
+  skipped: '#D9785B',
+}
+
+function polarPoint(center: number, radius: number, angle: number) {
+  const radians = (angle - 90) * Math.PI / 180
+  return {
+    x: center + radius * Math.cos(radians),
+    y: center + radius * Math.sin(radians),
+  }
+}
+
+function describeArc(center: number, radius: number, startAngle: number, endAngle: number) {
+  const start = polarPoint(center, radius, endAngle)
+  const end = polarPoint(center, radius, startAngle)
+  const largeArc = endAngle - startAngle > 180 ? 1 : 0
+  return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 0 ${end.x} ${end.y}`
 }
 
 function SegmentedRing({ summary }: { summary: WeeklySummaryData }) {
   const radius = 62
-  const circumference = 2 * Math.PI * radius
-  const gap = 10
+  const gapDegrees = 5
   let cursor = 0
   const segments = [
     { value: summary.completed, color: STATUS_COLORS.completed },
@@ -34,26 +48,23 @@ function SegmentedRing({ summary }: { summary: WeeklySummaryData }) {
       aria-label={`${summary.completed} completed, ${summary.notCompleted} not completed, ${summary.skipped} skipped`}
       className="relative h-40 w-40 shrink-0"
     >
-      <svg viewBox="0 0 160 160" className="h-full w-full -rotate-90" aria-hidden="true">
+      <svg viewBox="0 0 160 160" className="h-full w-full" aria-hidden="true">
         <circle cx="80" cy="80" r={radius} fill="none" stroke="#F2EDE5" strokeWidth="16" />
         {summary.totalPlanned > 0 && segments.map((segment, index) => {
           if (segment.value === 0) return null
-          const segmentLength = (segment.value / summary.totalPlanned) * circumference
-          const visibleLength = Math.max(segmentLength - gap, 1)
-          const dashOffset = -cursor
-          cursor += segmentLength
+          const sweep = (segment.value / summary.totalPlanned) * 360
+          const usableGap = Math.min(gapDegrees, Math.max(sweep / 3, 1))
+          const startAngle = cursor + usableGap / 2
+          const endAngle = cursor + sweep - usableGap / 2
+          cursor += sweep
           return (
-            <circle
+            <path
               key={index}
-              cx="80"
-              cy="80"
-              r={radius}
+              d={describeArc(80, radius, startAngle, endAngle)}
               fill="none"
               stroke={segment.color}
               strokeWidth="16"
               strokeLinecap="round"
-              strokeDasharray={`${visibleLength} ${circumference - visibleLength}`}
-              strokeDashoffset={dashOffset}
             />
           )
         })}
@@ -136,35 +147,73 @@ const PERIOD_STYLES = {
 
 function TimeOfDayChart({ periods }: { periods: WeeklySummaryData['periods'] }) {
   const paths = [
-    'M 18 78 Q 43 34 92 25',
-    'M 106 23 Q 150 13 194 23',
-    'M 208 25 Q 257 34 282 78',
+    'M 18 92 Q 43 43 92 30',
+    'M 108 27 Q 150 15 192 27',
+    'M 208 30 Q 257 43 282 92',
+  ]
+  const positions = [
+    { x: 58, iconY: 98, percentY: 126, labelY: 148, countY: 166 },
+    { x: 150, iconY: 68, percentY: 96, labelY: 118, countY: 136 },
+    { x: 242, iconY: 98, percentY: 126, labelY: 148, countY: 166 },
   ]
 
   return (
-    <div className="mt-4">
-      <svg viewBox="0 0 300 92" className="w-full overflow-visible" aria-hidden="true">
+    <div className="mt-3">
+      <svg viewBox="0 0 300 178" className="w-full" aria-hidden="true">
         {periods.map((period, index) => (
-          <path
-            key={period.period}
-            d={paths[index]}
-            fill="none"
-            stroke={PERIOD_STYLES[period.period].color}
-            strokeWidth="12"
-            strokeLinecap="round"
-          />
+          <g key={period.period}>
+            <path
+              d={paths[index]}
+              fill="none"
+              stroke={PERIOD_STYLES[period.period].color}
+              strokeWidth="12"
+              strokeLinecap="round"
+            />
+            <text
+              x={positions[index].x}
+              y={positions[index].iconY}
+              textAnchor="middle"
+              fontSize="22"
+            >
+              {PERIOD_STYLES[period.period].icon}
+            </text>
+            <text
+              x={positions[index].x}
+              y={positions[index].percentY}
+              textAnchor="middle"
+              fontSize="22"
+              fontWeight="700"
+              fill="#1E1A14"
+            >
+              {period.percent}%
+            </text>
+            <text
+              x={positions[index].x}
+              y={positions[index].labelY}
+              textAnchor="middle"
+              fontSize="13"
+              fontWeight="500"
+              fill="#4F463B"
+            >
+              {period.period}
+            </text>
+            <text
+              x={positions[index].x}
+              y={positions[index].countY}
+              textAnchor="middle"
+              fontSize="10"
+              fill="#887E6E"
+            >
+              {period.count} {period.count === 1 ? 'activity' : 'activities'}
+            </text>
+          </g>
         ))}
       </svg>
-      <div className="-mt-9 grid grid-cols-3 gap-2">
+      <div className="sr-only">
         {periods.map(period => (
-          <div key={period.period} className="min-w-0 text-center">
-            <span className="text-2xl" aria-hidden="true">{PERIOD_STYLES[period.period].icon}</span>
-            <p className="mt-1 text-2xl font-bold text-warm-900">{period.percent}%</p>
-            <p className="text-sm font-medium text-warm-600">{period.period}</p>
-            <p className="mt-1 text-xs text-warm-400">
-              {period.count} {period.count === 1 ? 'activity' : 'activities'}
-            </p>
-          </div>
+          <p key={period.period}>
+            {period.period}: {period.percent}%, {period.count} {period.count === 1 ? 'activity' : 'activities'}
+          </p>
         ))}
       </div>
     </div>
@@ -175,7 +224,7 @@ export default function WeeklySummaryView({ summary, role }: Props) {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [showAllCategories, setShowAllCategories] = useState(false)
   const homeHref = role === 'care_partner' ? '/care-partner' : '/mci-user'
-  const visibleCategories = showAllCategories ? summary.categories : summary.categories.slice(0, 5)
+  const visibleCategories = showAllCategories ? summary.categories : summary.categories.slice(0, 3)
 
   return (
     <main className="min-h-svh bg-cream-50 pb-10 safe-bottom">
@@ -291,24 +340,22 @@ export default function WeeklySummaryView({ summary, role }: Props) {
                 {visibleCategories.length === 0 ? (
                   <p className="mt-3 text-sm text-warm-400">No completed activity categories were recorded.</p>
                 ) : (
-                  <div className="mt-4 grid grid-cols-5 gap-1">
+                  <div className="mt-4 grid grid-cols-3 gap-3">
                     {visibleCategories.map(item => {
                       const tile = ACTIVITY_TILES.find(candidate => candidate.category === item.category)
                       return (
                         <div key={item.category} className="min-w-0 text-center">
-                          <span className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full border text-xl ${tile?.colorClass ?? 'tile-custom'}`} aria-hidden="true">
+                          <span className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full border text-2xl ${tile?.colorClass ?? 'tile-custom'}`} aria-hidden="true">
                             {tile?.icon ?? '📌'}
                           </span>
-                          <p className="mt-2 min-h-8 text-[11px] font-medium leading-4 text-warm-700">
-                            {tile?.label ?? item.category}
-                          </p>
-                          <p className="mt-1 text-[11px] leading-4 text-warm-400">{item.count} completed</p>
+                          <p className="mt-2 text-sm font-medium leading-5 text-warm-700">{tile?.label ?? item.category}</p>
+                          <p className="mt-1 text-xs leading-4 text-warm-400">{item.count} completed</p>
                         </div>
                       )
                     })}
                   </div>
                 )}
-                {summary.categories.length > 5 && (
+                {summary.categories.length > 3 && (
                   <button
                     type="button"
                     onClick={() => setShowAllCategories(current => !current)}
