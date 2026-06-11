@@ -48,6 +48,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [confirmingPlanIds, setConfirmingPlanIds] = useState<string[]>([])
   const [contextCardCollapsed, setContextCardCollapsed] = useState(false)
   const [manualTilesExpanded, setManualTilesExpanded] = useState(initialPlannedActivities.length === 0)
+  const [showAllCompleted, setShowAllCompleted] = useState(false)
   const contextCardRequestId = useRef(0)
   const contextCardDismissed = useRef(false)
   const contextCardRefreshTimer = useRef<number | null>(null)
@@ -396,6 +397,65 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   const visiblePlannedActivities = sortedPlannedActivities.filter(item => item.status !== 'confirmed')
   const openPlannedCount = sortedPlannedActivities.filter(a => a.status === 'planned' || a.status === 'not_now').length
+  const completedPreview = displayActivities.slice(0, 3)
+
+  const renderCompletedActivity = (activity: ActivityLog) => {
+    const tileConfig = ACTIVITY_TILES.find(tile => tile.category === activity.category)
+    const linkedPlan = plannedActivities.find(item =>
+      item.status === 'confirmed' && item.confirmed_activity_log_id === activity.id
+    )
+    const timeStr = new Date(activity.occurred_at).toLocaleTimeString('en-US', {
+      timeZone: profile.timezone,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+    const taskName = activity.note?.trim() || activity.label
+
+    return (
+      <div key={activity.id} className="rounded-xl border border-sage-200 bg-sage-50 px-4 py-3">
+        <div className="flex items-start gap-3">
+          <span
+            className="w-8 h-8 shrink-0 rounded-full bg-sage-100 border border-sage-200 flex items-center justify-center text-sage-600 font-semibold"
+            aria-hidden="true"
+          >
+            ✓
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[15px] font-medium leading-5 text-warm-700 whitespace-normal break-words">
+                  {taskName}
+                </p>
+                <p className="text-xs text-warm-400 mt-1">
+                  {tileConfig?.icon ?? '📌'} {timeStr}
+                </p>
+              </div>
+              <span className="rounded-pill bg-sage-100 border border-sage-200 px-2 py-1 text-[11px] font-medium text-sage-600">
+                Done
+              </span>
+            </div>
+            {linkedPlan && (
+              <div className="flex items-center gap-3 mt-3 pt-3 border-t border-sage-200/80">
+                <button
+                  onClick={() => handlePlanAction(linkedPlan, 'reopen')}
+                  className="min-h-10 rounded-xl border border-sage-300 bg-white/70 px-4 text-sm font-medium text-warm-600 active:scale-[0.98] transition-all"
+                >
+                  Undo
+                </button>
+                <button
+                  onClick={() => setDeleteCandidate(linkedPlan)}
+                  className="min-h-10 px-2 text-sm font-medium text-terracotta-700 underline decoration-terracotta-200 underline-offset-4"
+                >
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-svh bg-cream-50 pb-8 safe-bottom">
@@ -540,56 +600,40 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         {/* Confirmed Timeline */}
         {displayActivities.length > 0 && (
           <div className="animate-fade-up">
-            <p className="text-warm-500 text-sm font-medium mb-3">Confirmed today</p>
-            <div className="space-y-4">
-              {(['Morning', 'Afternoon', 'Evening'] as const).map(period => {
-                const group = groupedActivities[period]
-                if (!group || group.length === 0) return null
-                return (
-                  <div key={period}>
-                    <p className="text-xs font-medium text-warm-300 uppercase tracking-wide mb-2">{period}</p>
-                    <div className="space-y-2">
-                      {group.map(a => {
-                        const tileConfig = ACTIVITY_TILES.find(t => t.category === a.category)
-                        const linkedPlan = plannedActivities.find(item =>
-                          item.status === 'confirmed' && item.confirmed_activity_log_id === a.id
-                        )
-                        const timeStr = new Date(a.occurred_at).toLocaleTimeString('en-US', {
-                          timeZone: profile.timezone,
-                          hour: 'numeric', minute: '2-digit', hour12: true,
-                        })
-                        const taskName = a.note?.trim() || a.label
-                        return (
-                          <div key={a.id} className="bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
-                            <div className="flex items-center gap-3">
-                              <span className="text-xl">{tileConfig?.icon ?? '📌'}</span>
-                              <p className="flex-1 min-w-0 text-base font-semibold leading-5 text-warm-900 whitespace-normal break-words">{taskName}</p>
-                              <span className="text-xs text-warm-300 whitespace-nowrap">{timeStr}</span>
-                            </div>
-                            {linkedPlan && (
-                              <div className="grid grid-cols-2 gap-2 mt-3">
-                                <button
-                                  onClick={() => handlePlanAction(linkedPlan, 'reopen')}
-                                  className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
-                                >
-                                  Undo done
-                                </button>
-                                <button
-                                  onClick={() => setDeleteCandidate(linkedPlan)}
-                                  className="rounded-xl border border-terracotta-200 text-terracotta-700 py-2 text-sm font-medium active:scale-[0.98] transition-all"
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })}
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-warm-500 text-sm font-medium">Completed today</p>
+              <span className="text-xs text-sage-600">{displayActivities.length} done</span>
             </div>
+
+            {showAllCompleted ? (
+              <div className="space-y-4">
+                {(['Morning', 'Afternoon', 'Evening'] as const).map(period => {
+                  const group = groupedActivities[period]
+                  if (!group || group.length === 0) return null
+                  return (
+                    <div key={period}>
+                      <p className="text-xs font-medium text-warm-300 uppercase tracking-wide mb-2">{period}</p>
+                      <div className="space-y-2">{group.map(renderCompletedActivity)}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="space-y-2">{completedPreview.map(renderCompletedActivity)}</div>
+            )}
+
+            {displayActivities.length > 3 && (
+              <button
+                type="button"
+                onClick={() => setShowAllCompleted(current => !current)}
+                className="w-full min-h-11 mt-3 rounded-xl border border-sage-200 bg-sage-50 text-sm font-medium text-warm-600 active:scale-[0.99] transition-all"
+                aria-expanded={showAllCompleted}
+              >
+                {showAllCompleted
+                  ? 'Show fewer completed'
+                  : `Show all ${displayActivities.length} completed`}
+              </button>
+            )}
           </div>
         )}
 
