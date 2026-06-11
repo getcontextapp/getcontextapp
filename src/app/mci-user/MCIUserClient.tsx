@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
+import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, ContextCard, ActivityTileConfig, PlannedActivity } from '@/types'
 import ActivityLogModal from '@/components/mci/ActivityLogModal'
@@ -344,37 +345,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     window.location.href = '/auth/login'
   }
 
-  const linkedActivityIds = new Set(
-    plannedActivities
-      .map(item => item.confirmed_activity_log_id)
-      .filter((id): id is string => Boolean(id)),
-  )
-  const normalizedActivityName = (activity: ActivityLog) =>
-    `${activity.category}:${activity.note?.trim() || activity.label}`.toLowerCase().replace(/\s+/g, ' ')
   const todayActivities = activities
     .filter(activity => getLocalDateKey(new Date(activity.occurred_at), profile.timezone) === todayKey)
-    .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
-  const displayActivities = todayActivities.filter((activity, index, all) => {
-    const nearbyDuplicates = all
-      .map((other, otherIndex) => ({ other, otherIndex }))
-      .filter(({ other, otherIndex }) => {
-        if (otherIndex === index || normalizedActivityName(other) !== normalizedActivityName(activity)) return false
-        const timeDifference = Math.abs(
-          new Date(other.occurred_at).getTime() - new Date(activity.occurred_at).getTime(),
-        )
-        return timeDifference <= 2 * 60 * 1000
-      })
-
-    if (linkedActivityIds.has(activity.id)) {
-      return !nearbyDuplicates.some(({ other, otherIndex }) =>
-        otherIndex < index && linkedActivityIds.has(other.id),
-      )
-    }
-
-    return !nearbyDuplicates.some(({ other, otherIndex }) =>
-      linkedActivityIds.has(other.id) || otherIndex < index,
-    )
-  })
+  const displayActivities = suppressNearbyDuplicateActivities(todayActivities, plannedActivities)
 
   // Group today's activities by time of day.
   const groupedActivities = displayActivities.reduce<Record<string, ActivityLog[]>>((acc, a) => {
