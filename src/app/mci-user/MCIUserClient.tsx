@@ -11,7 +11,9 @@ import ContextCardDisplay from '@/components/mci/ContextCardDisplay'
 import HouseholdCode from '@/components/mci/HouseholdCode'
 import ReminderSettings from '@/components/mci/ReminderSettings'
 import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanComposer'
+import EditTaskSheet from '@/components/mci/EditTaskSheet'
 import WeeklySummaryCard from '@/components/weekly/WeeklySummaryCard'
+import { addDaysToKey, formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 
 interface Props {
   profile: Profile
@@ -19,13 +21,6 @@ interface Props {
   initialPlannedActivities: PlannedActivity[]
   initialContextCard: ContextCard | null
   household: { join_code: string; name: string } | null
-}
-
-const PERIOD_LABELS: Record<string, string> = {
-  morning: 'Morning',
-  afternoon: 'Afternoon',
-  evening: 'Evening',
-  anytime: 'Anytime',
 }
 
 const PERIOD_ORDER: Record<string, number> = {
@@ -46,6 +41,11 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [showHousehold, setShowHousehold] = useState(false)
   const [generatingCard, setGeneratingCard] = useState(false)
   const [deleteCandidate, setDeleteCandidate] = useState<PlannedActivity | null>(null)
+  const [editCandidate, setEditCandidate] = useState<PlannedActivity | null>(null)
+  const [moveCandidate, setMoveCandidate] = useState<PlannedActivity | null>(null)
+  const [moveDate, setMoveDate] = useState('')
+  const [moveError, setMoveError] = useState<string | null>(null)
+  const [openMoreId, setOpenMoreId] = useState<string | null>(null)
   const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null)
   const [confirmingPlanIds, setConfirmingPlanIds] = useState<string[]>([])
   const [contextCardCollapsed, setContextCardCollapsed] = useState(false)
@@ -69,6 +69,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     day: 'numeric',
   })
   const todayKey = getLocalDateKey(now, profile.timezone)
+  const tomorrowKey = addDaysToKey(todayKey, 1)
 
   const refreshContextCard = useCallback(async (showAfterDataChange = false) => {
     const requestId = ++contextCardRequestId.current
@@ -234,13 +235,16 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   }, [scheduleContextCardRefresh])
 
   const handleNaturalPlansSaved = useCallback((items: PlannedActivity[]) => {
-    setPlannedActivities(prev => [
-      ...prev,
-      ...items.filter(item => !prev.some(existing => existing.id === item.id)),
-    ])
+    setPlannedActivities(prev => {
+      const updated = prev.map(existing => items.find(item => item.id === existing.id) ?? existing)
+      return [
+        ...updated,
+        ...items.filter(item => item.planned_for === todayKey && !prev.some(existing => existing.id === item.id)),
+      ]
+    })
     setManualTilesExpanded(false)
     scheduleContextCardRefresh()
-  }, [scheduleContextCardRefresh])
+  }, [scheduleContextCardRefresh, todayKey])
 
   const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete') => {
     if (action === 'confirm') {
@@ -292,6 +296,25 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
     scheduleContextCardRefresh()
   }, [confirmingPlanIds, scheduleContextCardRefresh])
+
+  async function handleMoveConfirmed() {
+    if (!moveCandidate || !moveDate) return
+    setMoveError(null)
+    const response = await fetch('/api/planned-activities', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: moveCandidate.id, action: 'move', planned_for: moveDate }),
+    })
+    const result = await response.json()
+    if (!response.ok) {
+      setMoveError(result.error ?? 'Could not move this task. Please try again.')
+      return
+    }
+    setPlannedActivities(current => current.map(item => item.id === moveCandidate.id ? result.plannedActivity : item))
+    setMoveCandidate(null)
+    setMoveDate('')
+    scheduleContextCardRefresh()
+  }
 
   const handleDeleteConfirmed = useCallback(async () => {
     if (!deleteCandidate) return
@@ -366,6 +389,11 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const sortedPlannedActivities = [...plannedActivities].sort((a, b) => {
     const periodDiff = (PERIOD_ORDER[a.expected_period] ?? 9) - (PERIOD_ORDER[b.expected_period] ?? 9)
     if (periodDiff !== 0) return periodDiff
+    if (a.expected_time && b.expected_time && a.expected_time !== b.expected_time) {
+      return a.expected_time.localeCompare(b.expected_time)
+    }
+    if (a.expected_time && !b.expected_time) return -1
+    if (!a.expected_time && b.expected_time) return 1
     return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   })
 
@@ -497,7 +525,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                             <p className="text-base font-semibold leading-5 text-warm-900 whitespace-normal break-words">{taskName}</p>
                             <p className="text-xs leading-5 text-warm-400 mt-1">
                               {item.category !== 'custom' && `${categoryName} · `}
-                              {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}
+                              {formatTaskTiming(item.expected_time, item.expected_period)}
+                              {item.repeat_rule && item.repeat_rule !== 'none' ? ` · ${REPEAT_LABELS[item.repeat_rule]}` : ''}
                             </p>
                           </div>
                           <span className={`text-[11px] rounded-pill px-2 py-0.5 whitespace-nowrap ${
@@ -513,7 +542,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                       </div>
                     </div>
                     {!isSkipped ? (
-                      <div className="grid grid-cols-3 gap-2 mt-3">
+                      <>
+                      <div className="grid grid-cols-[1.4fr_1fr_1fr] gap-2 mt-3">
                         <button
                           onClick={() => handlePlanAction(item, 'confirm')}
                           disabled={confirmingPlanIds.includes(item.id)}
@@ -522,18 +552,25 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                           {confirmingPlanIds.includes(item.id) ? 'Saving...' : 'Done'}
                         </button>
                         <button
-                          onClick={() => handlePlanAction(item, 'not_now')}
+                          onClick={() => { setMoveCandidate(item); setMoveDate(tomorrowKey); setMoveError(null) }}
                           className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
                         >
-                          Not yet
+                          Move →
                         </button>
                         <button
-                          onClick={() => setDeleteCandidate(item)}
-                          className="rounded-xl border border-terracotta-200 text-terracotta-700 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                          onClick={() => setOpenMoreId(current => current === item.id ? null : item.id)}
+                          className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
                         >
-                          Delete
+                          More
                         </button>
                       </div>
+                      {openMoreId === item.id && (
+                        <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-cream-100 p-2">
+                          <button onClick={() => { setEditCandidate(item); setOpenMoreId(null) }} className="min-h-11 rounded-lg bg-white text-sm font-medium text-warm-700">Edit task</button>
+                          <button onClick={() => { setDeleteCandidate(item); setOpenMoreId(null) }} className="min-h-11 rounded-lg bg-white text-sm font-medium text-terracotta-700">Delete task</button>
+                        </div>
+                      )}
+                      </>
                     ) : (
                       <div className="mt-3">
                         <button
@@ -694,6 +731,35 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                 {deletingPlanId === deleteCandidate.id ? 'Deleting...' : 'Delete'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {editCandidate && (
+        <EditTaskSheet task={editCandidate}
+          onClose={() => setEditCandidate(null)}
+          onSaved={updated => {
+            setPlannedActivities(current => current.map(item => item.id === updated.id ? updated : item))
+            setEditCandidate(null)
+            scheduleContextCardRefresh()
+          }}
+          onDelete={() => { setDeleteCandidate(editCandidate); setEditCandidate(null) }} />
+      )}
+      {moveCandidate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-warm-900/35 px-5" role="dialog" aria-modal="true" aria-labelledby="move-task-title">
+          <div className="w-full max-w-sm rounded-2xl border border-cream-200 bg-white p-5 shadow-float">
+            <h2 id="move-task-title" className="font-serif text-xl font-semibold text-warm-900">Move this task?</h2>
+            <p className="mt-2 text-base leading-6 text-warm-600">{moveCandidate.note || moveCandidate.label}</p>
+            <label htmlFor="move-date" className="mt-4 block text-sm font-medium text-warm-600">New day</label>
+            <input id="move-date" type="date" min={tomorrowKey} value={moveDate} onChange={event => setMoveDate(event.target.value)}
+              className="mt-2 min-h-12 w-full rounded-xl border border-cream-300 px-3 text-base text-warm-800" />
+            <p className="mt-2 text-sm text-warm-400">
+              {moveDate === tomorrowKey
+                ? `Tomorrow, ${new Date(`${tomorrowKey}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`
+                : 'Choose any future day.'}
+            </p>
+            {moveError && <p className="mt-3 text-sm font-medium text-terracotta-700">{moveError}</p>}
+            <button onClick={handleMoveConfirmed} className="mt-5 min-h-12 w-full rounded-xl bg-warm-700 text-base font-medium text-cream-50">Move task</button>
+            <button onClick={() => { setMoveCandidate(null); setMoveError(null) }} className="mt-2 min-h-11 w-full text-sm font-medium text-warm-500">Cancel</button>
           </div>
         </div>
       )}

@@ -3,10 +3,14 @@ import { createServerClient } from '@/lib/supabase-server'
 import { parseSmsPlanReply } from '@/lib/anthropic'
 import { trackEvent } from '@/lib/analytics'
 import { ACTIVITY_TILES } from '@/types'
-import type { ActivityCategory, ExpectedPeriod } from '@/types'
+import { addDaysToKey, periodForTime } from '@/lib/task-scheduling'
+import { ensureNextOccurrence } from '@/lib/task-scheduling-server'
+import { getLocalDateKey } from '@/lib/dates'
+import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
 const VALID_CATEGORIES = new Set(ACTIVITY_TILES.map(tile => tile.category))
 const VALID_PERIODS = new Set<ExpectedPeriod>(['morning', 'afternoon', 'evening', 'anytime'])
+const VALID_REPEAT_RULES = new Set<RepeatRule>(['none', 'daily', 'weekdays', 'weekly'])
 
 function inferFallbackCategory(note: string): ActivityCategory {
   const lower = note.toLowerCase()
@@ -27,6 +31,11 @@ function inferFallbackPeriod(note: string): ExpectedPeriod {
   return 'anytime'
 }
 
+function explicitPeriod(note: string): ExpectedPeriod | undefined {
+  const inferred = inferFallbackPeriod(note)
+  return inferred === 'anytime' && !/\b(anytime|any time)\b/i.test(note) ? undefined : inferred
+}
+
 function cleanFallbackPlan(note: string) {
   return note
     .trim()
@@ -45,12 +54,35 @@ function buildFallbackPlans(message: string) {
     .map(cleanFallbackPlan)
     .filter(note => note.length > 1)
     .slice(0, 12)
-    .map(note => ({
-      category: inferFallbackCategory(note),
-      note,
-      expected_period: inferFallbackPeriod(note),
-      confidence: 'medium' as const,
-    }))
+    .map(note => {
+      const expectedTime = parseTime(note)
+      return {
+        category: inferFallbackCategory(note),
+        note,
+        expected_period: expectedTime ? periodForTime(expectedTime) : inferFallbackPeriod(note),
+        expected_time: expectedTime,
+        repeat_rule: requestedRepeat(note) ?? 'none',
+        confidence: 'medium' as const,
+      }
+    })
+}
+
+function parseTime(message: string) {
+  const match = message.match(/\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i)
+  if (!match) return null
+  let hour = Number(match[1])
+  const minute = Number(match[2] ?? 0)
+  const pm = match[3].toLowerCase().startsWith('p')
+  if (pm && hour < 12) hour += 12
+  if (!pm && hour === 12) hour = 0
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+function requestedRepeat(message: string): RepeatRule | undefined {
+  if (/\b(weekdays|every weekday|monday through friday)\b/i.test(message)) return 'weekdays'
+  if (/\b(every day|daily)\b/i.test(message)) return 'daily'
+  if (/\b(every week|weekly)\b/i.test(message)) return 'weekly'
+  if (/\b(stop repeating|does not repeat|don't repeat)\b/i.test(message)) return 'none'
 }
 
 async function getCurrentProfile() {
@@ -76,19 +108,58 @@ export async function POST(request: NextRequest) {
   }
 
   const body: {
-    action?: 'parse' | 'save'
+    action?: 'parse' | 'save' | 'modify'
     message?: string
     planned_for?: string
     items?: Array<{
       category?: ActivityCategory
       note?: string
       expected_period?: ExpectedPeriod
+      expected_time?: string | null
+      repeat_rule?: RepeatRule
     }>
+    modification?: {
+      id?: string
+      note?: string
+      expected_period?: ExpectedPeriod
+      expected_time?: string | null
+      repeat_rule?: RepeatRule
+      planned_for?: string
+    }
   } = await request.json()
 
   if (body.action === 'parse') {
     const message = body.message?.trim().slice(0, 1000)
     if (!message) return NextResponse.json({ error: 'Tell Context what you plan to do.' }, { status: 400 })
+
+    if (/\b(change|move|rename|edit|repeat|stop repeating)\b/i.test(message)) {
+      const todayKey = getLocalDateKey(new Date(), profile.timezone)
+      const { data: waiting } = await supabase.from('planned_activities').select('*')
+        .eq('household_id', profile.household_id).eq('planned_for', todayKey)
+        .in('status', ['planned', 'not_now'])
+      const matches = (waiting ?? []).filter(item => {
+        const words = String(item.note || item.label).toLowerCase().split(/\s+/).filter((word: string) => word.length > 3)
+        return words.some((word: string) => message.toLowerCase().includes(word))
+      })
+      if (matches.length === 1) {
+        const time = parseTime(message)
+        const repeat = requestedRepeat(message)
+        const rename = message.match(/\brename\b.+?\bto\s+(.+)$/i)?.[1]?.trim()
+        const requestedDay = /\btomorrow\b/i.test(message) ? addDaysToKey(todayKey, 1) : undefined
+        return NextResponse.json({
+          modification: {
+            id: matches[0].id,
+            current_note: matches[0].note || matches[0].label,
+            note: rename || matches[0].note || matches[0].label,
+            expected_period: time ? periodForTime(time) : explicitPeriod(message) ?? matches[0].expected_period,
+            expected_time: time ?? matches[0].expected_time,
+            repeat_rule: repeat ?? matches[0].repeat_rule ?? 'none',
+            planned_for: requestedDay ?? matches[0].planned_for,
+          },
+        })
+      }
+      return NextResponse.json({ error: matches.length > 1 ? 'I found more than one matching task. Please name it more specifically.' : 'I could not find that waiting task today.' }, { status: 422 })
+    }
 
     const parsed = await parseSmsPlanReply(message, profile.display_name, profile.timezone)
     const items = parsed.intent === 'plan' && parsed.items.length > 0
@@ -112,6 +183,63 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ items })
   }
 
+  if (body.action === 'modify') {
+    const item = body.modification
+    if (!item?.id) return NextResponse.json({ error: 'No task selected.' }, { status: 400 })
+    const expectedTime = item.expected_time && /^\d{2}:\d{2}$/.test(item.expected_time) ? item.expected_time : null
+    const repeatRule = VALID_REPEAT_RULES.has(item.repeat_rule as RepeatRule) ? item.repeat_rule as RepeatRule : 'none'
+    const { data: current } = await supabase.from('planned_activities').select('*')
+      .eq('id', item.id).eq('household_id', profile.household_id)
+      .in('status', ['planned', 'not_now']).maybeSingle()
+    if (!current) return NextResponse.json({ error: 'That task is no longer waiting.' }, { status: 404 })
+    if (item.planned_for && item.planned_for !== current.planned_for) {
+      const { data: existingOccurrence } = current.series_id
+        ? await supabase.from('planned_activities').select('*')
+            .eq('series_id', current.series_id).eq('planned_for', item.planned_for).maybeSingle()
+        : { data: null }
+      if (existingOccurrence) {
+        const { data: previous } = await supabase.from('planned_activities')
+          .update({ status: 'skipped', updated_at: new Date().toISOString() })
+          .eq('id', current.id).select().single()
+        return NextResponse.json({ item: existingOccurrence, previous })
+      }
+      const { data: moved, error: moveError } = await supabase.from('planned_activities').insert({
+        household_id: current.household_id,
+        created_by: profile.id,
+        assigned_to: current.assigned_to,
+        category: current.category,
+        label: current.label,
+        note: item.note?.trim().slice(0, 160) || current.note,
+        expected_period: expectedTime ? periodForTime(expectedTime) : item.expected_period ?? current.expected_period,
+        expected_time: expectedTime,
+        repeat_rule: repeatRule,
+        series_id: repeatRule === 'none' ? null : current.series_id ?? current.id,
+        moved_from_id: current.id,
+        planned_for: item.planned_for,
+        source: current.source,
+      }).select().single()
+      if (moveError || !moved) return NextResponse.json({ error: moveError?.message ?? 'Could not move that task.' }, { status: 500 })
+      const { data: previous } = await supabase.from('planned_activities')
+        .update({ status: 'skipped', updated_at: new Date().toISOString() })
+        .eq('id', current.id).select().single()
+      await ensureNextOccurrence(supabase, moved as PlannedActivity)
+      return NextResponse.json({ item: moved, previous })
+    }
+
+    const { data: updated, error } = await supabase.from('planned_activities').update({
+      note: item.note?.trim().slice(0, 160),
+      expected_period: expectedTime ? periodForTime(expectedTime) : item.expected_period ?? 'anytime',
+      expected_time: expectedTime,
+      repeat_rule: repeatRule,
+      series_id: repeatRule === 'none' ? null : current.series_id ?? current.id,
+      planned_for: current.planned_for,
+      updated_at: new Date().toISOString(),
+    }).eq('id', item.id).eq('household_id', profile.household_id).in('status', ['planned', 'not_now']).select().single()
+    if (error || !updated) return NextResponse.json({ error: error?.message ?? 'Could not change that task.' }, { status: 500 })
+    await ensureNextOccurrence(supabase, updated as PlannedActivity)
+    return NextResponse.json({ item: updated })
+  }
+
   if (body.action === 'save') {
     const items = (body.items ?? [])
       .slice(0, 12)
@@ -123,6 +251,8 @@ export async function POST(request: NextRequest) {
         expected_period: VALID_PERIODS.has(item.expected_period as ExpectedPeriod)
           ? item.expected_period as ExpectedPeriod
           : 'anytime' as ExpectedPeriod,
+        expected_time: /^\d{2}:\d{2}$/.test(item.expected_time ?? '') ? item.expected_time! : null,
+        repeat_rule: VALID_REPEAT_RULES.has(item.repeat_rule as RepeatRule) ? item.repeat_rule as RepeatRule : 'none' as RepeatRule,
       }))
       .filter(item => item.note.length > 0)
 
@@ -138,7 +268,9 @@ export async function POST(request: NextRequest) {
       label: ACTIVITY_TILES.find(tile => tile.category === item.category)?.label ?? 'Other',
       note: item.note,
       expected_period: item.expected_period,
+      expected_time: item.expected_time,
       planned_for: body.planned_for,
+      repeat_rule: item.repeat_rule,
       source: 'manual',
     }))
 
@@ -149,6 +281,16 @@ export async function POST(request: NextRequest) {
 
     if (error || !plannedItems) {
       return NextResponse.json({ error: error?.message ?? 'Could not save these plans.' }, { status: 500 })
+    }
+
+    for (const item of plannedItems.filter(item => item.repeat_rule !== 'none')) {
+      const { data: source, error: seriesError } = await supabase.from('planned_activities')
+        .update({ series_id: item.id }).eq('id', item.id).select().single()
+      if (seriesError || !source) {
+        return NextResponse.json({ error: seriesError?.message ?? 'Could not start repeating task.' }, { status: 500 })
+      }
+      Object.assign(item, source)
+      await ensureNextOccurrence(supabase, source as PlannedActivity)
     }
 
     await trackEvent(supabase, {

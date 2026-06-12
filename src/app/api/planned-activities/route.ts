@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { trackEvent } from '@/lib/analytics'
-import type { CreatePlannedActivityPayload } from '@/types'
+import { periodForTime } from '@/lib/task-scheduling'
+import { ensureNextOccurrence } from '@/lib/task-scheduling-server'
+import type { CreatePlannedActivityPayload, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
+
+const REPEAT_RULES = new Set<RepeatRule>(['none', 'daily', 'weekdays', 'weekly'])
 
 async function getCurrentProfile() {
   const supabase = await createServerClient()
@@ -24,6 +28,9 @@ export async function POST(request: NextRequest) {
   if (!profile?.household_id) return NextResponse.json({ error: 'No household linked' }, { status: 400 })
 
   const body: CreatePlannedActivityPayload = await request.json()
+  const repeatRule = REPEAT_RULES.has(body.repeat_rule as RepeatRule) ? body.repeat_rule as RepeatRule : 'none'
+  const expectedTime = /^\d{2}:\d{2}$/.test(body.expected_time ?? '') ? body.expected_time! : null
+  const expectedPeriod = expectedTime ? periodForTime(expectedTime) : body.expected_period
 
   const { data: plannedActivity, error } = await supabase
     .from('planned_activities')
@@ -34,9 +41,10 @@ export async function POST(request: NextRequest) {
       category: body.category,
       label: body.label,
       note: body.note?.trim() || null,
-      expected_period: body.expected_period,
-      expected_time: body.expected_time ?? null,
+      expected_period: expectedPeriod,
+      expected_time: expectedTime,
       planned_for: body.planned_for,
+      repeat_rule: repeatRule,
       source: 'manual',
     })
     .select()
@@ -44,6 +52,20 @@ export async function POST(request: NextRequest) {
 
   if (error || !plannedActivity) {
     return NextResponse.json({ error: error?.message ?? 'Insert failed' }, { status: 500 })
+  }
+
+  if (repeatRule !== 'none') {
+    const { data: source, error: seriesError } = await supabase
+      .from('planned_activities')
+      .update({ series_id: plannedActivity.id })
+      .eq('id', plannedActivity.id)
+      .select()
+      .single()
+    if (seriesError || !source) {
+      return NextResponse.json({ error: seriesError?.message ?? 'Could not start repeating task.' }, { status: 500 })
+    }
+    Object.assign(plannedActivity, source)
+    await ensureNextOccurrence(supabase, source as PlannedActivity)
   }
 
   await trackEvent(supabase, {
@@ -66,7 +88,16 @@ export async function PATCH(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!profile?.household_id) return NextResponse.json({ error: 'No household linked' }, { status: 400 })
 
-  const body: { id?: string; action?: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' } = await request.json()
+  const body: {
+    id?: string
+    action?: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'move' | 'update'
+    planned_for?: string
+    note?: string
+    expected_period?: ExpectedPeriod
+    expected_time?: string | null
+    repeat_rule?: RepeatRule
+    series_scope?: 'one' | 'future'
+  } = await request.json()
   if (!body.id || !body.action) {
     return NextResponse.json({ error: 'Missing planned activity or action' }, { status: 400 })
   }
@@ -120,6 +151,86 @@ export async function PATCH(request: NextRequest) {
       deleted_planned_activity_id: plannedActivity.id,
       deleted_activity_id: confirmedActivityLogId,
     })
+  }
+
+  if (body.action === 'move') {
+    if (!body.planned_for || body.planned_for <= plannedActivity.planned_for) {
+      return NextResponse.json({ error: 'Choose a future day.' }, { status: 400 })
+    }
+    const { data: existingOccurrence } = plannedActivity.series_id
+      ? await supabase.from('planned_activities').select('*')
+          .eq('series_id', plannedActivity.series_id).eq('planned_for', body.planned_for).maybeSingle()
+      : { data: null }
+    if (existingOccurrence) {
+      const { data: skipped, error: skipError } = await supabase
+        .from('planned_activities')
+        .update({ status: 'skipped', updated_at: new Date().toISOString() })
+        .eq('id', plannedActivity.id)
+        .select()
+        .single()
+      if (skipError || !skipped) {
+        return NextResponse.json({ error: skipError?.message ?? 'Move failed' }, { status: 500 })
+      }
+      return NextResponse.json({ plannedActivity: skipped, movedActivity: existingOccurrence, activity: null })
+    }
+    const { data: moved, error } = await supabase
+      .from('planned_activities')
+      .insert({
+        household_id: plannedActivity.household_id,
+        created_by: profile.id,
+        assigned_to: plannedActivity.assigned_to,
+        category: plannedActivity.category,
+        label: plannedActivity.label,
+        note: plannedActivity.note,
+        expected_period: plannedActivity.expected_period,
+        expected_time: plannedActivity.expected_time,
+        planned_for: body.planned_for,
+        repeat_rule: plannedActivity.repeat_rule ?? 'none',
+        series_id: plannedActivity.series_id,
+        moved_from_id: plannedActivity.id,
+        source: plannedActivity.source,
+      })
+      .select()
+      .single()
+    if (error || !moved) return NextResponse.json({ error: error?.message ?? 'Move failed' }, { status: 500 })
+    const { data: skipped } = await supabase
+      .from('planned_activities')
+      .update({ status: 'skipped', updated_at: new Date().toISOString() })
+      .eq('id', plannedActivity.id)
+      .select()
+      .single()
+    return NextResponse.json({ plannedActivity: skipped, movedActivity: moved, activity: null })
+  }
+
+  if (body.action === 'update') {
+    if (plannedActivity.status === 'confirmed') {
+      return NextResponse.json({ error: 'Completed tasks cannot be edited.' }, { status: 400 })
+    }
+    const expectedTime = body.expected_time && /^\d{2}:\d{2}$/.test(body.expected_time) ? body.expected_time : null
+    const repeatRule = REPEAT_RULES.has(body.repeat_rule as RepeatRule)
+      ? body.repeat_rule as RepeatRule
+      : plannedActivity.repeat_rule ?? 'none'
+    const updateValues = {
+      note: body.note?.trim().slice(0, 160) || plannedActivity.note,
+      expected_period: expectedTime ? periodForTime(expectedTime) : body.expected_period ?? plannedActivity.expected_period,
+      expected_time: expectedTime,
+      repeat_rule: repeatRule,
+      series_id: repeatRule === 'none' ? null : plannedActivity.series_id ?? plannedActivity.id,
+      updated_at: new Date().toISOString(),
+    }
+    let updateQuery = supabase
+      .from('planned_activities')
+      .update(updateValues)
+      .eq('household_id', profile.household_id)
+    updateQuery = body.series_scope === 'future' && plannedActivity.series_id
+      ? updateQuery.eq('series_id', plannedActivity.series_id).gte('planned_for', plannedActivity.planned_for)
+      : updateQuery.eq('id', plannedActivity.id)
+    const { data: updatedRows, error } = await updateQuery
+      .select()
+    const updated = updatedRows?.find(item => item.id === plannedActivity.id) ?? updatedRows?.[0]
+    if (error || !updated) return NextResponse.json({ error: error?.message ?? 'Update failed' }, { status: 500 })
+    await ensureNextOccurrence(supabase, updated as PlannedActivity)
+    return NextResponse.json({ plannedActivity: updated, activity: null })
   }
 
   if (body.action === 'reopen') {
@@ -281,6 +392,8 @@ export async function PATCH(request: NextRequest) {
     await supabase.from('activity_logs').delete().eq('id', activity.id)
     return NextResponse.json({ error: updateError?.message ?? 'Confirmation update failed' }, { status: 500 })
   }
+
+  await ensureNextOccurrence(supabase, updated as PlannedActivity)
 
   await trackEvent(supabase, {
     eventName: 'planned_activity_confirmed',

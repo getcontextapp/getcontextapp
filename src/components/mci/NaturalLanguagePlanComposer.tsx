@@ -2,12 +2,21 @@
 
 import { useRef, useState } from 'react'
 import { ACTIVITY_TILES } from '@/types'
-import type { ActivityCategory, ExpectedPeriod, PlannedActivity } from '@/types'
+import TaskScheduleFields from './TaskScheduleFields'
+import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
 interface DraftPlan {
   category: ActivityCategory
   note: string
   expected_period: ExpectedPeriod
+  expected_time?: string | null
+  repeat_rule?: RepeatRule
+}
+
+interface DraftModification extends DraftPlan {
+  id: string
+  current_note: string
+  planned_for?: string
 }
 
 interface Props {
@@ -15,17 +24,11 @@ interface Props {
   onSaved: (items: PlannedActivity[]) => void
 }
 
-const PERIODS: Array<{ value: ExpectedPeriod; label: string }> = [
-  { value: 'morning', label: 'Morning' },
-  { value: 'afternoon', label: 'Afternoon' },
-  { value: 'evening', label: 'Evening' },
-  { value: 'anytime', label: 'Anytime' },
-]
-
 export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [message, setMessage] = useState('')
   const [drafts, setDrafts] = useState<DraftPlan[]>([])
+  const [modification, setModification] = useState<DraftModification | null>(null)
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -56,13 +59,32 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
         setError(result.error ?? 'Context could not understand that yet.')
         return
       }
-      setDrafts(result.items)
+      if (result.modification) {
+        setModification(result.modification)
+        setDrafts([])
+      } else {
+        setDrafts(result.items)
+      }
       setError(null)
     } catch {
       setError('Context could not connect. Please try again.')
     } finally {
       setParsing(false)
     }
+  }
+
+  async function saveModification() {
+    if (!modification) return
+    setSaving(true); setError(null)
+    const response = await fetch('/api/planned-activities/natural-language', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'modify', modification }),
+    })
+    const result = await response.json()
+    setSaving(false)
+    if (!response.ok) return setError(result.error ?? 'Context could not change that task.')
+    onSaved([result.item, result.previous].filter(Boolean))
+    setModification(null); setMessage(''); setExpanded(false)
   }
 
   async function savePlans() {
@@ -209,21 +231,15 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
                         Remove
                       </button>
                     </div>
-                    <div className="grid grid-cols-4 gap-1.5 mt-3">
-                      {PERIODS.map(period => (
-                        <button
-                          key={period.value}
-                          type="button"
-                          onClick={() => updateDraft(index, { expected_period: period.value })}
-                          className={`rounded-lg border px-1 py-2 text-xs font-medium ${
-                            draft.expected_period === period.value
-                              ? 'border-warm-700 bg-warm-700 text-cream-50'
-                              : 'border-cream-300 text-warm-500'
-                          }`}
-                        >
-                          {period.label}
-                        </button>
-                      ))}
+                    <div className="mt-3">
+                      <TaskScheduleFields
+                        period={draft.expected_period}
+                        time={draft.expected_time ?? null}
+                        repeat={draft.repeat_rule ?? 'none'}
+                        onPeriod={value => updateDraft(index, { expected_period: value })}
+                        onTime={value => updateDraft(index, { expected_time: value })}
+                        onRepeat={value => updateDraft(index, { repeat_rule: value })}
+                      />
                     </div>
                   </div>
                 )
@@ -249,6 +265,33 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
             >
               Go back and change my message
             </button>
+          </div>
+        </div>
+      )}
+      {modification && (
+        <div className="fixed inset-0 z-50 flex items-end bg-warm-900/35" role="dialog" aria-modal="true" aria-labelledby="change-preview-title">
+          <div className="mx-auto w-full max-w-lg rounded-t-3xl bg-cream-50 px-5 pb-8 pt-5 shadow-float safe-bottom">
+            <h2 id="change-preview-title" className="font-serif text-xl font-semibold text-warm-900">Change this task?</h2>
+            <p className="mt-2 text-sm text-warm-500">From: {modification.current_note}</p>
+            {modification.planned_for && modification.planned_for !== plannedFor && (
+              <p className="mt-1 text-sm font-medium text-sage-600">
+                Move to {new Date(`${modification.planned_for}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+              </p>
+            )}
+            <input value={modification.note} onChange={event => setModification(current => current ? { ...current, note: event.target.value } : current)}
+              className="mt-4 min-h-12 w-full rounded-xl border border-cream-300 bg-white px-4 text-base font-semibold text-warm-900" />
+            <div className="mt-4">
+              <TaskScheduleFields period={modification.expected_period} time={modification.expected_time ?? null}
+                repeat={modification.repeat_rule ?? 'none'}
+                onPeriod={value => setModification(current => current ? { ...current, expected_period: value } : current)}
+                onTime={value => setModification(current => current ? { ...current, expected_time: value } : current)}
+                onRepeat={value => setModification(current => current ? { ...current, repeat_rule: value } : current)} />
+            </div>
+            {error && <p className="mt-3 text-sm text-terracotta-700">{error}</p>}
+            <button onClick={saveModification} disabled={saving} className="mt-5 min-h-12 w-full rounded-xl bg-warm-700 text-base font-medium text-cream-50">
+              {saving ? 'Saving...' : 'Confirm change'}
+            </button>
+            <button onClick={() => setModification(null)} className="mt-2 min-h-11 w-full text-sm font-medium text-warm-500">Cancel</button>
           </div>
         </div>
       )}

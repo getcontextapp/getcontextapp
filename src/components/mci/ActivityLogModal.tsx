@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import type { ActivityTileConfig, ExpectedPeriod, PlannedActivity } from '@/types'
+import TaskScheduleFields from './TaskScheduleFields'
+import type { ActivityTileConfig, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
 interface Props {
   tile: ActivityTileConfig
@@ -8,13 +9,6 @@ interface Props {
   onPlanned: (activity: PlannedActivity) => void
   onClose: () => void
 }
-
-const EXPECTED_PERIODS: { value: ExpectedPeriod; label: string }[] = [
-  { value: 'morning', label: 'Morning' },
-  { value: 'afternoon', label: 'Afternoon' },
-  { value: 'evening', label: 'Evening' },
-  { value: 'anytime', label: 'Anytime' },
-]
 
 function getDefaultPeriod(): ExpectedPeriod {
   const hour = new Date().getHours()
@@ -27,6 +21,8 @@ export default function ActivityLogModal({ tile, plannedFor, onPlanned, onClose 
   const [selectedPreset, setSelectedPreset] = useState('')
   const [note, setNote] = useState('')
   const [expectedPeriod, setExpectedPeriod] = useState<ExpectedPeriod>(getDefaultPeriod)
+  const [expectedTime, setExpectedTime] = useState<string | null>(null)
+  const [repeatRule, setRepeatRule] = useState<RepeatRule>('none')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -47,6 +43,8 @@ export default function ActivityLogModal({ tile, plannedFor, onPlanned, onClose 
         label: tile.label,
         note: note.trim() || selectedPreset || null,
         expected_period: expectedPeriod,
+        expected_time: expectedTime,
+        repeat_rule: repeatRule,
         planned_for: plannedFor,
       }),
     })
@@ -131,25 +129,8 @@ export default function ActivityLogModal({ tile, plannedFor, onPlanned, onClose 
               maxLength={200}
             />
 
-            <div>
-              <p className="text-xs font-medium text-warm-500 mb-2">When should this happen?</p>
-              <div className="grid grid-cols-2 gap-2">
-                {EXPECTED_PERIODS.map(period => (
-                  <button
-                    key={period.value}
-                    type="button"
-                    onClick={() => setExpectedPeriod(period.value)}
-                    className={`rounded-xl border px-3 py-2 text-sm font-medium transition-all ${
-                      expectedPeriod === period.value
-                        ? 'border-warm-700 bg-white/90 text-warm-900'
-                        : 'border-black/10 bg-white/50 text-warm-600 hover:bg-white/80'
-                    }`}
-                  >
-                    {period.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <TaskScheduleFields period={expectedPeriod} time={expectedTime} repeat={repeatRule}
+              onPeriod={setExpectedPeriod} onTime={setExpectedTime} onRepeat={setRepeatRule} />
 
             {error && (
               <p className="text-terracotta-600 text-sm">{error}</p>

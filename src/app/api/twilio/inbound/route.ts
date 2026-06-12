@@ -5,7 +5,9 @@ import { getLocalDateKey } from '@/lib/dates'
 import { buildPlanSavedReply, logSmsMessage, normalizePhone, twiml, APP_URL } from '@/lib/sms'
 import { getSmsProfileMatch } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
-import type { ActivityCategory, ExpectedPeriod } from '@/types'
+import { addDaysToKey } from '@/lib/task-scheduling'
+import { ensureNextOccurrence } from '@/lib/task-scheduling-server'
+import type { ActivityCategory, ExpectedPeriod, PlannedActivity } from '@/types'
 
 function xmlResponse(message: string) {
   return new NextResponse(twiml(message), {
@@ -255,6 +257,7 @@ async function updatePendingItem(
     await supabase.from('activity_logs').delete().eq('id', activity.id)
     throw new Error(`Could not confirm planned activity: ${updateError.message}`)
   }
+  await ensureNextOccurrence(supabase, { ...claimedItem, confirmed_activity_log_id: activity.id } as PlannedActivity)
 
   await trackEvent(supabase, {
     eventName: 'sms_activity_confirmed',
@@ -708,6 +711,50 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const carrySelection = body.match(/^move\s+(.+)$/i)
+    if (carrySelection) {
+      const recentPrompt = await supabase.from('sms_messages').select('metadata')
+        .eq('profile_id', profile.id).eq('purpose', 'carry_over')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle()
+      const ids = Array.isArray(recentPrompt.data?.metadata?.prompt_item_ids)
+        ? recentPrompt.data.metadata.prompt_item_ids as string[]
+        : []
+      const numbers = Array.from(new Set((carrySelection[1].match(/\d+/g) ?? []).map(Number)))
+        .filter(number => number > 0 && number <= ids.length)
+      if (!numbers.length) {
+        return sendActionReply('Please reply with MOVE and the task numbers, for example: MOVE 1, 3.', { carry_over: 'invalid_selection' })
+      }
+      const tomorrowKey = addDaysToKey(getLocalDateKey(new Date(), profile.timezone), 1)
+      let moved = 0
+      for (const number of numbers) {
+        const { data: item } = await supabase.from('planned_activities').select('*')
+          .eq('id', ids[number - 1]).eq('household_id', profile.household_id)
+          .in('status', ['planned', 'not_now']).maybeSingle()
+        if (!item) continue
+        const { data: existingOccurrence } = item.series_id
+          ? await supabase.from('planned_activities').select('id')
+              .eq('series_id', item.series_id).eq('planned_for', tomorrowKey).maybeSingle()
+          : { data: null }
+        if (existingOccurrence) {
+          const { error: skipError } = await supabase.from('planned_activities')
+            .update({ status: 'skipped', updated_at: new Date().toISOString() }).eq('id', item.id)
+          if (!skipError) moved++
+          continue
+        }
+        const { error } = await supabase.from('planned_activities').insert({
+          household_id: item.household_id, created_by: profile.id, assigned_to: item.assigned_to,
+          category: item.category, label: item.label, note: item.note,
+          expected_period: item.expected_period, expected_time: item.expected_time,
+          planned_for: tomorrowKey, repeat_rule: item.repeat_rule ?? 'none',
+          series_id: item.series_id, moved_from_id: item.id, source: item.source,
+        })
+        if (error) continue
+        await supabase.from('planned_activities').update({ status: 'skipped', updated_at: new Date().toISOString() }).eq('id', item.id)
+        moved++
+      }
+      return sendActionReply(`${moved} ${moved === 1 ? 'task is' : 'tasks are'} now in tomorrow's plan.`, { carry_over: true, moved })
+    }
+
     if (isBareDone(body)) {
       const { data: pendingItems } = await getPendingItems(supabase, profile)
       const reply = await handleConfirmation(supabase, profile, 'yes')
@@ -1010,7 +1057,9 @@ export async function POST(request: NextRequest) {
     label: categoryLabel(item.category as ActivityCategory),
     note: item.note,
     expected_period: item.expected_period as ExpectedPeriod,
+    expected_time: item.expected_time ?? null,
     planned_for: todayKey,
+    repeat_rule: item.repeat_rule ?? 'none',
     source: 'sms_ai',
   }))
 
@@ -1022,6 +1071,16 @@ export async function POST(request: NextRequest) {
   if (error) {
     console.error('[SMS] Planned insert failed:', error.message)
     return xmlResponse(`I had trouble saving that. Please open Context here: ${APP_URL}/mci-user`)
+  }
+
+  for (const item of (plannedItems ?? []).filter(item => item.repeat_rule !== 'none')) {
+    const { data: source, error: seriesError } = await supabase.from('planned_activities')
+      .update({ series_id: item.id }).eq('id', item.id).select().single()
+    if (seriesError || !source) {
+      console.error('[SMS] Repeating task setup failed:', seriesError?.message)
+      continue
+    }
+    await ensureNextOccurrence(supabase, source as PlannedActivity)
   }
 
   await trackEvent(supabase, {

@@ -12,6 +12,10 @@ create table if not exists planned_activities (
   expected_period            text not null default 'anytime'
                              check (expected_period in ('morning', 'afternoon', 'evening', 'anytime')),
   expected_time              text,
+  repeat_rule                text not null default 'none'
+                             check (repeat_rule in ('none', 'daily', 'weekdays', 'weekly')),
+  series_id                  uuid,
+  moved_from_id              uuid references planned_activities(id) on delete set null,
   planned_for                date not null default current_date,
   status                     text not null default 'planned'
                              check (status in ('planned', 'confirmed', 'not_now', 'skipped')),
@@ -24,6 +28,13 @@ create table if not exists planned_activities (
 
 create index if not exists planned_activities_household_day
   on planned_activities (household_id, planned_for, status);
+
+create index if not exists planned_activities_series
+  on planned_activities (series_id, planned_for);
+
+create unique index if not exists planned_activities_one_series_occurrence
+  on planned_activities (series_id, planned_for)
+  where series_id is not null;
 
 alter table planned_activities enable row level security;
 
@@ -44,4 +55,3 @@ create policy "household planned activities"
 
 grant all on planned_activities to authenticated;
 grant all on planned_activities to service_role;
-

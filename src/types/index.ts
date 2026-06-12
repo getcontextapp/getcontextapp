@@ -44,6 +44,7 @@ export interface ActivityLog {
 
 export type PlannedActivityStatus = 'planned' | 'confirmed' | 'not_now' | 'skipped'
 export type ExpectedPeriod = 'morning' | 'afternoon' | 'evening' | 'anytime'
+export type RepeatRule = 'none' | 'daily' | 'weekdays' | 'weekly'
 export type PlannedActivitySource = 'manual' | 'sms_ai'
 
 export interface PlannedActivity {
@@ -56,6 +57,9 @@ export interface PlannedActivity {
   note: string | null
   expected_period: ExpectedPeriod
   expected_time: string | null
+  repeat_rule: RepeatRule
+  series_id: string | null
+  moved_from_id: string | null
   planned_for: string
   status: PlannedActivityStatus
   confirmed_activity_log_id: string | null
@@ -96,6 +100,7 @@ export type SmsPurpose =
   | 'pending_reminder'
   | 'daily_summary'
   | 'weekly_summary'
+  | 'carry_over'
   | 'inbound_plan_reply'
   | 'inbound_confirmation'
   | 'inbound_other'
@@ -129,6 +134,7 @@ export interface CreatePlannedActivityPayload {
   note?: string
   expected_period: ExpectedPeriod
   expected_time?: string | null
+  repeat_rule?: RepeatRule
   planned_for?: string
 }
 
@@ -136,6 +142,8 @@ export interface ParsedSmsPlanItem {
   category: ActivityCategory
   note: string
   expected_period: ExpectedPeriod
+  expected_time?: string | null
+  repeat_rule?: RepeatRule
   confidence: 'high' | 'medium' | 'low'
 }
 

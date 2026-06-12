@@ -5,6 +5,7 @@ import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey } from '@/lib/dates'
 import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
+import { formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, PlannedActivity } from '@/types'
 import WeeklySummaryCard from '@/components/weekly/WeeklySummaryCard'
@@ -99,13 +100,6 @@ function getCategoryBreakdown(entries: Array<{ category: ActivityLog['category']
   return Object.entries(counts).sort((a, b) => b[1] - a[1])
 }
 
-const PERIOD_LABELS: Record<string, string> = {
-  morning: 'Morning',
-  afternoon: 'Afternoon',
-  evening: 'Evening',
-  anytime: 'Anytime',
-}
-
 const PERIOD_ORDER: Record<string, number> = {
   morning: 0,
   afternoon: 1,
@@ -166,6 +160,11 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const sortedPlannedActivities = [...plannedActivities].sort((a, b) => {
     const periodDiff = (PERIOD_ORDER[a.expected_period] ?? 9) - (PERIOD_ORDER[b.expected_period] ?? 9)
     if (periodDiff !== 0) return periodDiff
+    if (a.expected_time && b.expected_time && a.expected_time !== b.expected_time) {
+      return a.expected_time.localeCompare(b.expected_time)
+    }
+    if (a.expected_time && !b.expected_time) return -1
+    if (!a.expected_time && b.expected_time) return 1
     return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   })
   const waitingActivities = sortedPlannedActivities.filter(
@@ -335,7 +334,8 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                             <p className="text-base font-semibold leading-5 text-warm-900 whitespace-normal break-words">{taskName}</p>
                             <p className="text-xs leading-5 text-warm-400 mt-1">
                               {item.category !== 'custom' && `${categoryName} · `}
-                              {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}
+                              {formatTaskTiming(item.expected_time, item.expected_period)}
+                              {item.repeat_rule && item.repeat_rule !== 'none' ? ` · ${REPEAT_LABELS[item.repeat_rule]}` : ''}
                             </p>
                           </div>
                           <span className={`text-[11px] rounded-pill px-2 py-0.5 whitespace-nowrap ${
@@ -375,7 +375,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                         {item.note?.trim() || item.label}
                       </p>
                       <p className="text-xs text-warm-400 mt-1">
-                        {PERIOD_LABELS[item.expected_period] ?? 'Anytime'}
+                        {formatTaskTiming(item.expected_time, item.expected_period)}
                       </p>
                     </div>
                   ))}

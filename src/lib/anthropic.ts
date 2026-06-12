@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { ActivityCategory, ExpectedPeriod, ParsedSmsPlanReply } from '@/types'
+import type { ActivityCategory, ExpectedPeriod, ParsedSmsPlanReply, RepeatRule } from '@/types'
 import { APP_URL } from '@/lib/sms'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -59,6 +59,7 @@ export interface SmsInterpreterContext {
 
 const VALID_CATEGORIES: ActivityCategory[] = ['morning', 'meal', 'movement', 'social', 'rest', 'medication', 'custom']
 const VALID_PERIODS: ExpectedPeriod[] = ['morning', 'afternoon', 'evening', 'anytime']
+const VALID_REPEAT_RULES: RepeatRule[] = ['none', 'daily', 'weekdays', 'weekly']
 
 function cleanJson(raw: string) {
   return raw.replace(/```json|```/g, '').trim()
@@ -77,6 +78,15 @@ function safeCategory(value: unknown): ActivityCategory {
 
 function safePeriod(value: unknown): ExpectedPeriod {
   return VALID_PERIODS.includes(value as ExpectedPeriod) ? value as ExpectedPeriod : 'anytime'
+}
+
+function safeTime(value: unknown) {
+  const text = String(value ?? '')
+  return /^\d{2}:\d{2}$/.test(text) ? text : null
+}
+
+function safeRepeatRule(value: unknown): RepeatRule {
+  return VALID_REPEAT_RULES.includes(value as RepeatRule) ? value as RepeatRule : 'none'
 }
 
 function inferPeriod(text: string): ExpectedPeriod {
@@ -404,6 +414,12 @@ Allowed expected_period values:
 - evening
 - anytime
 
+Allowed repeat_rule values:
+- none
+- daily
+- weekdays
+- weekly
+
 Rules:
 - Return JSON only. No markdown.
 - Do not invent tasks that are not implied by the message.
@@ -422,6 +438,8 @@ Rules:
 - If the message reports a specific completed activity in past tense, set intent to "completed" and return that completed activity in items.
 - Examples of completed activity language: "Called my daughter", "I walked outside", "I had lunch", "Went to club", "Took my pills".
 - If the message expresses a future intention, set intent to "plan".
+- Extract an exact local time as HH:MM when the user states one. Otherwise return null.
+- Use repeat_rule "daily" for every day, "weekdays" for Monday through Friday, and "weekly" for every week.
 - Examples of plan language: "I want to go to club", "I need to call my daughter", "I will have lunch", "Plan to walk".
 - If the message is too vague, set intent to "unclear" and return an empty items array.
 - For planned items, write notes as future/neutral action phrases, not past tense.
@@ -436,7 +454,7 @@ Return exactly this shape:
 {
   "intent": "plan" | "completed" | "confirmation" | "pending_status" | "pending_action" | "undo_request" | "delete_request" | "unclear",
   "items": [
-    { "category": "meal", "note": "Lunch", "expected_period": "afternoon", "confidence": "high" }
+    { "category": "meal", "note": "Lunch", "expected_period": "afternoon", "expected_time": "13:00", "repeat_rule": "none", "confidence": "high" }
   ],
   "confirmation": "yes" | "not_now" | "skip" | null,
   "selected_numbers": [1, 2] | "all",
@@ -481,6 +499,8 @@ Return exactly this shape:
             ? String(item.note ?? '').trim().slice(0, 160)
             : normalizePlannedNote(String(item.note ?? '')),
           expected_period: safePeriod(item.expected_period),
+          expected_time: safeTime(item.expected_time),
+          repeat_rule: safeRepeatRule(item.repeat_rule),
           confidence: ['high', 'medium', 'low'].includes(item.confidence) ? item.confidence : 'medium',
         }))
         .filter((item: any) => item.note && item.confidence !== 'low')

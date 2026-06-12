@@ -36,7 +36,24 @@ where jobname in (
   'context-noon-reminder',
   'context-afternoon-reminder',
   'context-daily-summary',
-  'context-weekly-summary'
+  'context-weekly-summary',
+  'context-carry-over'
+);
+
+select cron.schedule(
+  'context-carry-over',
+  '10 * * * *',
+  $$
+    select net.http_get(
+      url := (select decrypted_secret from vault.decrypted_secrets where name = 'context_app_url')
+        || '/api/reminders/carry-over',
+      headers := jsonb_build_object(
+        'Authorization',
+        'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'context_cron_secret')
+      ),
+      timeout_milliseconds := 30000
+    );
+  $$
 );
 
 -- Jobs run hourly and the Context route checks each profile's local timezone.

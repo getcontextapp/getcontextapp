@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "tsx --test src/lib/*.test.ts",
     "test:weekly-summary": "tsx --test src/lib/weekly-summary.test.ts",
     "lint": "eslint"
   },
