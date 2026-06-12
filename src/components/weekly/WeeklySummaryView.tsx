@@ -297,7 +297,7 @@ export default function WeeklySummaryView({ summary, role }: Props) {
           <StatCard
             label="Most active day"
             value={summary.mostActiveDay ?? 'No activity'}
-            detail={summary.mostActiveDay ? `${summary.mostActiveDayCount} completed` : 'Nothing recorded'}
+            detail={summary.mostActiveDay ? `${summary.mostActiveDayCount} marked done` : 'Nothing recorded'}
             icon="⭐"
           />
           <StatCard
@@ -319,7 +319,7 @@ export default function WeeklySummaryView({ summary, role }: Props) {
           >
             <span>
               <span className="block text-base font-semibold text-warm-700">More about this week</span>
-              <span className="mt-0.5 block text-sm text-warm-400">Time of day and activity categories</span>
+              <span className="mt-0.5 block text-sm text-warm-400">Done times and activity categories</span>
             </span>
             <span className="text-xl text-warm-400" aria-hidden="true">{detailsOpen ? '⌃' : '⌄'}</span>
           </button>
@@ -328,9 +328,12 @@ export default function WeeklySummaryView({ summary, role }: Props) {
             <div id="weekly-details" className="mt-3 space-y-5">
               <section className="card border border-cream-200 p-5" aria-labelledby="time-heading">
                 <h2 id="time-heading" className="font-serif text-lg font-semibold text-warm-900">
-                  By time of day
+                  When activities were marked done
                 </h2>
                 <TimeOfDayChart periods={summary.periods} />
+                <p className="mt-1 text-sm leading-5 text-warm-400">
+                  Based on the time each activity was marked done in Context.
+                </p>
               </section>
 
               <section className="card border border-cream-200 p-5" aria-labelledby="category-heading">

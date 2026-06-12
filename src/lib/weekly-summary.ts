@@ -32,6 +32,22 @@ export interface WeeklySummaryData {
   categories: WeeklySummaryCategory[]
 }
 
+export function getActivityPeriod(
+  occurredAt: string,
+  timeZone?: string | null,
+): WeeklySummaryPeriod['period'] {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timeZone || undefined,
+    hour: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(occurredAt))
+  const hour = Number(parts.find(part => part.type === 'hour')?.value)
+
+  if (hour < 12) return 'Morning'
+  if (hour < 17) return 'Afternoon'
+  return 'Evening'
+}
+
 function addDays(dateKey: string, days: number) {
   const date = new Date(`${dateKey}T12:00:00Z`)
   date.setUTCDate(date.getUTCDate() + days)
@@ -85,7 +101,11 @@ export function buildWeeklySummary(
   const completed = weeklyPlans.filter(item => item.status === 'confirmed').length
   const skipped = weeklyPlans.filter(item => item.status === 'skipped').length
   const notCompleted = weeklyPlans.length - completed - skipped
-  const activityIds = new Set(activities.map(activity => activity.id))
+  const weeklyActivities = activities.filter(activity => {
+    const dayKey = getLocalDateKey(new Date(activity.occurred_at), timeZone)
+    return dayKey >= startKey && dayKey <= endKey
+  })
+  const activityIds = new Set(weeklyActivities.map(activity => activity.id))
   const orphanConfirmedActivities: ActivityLog[] = weeklyPlans
     .filter(item => item.status === 'confirmed')
     .filter(item => !item.confirmed_activity_log_id || !activityIds.has(item.confirmed_activity_log_id))
@@ -99,8 +119,12 @@ export function buildWeeklySummary(
       occurred_at: item.confirmed_at ?? item.updated_at ?? item.created_at,
       created_at: item.updated_at ?? item.created_at,
     }))
+    .filter(activity => {
+      const dayKey = getLocalDateKey(new Date(activity.occurred_at), timeZone)
+      return dayKey >= startKey && dayKey <= endKey
+    })
   const displayActivities = suppressNearbyDuplicateActivities(
-    [...activities, ...orphanConfirmedActivities],
+    [...weeklyActivities, ...orphanConfirmedActivities],
     weeklyPlans,
   )
   const activityDays = new Map<string, number>()
@@ -110,12 +134,7 @@ export function buildWeeklySummary(
   for (const activity of displayActivities) {
     const dayKey = getLocalDateKey(new Date(activity.occurred_at), timeZone)
     activityDays.set(dayKey, (activityDays.get(dayKey) ?? 0) + 1)
-    const hour = Number(new Date(activity.occurred_at).toLocaleString('en-US', {
-      timeZone: timeZone || undefined,
-      hour: 'numeric',
-      hour12: false,
-    }))
-    const period = hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : 'Evening'
+    const period = getActivityPeriod(activity.occurred_at, timeZone)
     periodCounts[period]++
     categoryCounts.set(activity.category, (categoryCounts.get(activity.category) ?? 0) + 1)
   }
@@ -179,5 +198,5 @@ export function getWeeklyEncouragement(summary: WeeklySummaryData, role: WeeklyS
 
   const strongestPeriod = [...summary.periods].sort((a, b) => b.count - a.count)[0]
   if (!strongestPeriod || strongestPeriod.count === 0) return lead
-  return `${lead} Most recorded activity happened in the ${strongestPeriod.period.toLowerCase()}.`
+  return `${lead} Most activity was marked done in the ${strongestPeriod.period.toLowerCase()}.`
 }

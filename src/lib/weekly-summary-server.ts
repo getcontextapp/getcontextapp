@@ -29,6 +29,13 @@ export async function loadWeeklySummary(
       .limit(1000),
   ])
 
+  if (plannedResult.error) {
+    throw new Error(`Could not load weekly plans: ${plannedResult.error.message}`)
+  }
+  if (activityResult.error) {
+    throw new Error(`Could not load weekly activity: ${activityResult.error.message}`)
+  }
+
   return buildWeeklySummary(
     (plannedResult.data ?? []) as PlannedActivity[],
     (activityResult.data ?? []) as ActivityLog[],
