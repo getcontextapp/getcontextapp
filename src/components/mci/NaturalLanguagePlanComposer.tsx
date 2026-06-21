@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react'
 import { ACTIVITY_TILES } from '@/types'
 import TaskScheduleFields from './TaskScheduleFields'
-import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
+import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule, TimelineEvent } from '@/types'
 
 interface DraftPlan {
   category: ActivityCategory
@@ -22,13 +22,16 @@ interface DraftModification extends DraftPlan {
 interface Props {
   plannedFor: string
   onSaved: (items: PlannedActivity[]) => void
+  onTimelineSaved?: (event: TimelineEvent) => void
 }
 
-export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Props) {
+export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTimelineSaved }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [message, setMessage] = useState('')
   const [drafts, setDrafts] = useState<DraftPlan[]>([])
   const [modification, setModification] = useState<DraftModification | null>(null)
+  const [capture, setCapture] = useState<{ type: 'doing_now' | 'did'; text: string } | null>(null)
+  const [savedCapture, setSavedCapture] = useState<TimelineEvent | null>(null)
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -42,12 +45,13 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
   async function interpretPlans() {
     if (!message.trim()) {
       openComposer()
-      setError('Tell Context what you plan to do today.')
+      setError('Tell Context what you are doing or planning.')
       return
     }
 
     setParsing(true)
     setError(null)
+    setSavedCapture(null)
     try {
       const response = await fetch('/api/planned-activities/natural-language', {
         method: 'POST',
@@ -59,11 +63,16 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
         setError(result.error ?? 'Context could not understand that yet.')
         return
       }
-      if (result.modification) {
+      if (result.capture) {
+        setCapture(result.capture)
+        setModification(null)
+        setDrafts([])
+      } else if (result.modification) {
         setModification(result.modification)
         setDrafts([])
       } else {
         setDrafts(result.items)
+        setCapture(null)
       }
       setError(null)
     } catch {
@@ -123,6 +132,41 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
     }
   }
 
+  async function saveCapture() {
+    if (!capture?.text.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/timeline-events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: capture.text,
+          type: capture.type,
+          source: 'user-stated',
+          confidence: 'high',
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok) {
+        setError(result.error ?? 'Context could not save that note.')
+        return
+      }
+      setSavedCapture(result.event)
+      onTimelineSaved?.(result.event)
+      setMessage('')
+      setCapture(null)
+      window.setTimeout(() => {
+        setSavedCapture(null)
+        setExpanded(false)
+      }, 2500)
+    } catch {
+      setError('Context could not connect. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   function updateDraft(index: number, patch: Partial<DraftPlan>) {
     setDrafts(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
   }
@@ -140,7 +184,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
             aria-expanded={expanded}
           >
             <span className="text-lg" aria-hidden="true">＋</span>
-            <span className="flex-1 text-base font-medium text-warm-600">Tell Context your plans for today...</span>
+            <span className="flex-1 text-base font-medium text-warm-600">Tell Context what you're doing or planning...</span>
             <span className="w-9 h-9 shrink-0 rounded-full bg-warm-700 text-cream-50 flex items-center justify-center text-lg" aria-hidden="true">→</span>
           </button>
         )}
@@ -148,9 +192,9 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
         {expanded && (
           <div className="card p-5 border border-cream-200 animate-fade-up">
             <label htmlFor="natural-plan-input" className="font-serif text-lg font-semibold text-warm-900">
-              What would you like to do today?
+              What's happening?
             </label>
-            <p className="text-sm text-warm-400 mt-1">You can mention several things at once.</p>
+            <p className="text-sm text-warm-400 mt-1">A plan, what you're doing now, or what you just did.</p>
             <textarea
               ref={inputRef}
               id="natural-plan-input"
@@ -158,7 +202,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
               onChange={event => setMessage(event.target.value)}
               rows={3}
               maxLength={1000}
-              placeholder="For example: Take my medicine after breakfast, call Jane, and walk this afternoon."
+              placeholder="For example: Making lunch, or call my care partner at 4."
               className="mt-4 w-full resize-none rounded-xl border border-cream-300 bg-cream-50 px-4 py-3
                          text-base leading-relaxed text-warm-800 placeholder:text-warm-300
                          focus:outline-none focus:ring-2 focus:ring-terracotta-300/60"
@@ -266,6 +310,59 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved }: Pro
               Go back and change my message
             </button>
           </div>
+        </div>
+      )}
+      {capture && (
+        <div className="fixed inset-0 z-50 flex items-end" role="dialog" aria-modal="true" aria-labelledby="capture-preview-title">
+          <div className="absolute inset-0 bg-warm-900/30 backdrop-blur-sm" />
+          <div className="relative w-full max-w-lg mx-auto rounded-t-3xl bg-cream-50 px-5 pt-3 pb-8 shadow-float animate-fade-up safe-bottom">
+            <div className="w-10 h-1 bg-warm-300/40 rounded-pill mx-auto mb-4" />
+            <h2 id="capture-preview-title" className="font-serif text-xl font-semibold text-warm-900">Context understood</h2>
+            <p className="text-sm text-warm-500 mt-1">This becomes a note Context can use later.</p>
+            <div className="mt-5 rounded-2xl border border-cream-200 bg-white p-4 shadow-sm">
+              <span className="inline-flex rounded-pill bg-sage-100 px-3 py-1 text-xs font-semibold text-sage-600">
+                Saved as certain
+              </span>
+              <input
+                value={capture.text}
+                onChange={event => setCapture(current => current ? { ...current, text: event.target.value } : current)}
+                className="mt-4 min-h-12 w-full rounded-xl border border-cream-300 bg-cream-50 px-4 text-base font-semibold text-warm-900"
+                aria-label="What Context understood"
+              />
+              <p className="mt-3 text-sm text-warm-400">
+                {capture.type === 'doing_now' ? 'Right now.' : 'Just now.'}
+              </p>
+            </div>
+            {error && <p className="text-sm text-terracotta-600 mt-3">{error}</p>}
+            <button
+              type="button"
+              onClick={saveCapture}
+              disabled={saving || !capture.text.trim()}
+              className="w-full rounded-xl bg-warm-700 py-3.5 mt-5 text-base font-medium text-cream-50 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save it'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCapture(null)
+                window.setTimeout(() => inputRef.current?.focus(), 50)
+              }}
+              className="w-full py-3 mt-1 text-sm font-medium text-warm-500"
+            >
+              Go back and change my message
+            </button>
+          </div>
+        </div>
+      )}
+      {savedCapture && (
+        <div className="fixed inset-x-5 bottom-5 z-50 mx-auto max-w-sm rounded-2xl border border-sage-200 bg-sage-50 px-5 py-4 text-center shadow-float">
+          <p className="font-serif text-lg font-semibold text-warm-900">
+            {savedCapture.text}, {savedCapture.type === 'doing_now' ? 'right now' : 'just now'}.
+          </p>
+          <p className="mt-1 text-sm text-warm-500">
+            Saved at {new Date(savedCapture.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}.
+          </p>
         </div>
       )}
       {modification && (

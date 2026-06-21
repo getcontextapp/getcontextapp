@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase-server'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
+import { getHouseholdMembers } from '@/lib/household-links'
 import MCIUserClient from './MCIUserClient'
 
 export default async function MCIUserPage() {
@@ -39,6 +40,15 @@ export default async function MCIUserPage() {
     .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
     .order('created_at', { ascending: true })
 
+  const { data: timelineEvents } = await supabase
+    .from('timeline_events')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .gte('created_at', todayRange.start)
+    .lt('created_at', todayRange.end)
+    .order('created_at', { ascending: false })
+    .limit(20)
+
   // Fetch household join code
   const { data: household } = await supabase
     .from('households')
@@ -46,12 +56,16 @@ export default async function MCIUserPage() {
     .eq('id', profile.household_id)
     .single()
 
+  const members = await getHouseholdMembers(supabase, profile.household_id, profile.id)
+  const carePartner = members.carePartners.find(member => member.phone_e164) ?? members.carePartners[0] ?? null
+
   return (
     <MCIUserClient
       profile={profile}
       initialActivities={activities ?? []}
       initialPlannedActivities={plannedActivities ?? []}
-      initialContextCard={null}
+      initialTimelineEvents={timelineEvents ?? []}
+      carePartner={carePartner}
       household={household ?? null}
     />
   )

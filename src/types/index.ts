@@ -69,6 +69,22 @@ export interface PlannedActivity {
   updated_at: string
 }
 
+export type TimelineEventType = 'plan' | 'doing_now' | 'did' | 'completion' | 'sms_reply'
+export type TimelineEventSource = 'user-stated' | 'sms' | 'plan' | 'system'
+export type TimelineEventConfidence = 'high' | 'low'
+
+export interface TimelineEvent {
+  id: string
+  household_id: string
+  user_id: string | null
+  profile_id: string | null
+  text: string
+  type: TimelineEventType
+  source: TimelineEventSource
+  confidence: TimelineEventConfidence
+  created_at: string
+}
+
 export interface ContextCard {
   id: string
   household_id: string

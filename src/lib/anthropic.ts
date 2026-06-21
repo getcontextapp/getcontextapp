@@ -34,6 +34,23 @@ interface LiveContextCardInput {
   }>
 }
 
+export interface RecallAnswerInput {
+  displayName: string
+  timeZone?: string | null
+  confidence: 'certain' | 'guess' | 'unknown'
+  evidenceText?: string | null
+  sourceText: string
+  sourceTime?: string | null
+}
+
+export interface RecallAnswer {
+  confidence: 'certain' | 'guess' | 'unknown'
+  confidenceLabel: 'Certain' | 'Best guess' | 'Not sure'
+  answer: string
+  source: string
+  asksConfirmation: boolean
+}
+
 export interface PendingSmsItem {
   label: string
   category: string
@@ -87,6 +104,13 @@ function safeTime(value: unknown) {
 
 function safeRepeatRule(value: unknown): RepeatRule {
   return VALID_REPEAT_RULES.includes(value as RepeatRule) ? value as RepeatRule : 'none'
+}
+
+function buildRecallQuestion(evidenceText?: string | null) {
+  const detail = cleanContextContent(evidenceText ?? 'following your plan')
+    .replace(/[?.!]+$/, '')
+    .trim()
+  return `Could you have been ${detail}?`
 }
 
 function inferPeriod(text: string): ExpectedPeriod {
@@ -739,4 +763,78 @@ Rules:
 
   if (!title || !body) throw new Error('AI returned an incomplete Context reflection')
   return { title, body }
+}
+
+export async function generateRecallAnswer(input: RecallAnswerInput): Promise<RecallAnswer> {
+  const confidenceLabel =
+    input.confidence === 'certain' ? 'Certain' :
+    input.confidence === 'guess' ? 'Best guess' :
+    'Not sure'
+
+  if (input.confidence === 'unknown') {
+    return {
+      confidence: 'unknown',
+      confidenceLabel,
+      answer: "I don't have a note for the last little while.",
+      source: 'Tell me, and I will remember it.',
+      asksConfirmation: false,
+    }
+  }
+
+  const prompt = `You write a short recall answer for Context, an app for older adults with MCI.
+
+User name: ${input.displayName}
+Confidence: ${confidenceLabel}
+Evidence: ${input.evidenceText ?? 'None'}
+Source phrase to show: ${input.sourceText}
+
+Rules:
+- Return JSON only: {"answer":"...","source":"..."}.
+- Never use em dashes or en dashes.
+- Use plain second-person language.
+- Do not add facts that are not in the evidence.
+- If confidence is Certain, write one declarative sentence.
+- If confidence is Best guess, write only a question. Do not use a declarative sentence.
+- Keep the answer under 18 words.
+- Keep source under 18 words.
+- Do not use percentages.`
+
+  try {
+    const message = await client.messages.create({
+      model: MODEL,
+      max_tokens: 180,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    const raw = message.content[0].type === 'text' ? message.content[0].text : ''
+    const parsed = JSON.parse(cleanJson(raw))
+    let answer = cleanContextContent(parsed.answer).slice(0, 180)
+    const source = cleanContextContent(parsed.source || input.sourceText).slice(0, 180)
+
+    if (input.confidence === 'guess') {
+      const startsAsQuestion = /^(could|were|are|did|might|would|is|does|was)\b/i.test(answer)
+      if (!startsAsQuestion || !/[?]\s*$/.test(answer)) answer = buildRecallQuestion(input.evidenceText)
+    }
+    if (input.confidence === 'certain' && !answer) {
+      answer = `You were ${input.evidenceText ?? 'doing something you told me about'}.`
+    }
+
+    return {
+      confidence: input.confidence,
+      confidenceLabel,
+      answer,
+      source,
+      asksConfirmation: true,
+    }
+  } catch (error) {
+    console.error('[Anthropic] Recall answer failed:', error)
+    return {
+      confidence: input.confidence,
+      confidenceLabel,
+      answer: input.confidence === 'guess'
+        ? buildRecallQuestion(input.evidenceText)
+        : `You were ${input.evidenceText ?? 'doing something you told me about'}.`,
+      source: input.sourceText,
+      asksConfirmation: true,
+    }
+  }
 }

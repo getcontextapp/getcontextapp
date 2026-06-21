@@ -1,25 +1,23 @@
 'use client'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { ACTIVITY_TILES } from '@/types'
-import type { Profile, ActivityLog, ContextCard, ActivityTileConfig, PlannedActivity } from '@/types'
-import ActivityLogModal from '@/components/mci/ActivityLogModal'
-import ContextCardDisplay from '@/components/mci/ContextCardDisplay'
+import type { Profile, ActivityLog, PlannedActivity, TimelineEvent } from '@/types'
 import HouseholdCode from '@/components/mci/HouseholdCode'
 import ReminderSettings from '@/components/mci/ReminderSettings'
 import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanComposer'
 import EditTaskSheet from '@/components/mci/EditTaskSheet'
-import WeeklySummaryCard from '@/components/weekly/WeeklySummaryCard'
 import { addDaysToKey, formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 
 interface Props {
   profile: Profile
   initialActivities: ActivityLog[]
   initialPlannedActivities: PlannedActivity[]
-  initialContextCard: ContextCard | null
+  initialTimelineEvents: TimelineEvent[]
+  carePartner: Profile | null
   household: { join_code: string; name: string } | null
 }
 
@@ -30,16 +28,22 @@ const PERIOD_ORDER: Record<string, number> = {
   anytime: 3,
 }
 
-export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialContextCard, household }: Props) {
+type RecallAnswer = {
+  confidence: 'certain' | 'guess' | 'unknown'
+  confidenceLabel: 'Certain' | 'Best guess' | 'Not sure'
+  answer: string
+  source: string
+  asksConfirmation: boolean
+}
+
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, carePartner, household }: Props) {
   const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
-  const [contextCard, setContextCard] = useState<ContextCard | null>(initialContextCard)
-  const [selectedTile, setSelectedTile] = useState<ActivityTileConfig | null>(null)
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>(initialTimelineEvents)
   const [showSettings, setShowSettings] = useState(false)
   const [showHousehold, setShowHousehold] = useState(false)
-  const [generatingCard, setGeneratingCard] = useState(false)
   const [deleteCandidate, setDeleteCandidate] = useState<PlannedActivity | null>(null)
   const [editCandidate, setEditCandidate] = useState<PlannedActivity | null>(null)
   const [moveCandidate, setMoveCandidate] = useState<PlannedActivity | null>(null)
@@ -48,66 +52,49 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [openMoreId, setOpenMoreId] = useState<string | null>(null)
   const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null)
   const [confirmingPlanIds, setConfirmingPlanIds] = useState<string[]>([])
-  const [contextCardCollapsed, setContextCardCollapsed] = useState(false)
-  const [manualTilesExpanded, setManualTilesExpanded] = useState(initialPlannedActivities.length === 0)
-  const [showAllCompleted, setShowAllCompleted] = useState(false)
-  const contextCardRequestId = useRef(0)
-  const contextCardDismissed = useRef(false)
-  const contextCardRefreshTimer = useRef<number | null>(null)
+  const [clockNow, setClockNow] = useState(() => new Date())
+  const [recallOpen, setRecallOpen] = useState(false)
+  const [recallLoading, setRecallLoading] = useState(false)
+  const [recallAnswer, setRecallAnswer] = useState<RecallAnswer | null>(null)
+  const [recallResolved, setRecallResolved] = useState<'yes' | 'no' | null>(null)
+  const [recallCorrection, setRecallCorrection] = useState('')
+  const [recallSaving, setRecallSaving] = useState(false)
 
-  const now = new Date()
-  const localHour = Number(now.toLocaleString('en-US', {
+  const localHour = Number(clockNow.toLocaleString('en-US', {
     timeZone: profile.timezone,
     hour: 'numeric',
     hour12: false,
   }))
   const greeting = localHour < 12 ? 'Good morning' : localHour < 17 ? 'Good afternoon' : 'Good evening'
-  const dateStr = now.toLocaleDateString('en-US', {
+  const dateStr = clockNow.toLocaleDateString('en-US', {
     timeZone: profile.timezone,
     weekday: 'long',
     month: 'long',
     day: 'numeric',
   })
-  const todayKey = getLocalDateKey(now, profile.timezone)
+  const orientationTime = clockNow.toLocaleTimeString('en-US', {
+    timeZone: profile.timezone,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+  const weekday = clockNow.toLocaleDateString('en-US', {
+    timeZone: profile.timezone,
+    weekday: 'long',
+  })
+  const partOfDay =
+    localHour < 12 ? 'morning' :
+    localHour < 17 ? 'afternoon' :
+    localHour < 21 ? 'evening' :
+    'night'
+  const todayKey = getLocalDateKey(clockNow, profile.timezone)
   const tomorrowKey = addDaysToKey(todayKey, 1)
 
-  const refreshContextCard = useCallback(async (showAfterDataChange = false) => {
-    const requestId = ++contextCardRequestId.current
-    setGeneratingCard(true)
-    try {
-      const res = await fetch('/api/context-cards', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      if (requestId !== contextCardRequestId.current) return
-
-      if (res.ok) {
-        const card = await res.json()
-        if (contextCardDismissed.current && !showAfterDataChange) return
-        contextCardDismissed.current = false
-        setContextCard(card)
-      } else {
-        setContextCard(null)
-      }
-    } catch {
-      if (requestId === contextCardRequestId.current) setContextCard(null)
-    } finally {
-      if (requestId === contextCardRequestId.current) setGeneratingCard(false)
-    }
-  }, [])
-
-  const scheduleContextCardRefresh = useCallback(() => {
-    if (contextCardRefreshTimer.current) window.clearTimeout(contextCardRefreshTimer.current)
-    contextCardRefreshTimer.current = window.setTimeout(() => {
-      contextCardRefreshTimer.current = null
-      refreshContextCard(true)
-    }, 500)
-  }, [refreshContextCard])
+  const scheduleContextCardRefresh = useCallback(() => {}, [])
 
   const refreshDashboardData = useCallback(async () => {
     const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
-    const [activityResult, plannedResult] = await Promise.all([
+    const [activityResult, plannedResult, timelineResult] = await Promise.all([
       supabase
         .from('activity_logs')
         .select('*')
@@ -122,10 +109,19 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         .eq('household_id', profile.household_id)
         .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
         .order('created_at', { ascending: true }),
+      supabase
+        .from('timeline_events')
+        .select('*')
+        .eq('household_id', profile.household_id)
+        .gte('created_at', todayRange.start)
+        .lt('created_at', todayRange.end)
+        .order('created_at', { ascending: false })
+        .limit(20),
     ])
 
     if (activityResult.data) setActivities(activityResult.data as ActivityLog[])
     if (plannedResult.data) setPlannedActivities(plannedResult.data as PlannedActivity[])
+    if (timelineResult.data) setTimelineEvents(timelineResult.data as TimelineEvent[])
   }, [profile.household_id, profile.timezone, supabase])
 
   // Subscribe to realtime activity updates
@@ -133,7 +129,6 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     trackClientEvent('mci_dashboard_viewed', {
       activity_count: initialActivities.length,
       planned_activity_count: initialPlannedActivities.length,
-      has_context_card: Boolean(initialContextCard),
     })
 
     const channel = supabase
@@ -199,40 +194,41 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         setPlannedActivities(prev => prev.filter(item => item.id !== deleted.id))
         scheduleContextCardRefresh()
       })
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'timeline_events',
+        filter: `household_id=eq.${profile.household_id}`,
+      }, payload => {
+        const created = payload.new as TimelineEvent
+        if (getLocalDateKey(new Date(created.created_at), profile.timezone) !== getLocalDateKey(new Date(), profile.timezone)) {
+          return
+        }
+        setTimelineEvents(prev => prev.some(event => event.id === created.id) ? prev : [created, ...prev])
+      })
       .subscribe()
 
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') {
         refreshDashboardData()
-        refreshContextCard()
       }
     }
     const refreshWhenFocused = () => {
       refreshDashboardData()
-      refreshContextCard()
     }
-    refreshContextCard(true)
     document.addEventListener('visibilitychange', refreshWhenVisible)
     window.addEventListener('focus', refreshWhenFocused)
     const refreshTimer = window.setInterval(refreshDashboardData, 30_000)
-    const reflectionTimer = window.setInterval(refreshContextCard, 5 * 60_000)
+    const clockTimer = window.setInterval(() => setClockNow(new Date()), 30_000)
 
     return () => {
       supabase.removeChannel(channel)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
       window.removeEventListener('focus', refreshWhenFocused)
       window.clearInterval(refreshTimer)
-      window.clearInterval(reflectionTimer)
-      if (contextCardRefreshTimer.current) window.clearTimeout(contextCardRefreshTimer.current)
+      window.clearInterval(clockTimer)
     }
-  }, [profile.household_id, profile.timezone, initialActivities.length, initialPlannedActivities.length, initialContextCard, supabase, refreshContextCard, refreshDashboardData, scheduleContextCardRefresh])
-
-  const handleActivityPlanned = useCallback((activity: PlannedActivity) => {
-    setPlannedActivities(prev => [...prev, activity])
-    setSelectedTile(null)
-    setManualTilesExpanded(false)
-    scheduleContextCardRefresh()
-  }, [scheduleContextCardRefresh])
+  }, [profile.household_id, profile.timezone, initialActivities.length, initialPlannedActivities.length, supabase, refreshDashboardData, scheduleContextCardRefresh])
 
   const handleNaturalPlansSaved = useCallback((items: PlannedActivity[]) => {
     setPlannedActivities(prev => {
@@ -242,9 +238,68 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         ...items.filter(item => item.planned_for === todayKey && !prev.some(existing => existing.id === item.id)),
       ]
     })
-    setManualTilesExpanded(false)
     scheduleContextCardRefresh()
   }, [scheduleContextCardRefresh, todayKey])
+
+  const handleTimelineSaved = useCallback((event: TimelineEvent) => {
+    setTimelineEvents(prev => prev.some(item => item.id === event.id) ? prev : [event, ...prev])
+  }, [])
+
+  async function openRecall() {
+    setRecallOpen(true)
+    setRecallLoading(true)
+    setRecallAnswer(null)
+    setRecallResolved(null)
+    setRecallCorrection('')
+    try {
+      const response = await fetch('/api/reentry', { method: 'POST' })
+      const result = await response.json()
+      if (!response.ok) {
+        setRecallAnswer({
+          confidence: 'unknown',
+          confidenceLabel: 'Not sure',
+          answer: "I don't have a note for the last little while.",
+          source: 'Tell me, and I will remember it.',
+          asksConfirmation: false,
+        })
+        return
+      }
+      setRecallAnswer(result)
+    } catch {
+      setRecallAnswer({
+        confidence: 'unknown',
+        confidenceLabel: 'Not sure',
+        answer: "I don't have a note for the last little while.",
+        source: 'Tell me, and I will remember it.',
+        asksConfirmation: false,
+      })
+    } finally {
+      setRecallLoading(false)
+    }
+  }
+
+  async function saveRecallCorrection(text: string, type: 'doing_now' | 'did' = 'did') {
+    const value = text.trim()
+    if (!value) return
+    setRecallSaving(true)
+    try {
+      const response = await fetch('/api/timeline-events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: value,
+          type,
+          source: 'user-stated',
+          confidence: 'high',
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (response.ok && result.event) handleTimelineSaved(result.event)
+      setRecallResolved('yes')
+    } finally {
+      setRecallSaving(false)
+    }
+  }
 
   const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete') => {
     if (action === 'confirm') {
@@ -327,43 +382,6 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     }
   }, [deleteCandidate, handlePlanAction])
 
-  const dismissContextCard = useCallback(async () => {
-    if (!contextCard) return
-    trackClientEvent('context_card_dismissed', {
-      card_id: contextCard.id,
-      card_type: contextCard.type,
-    })
-    contextCardDismissed.current = true
-    setContextCard(null)
-  }, [contextCard])
-
-  const showWaitingTasks = useCallback(() => {
-    const plan = document.getElementById('todays-plan')
-    plan?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    window.setTimeout(() => plan?.focus({ preventScroll: true }), 350)
-  }, [])
-
-  useEffect(() => {
-    if (!contextCard || contextCardCollapsed) return
-
-    let timer = window.setTimeout(() => setContextCardCollapsed(true), 30_000)
-    const restartTimer = () => {
-      window.clearTimeout(timer)
-      timer = window.setTimeout(() => setContextCardCollapsed(true), 30_000)
-    }
-
-    window.addEventListener('pointerdown', restartTimer)
-    window.addEventListener('keydown', restartTimer)
-    window.addEventListener('scroll', restartTimer, { passive: true })
-
-    return () => {
-      window.clearTimeout(timer)
-      window.removeEventListener('pointerdown', restartTimer)
-      window.removeEventListener('keydown', restartTimer)
-      window.removeEventListener('scroll', restartTimer)
-    }
-  }, [contextCard, contextCardCollapsed])
-
   async function handleSignOut() {
     await supabase.auth.signOut()
     window.location.href = '/auth/login'
@@ -372,19 +390,6 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const todayActivities = activities
     .filter(activity => getLocalDateKey(new Date(activity.occurred_at), profile.timezone) === todayKey)
   const displayActivities = suppressNearbyDuplicateActivities(todayActivities, plannedActivities)
-
-  // Group today's activities by time of day.
-  const groupedActivities = displayActivities.reduce<Record<string, ActivityLog[]>>((acc, a) => {
-    const h = Number(new Date(a.occurred_at).toLocaleString('en-US', {
-      timeZone: profile.timezone,
-      hour: 'numeric',
-      hour12: false,
-    }))
-    const period = h < 12 ? 'Morning' : h < 17 ? 'Afternoon' : 'Evening'
-    if (!acc[period]) acc[period] = []
-    acc[period].push(a)
-    return acc
-  }, {})
 
   const sortedPlannedActivities = [...plannedActivities].sort((a, b) => {
     const periodDiff = (PERIOD_ORDER[a.expected_period] ?? 9) - (PERIOD_ORDER[b.expected_period] ?? 9)
@@ -399,107 +404,111 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   const visiblePlannedActivities = sortedPlannedActivities.filter(item => item.status !== 'confirmed')
   const openPlannedCount = sortedPlannedActivities.filter(a => a.status === 'planned' || a.status === 'not_now').length
-  const completedPreview = displayActivities.slice(0, 3)
-
-  const renderCompletedActivity = (activity: ActivityLog) => {
-    const tileConfig = ACTIVITY_TILES.find(tile => tile.category === activity.category)
-    const linkedPlan = plannedActivities.find(item =>
-      item.status === 'confirmed' && item.confirmed_activity_log_id === activity.id
-    )
-    const timeStr = new Date(activity.occurred_at).toLocaleTimeString('en-US', {
-      timeZone: profile.timezone,
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    })
-    const taskName = activity.note?.trim() || activity.label
-
-    return (
-      <div key={activity.id} className="rounded-xl border border-sage-200 bg-sage-50 px-4 py-3">
-        <div className="flex items-start gap-3">
-          <span
-            className="w-8 h-8 shrink-0 rounded-full bg-sage-100 border border-sage-200 flex items-center justify-center text-sage-600 font-semibold"
-            aria-hidden="true"
-          >
-            ✓
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-[15px] font-medium leading-5 text-warm-700 whitespace-normal break-words">
-                  {taskName}
-                </p>
-                <p className="text-xs text-warm-400 mt-1">
-                  {tileConfig?.icon ?? '📌'} {timeStr}
-                </p>
-              </div>
-              <span className="rounded-pill bg-sage-100 border border-sage-200 px-2 py-1 text-[11px] font-medium text-sage-600">
-                Done
-              </span>
-            </div>
-            {linkedPlan && (
-              <div className="flex items-center gap-3 mt-3 pt-3 border-t border-sage-200/80">
-                <button
-                  onClick={() => handlePlanAction(linkedPlan, 'reopen')}
-                  className="min-h-10 rounded-xl border border-sage-300 bg-white/70 px-4 text-sm font-medium text-warm-600 active:scale-[0.98] transition-all"
-                >
-                  Undo
-                </button>
-                <button
-                  onClick={() => setDeleteCandidate(linkedPlan)}
-                  className="min-h-10 px-2 text-sm font-medium text-terracotta-700 underline decoration-terracotta-200 underline-offset-4"
-                >
-                  Delete
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const recentTimeline = timelineEvents.find(event => event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply')
+  const recentActivity = recentTimeline?.text
+    ? recentTimeline.text
+    : displayActivities[0]?.note?.trim() || displayActivities[0]?.label || 'No recent note yet'
+  const recentActivityTime = recentTimeline
+    ? (recentTimeline.type === 'doing_now' ? 'now' : 'earlier')
+    : displayActivities[0]
+    ? 'earlier'
+    : ''
+  const nextPlan = visiblePlannedActivities.find(item => item.status === 'planned' || item.status === 'not_now') ?? null
+  const nextPlanName = nextPlan?.note?.trim() || nextPlan?.label || 'Nothing waiting'
+  const nextPlanTime = nextPlan
+    ? formatTaskTiming(nextPlan.expected_time, nextPlan.expected_period).split(' · ')[0]
+    : ''
+  const carePartnerFirstName = carePartner?.display_name?.trim().split(/\s+/)[0] || 'care partner'
 
   return (
     <div className="min-h-svh bg-cream-50 pb-8 safe-bottom">
-      {/* Header */}
-      <div className="bg-cream-100 border-b border-cream-200 safe-top">
-        <div className="max-w-lg mx-auto px-5 py-4 flex items-center justify-between">
-          <div>
-            <p className="text-warm-400 text-xs font-medium uppercase tracking-wide">{dateStr}</p>
-            <h1 className="font-serif text-lg font-semibold text-warm-900 leading-tight">
-              {greeting}, {profile.display_name}
-            </h1>
+      <div className="bg-[#FBF5E9] border-b border-cream-200 safe-top">
+        <div className="max-w-lg mx-auto px-5 pt-5 pb-4">
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2 text-sage-600 font-semibold">
+              <span className="w-7 h-7 rounded-full bg-sage-100 flex items-center justify-center" aria-hidden="true">⌁</span>
+              <span>Context</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowHousehold(true)}
+                className="w-11 h-11 rounded-full bg-cream-100 flex items-center justify-center text-lg hover:bg-cream-200 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
+                title="Household"
+                aria-label="Open household"
+              >
+                🏡
+              </button>
+              <button
+                onClick={() => setShowSettings(true)}
+                className="w-11 h-11 rounded-full bg-cream-100 flex items-center justify-center text-lg hover:bg-cream-200 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
+                title="Settings"
+                aria-label="Open settings"
+              >
+                ⚙
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowHousehold(true)}
-              className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 transition-colors"
-              title="Household"
-            >
-              🏡
-            </button>
-            <button
-              onClick={() => setShowSettings(true)}
-              className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 transition-colors"
-              title="Settings"
-            >
-              ⚙️
-            </button>
-          </div>
+          <p className="text-xl font-semibold text-warm-400">{greeting}, {profile.display_name}</p>
+          <h1 className="mt-1 font-serif text-[2rem] leading-tight font-semibold text-warm-900">
+            It's {orientationTime},<br />
+            {weekday} {partOfDay}.
+          </h1>
+          <p className="sr-only">{dateStr}</p>
         </div>
       </div>
 
-      <div className="max-w-lg mx-auto px-5 space-y-6 pt-5">
+      <div className="max-w-lg mx-auto px-5 space-y-5 pt-5">
 
         <NaturalLanguagePlanComposer
           plannedFor={todayKey}
           onSaved={handleNaturalPlansSaved}
+          onTimelineSaved={handleTimelineSaved}
         />
+
+        <div className="rounded-[20px] border-2 border-cream-300 bg-white px-5 shadow-card">
+          <div className="flex items-center gap-3 py-4">
+            <span className="w-8 h-8 shrink-0 rounded-full bg-sage-100 text-sage-600 flex items-center justify-center font-semibold" aria-hidden="true">✓</span>
+            <p className="min-w-0 flex-1 font-serif text-xl font-semibold leading-6 text-warm-900 break-words">{recentActivity}</p>
+            {recentActivityTime && <span className="text-sm font-semibold text-warm-400">{recentActivityTime}</span>}
+          </div>
+          <div className="flex items-center gap-3 border-t border-cream-200 py-4">
+            <span className="w-8 h-8 shrink-0 rounded-full bg-cream-200 text-terracotta-600 flex items-center justify-center font-semibold" aria-hidden="true">→</span>
+            <p className="min-w-0 flex-1 font-serif text-xl font-semibold leading-6 text-warm-900 break-words">{nextPlanName}</p>
+            {nextPlanTime && <span className="text-sm font-semibold text-warm-400">{nextPlanTime}</span>}
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={openRecall}
+            className="w-full min-h-[68px] rounded-[18px] bg-sage-600 px-5 text-xl font-semibold text-white shadow-card active:scale-[0.99] focus:outline-none focus:ring-4 focus:ring-sage-300/70 transition-all"
+          >
+            What was I doing?
+          </button>
+          {carePartner?.phone_e164 ? (
+            <a
+              href={`tel:${carePartner.phone_e164}`}
+              className="w-full min-h-[60px] rounded-[18px] border-2 border-cream-300 bg-cream-200 px-5 text-lg font-semibold text-warm-900 flex items-center justify-center gap-2 active:scale-[0.99] focus:outline-none focus:ring-4 focus:ring-sage-300/60 transition-all"
+            >
+              <span aria-hidden="true">☎</span>
+              Call {carePartnerFirstName}
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="w-full min-h-[60px] rounded-[18px] border-2 border-cream-300 bg-cream-100 px-5 text-lg font-semibold text-warm-400"
+            >
+              Call care partner
+            </button>
+          )}
+        </div>
 
         {/* Today's Plan */}
         <div id="todays-plan" tabIndex={-1} className="animate-fade-up scroll-mt-4 focus:outline-none">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-warm-500 text-sm font-medium">Today's plan</p>
+            <p className="text-warm-900 text-lg font-semibold">Today's plan</p>
             {openPlannedCount > 0 && (
               <span className="text-xs text-warm-400">{openPlannedCount} waiting</span>
             )}
@@ -547,19 +556,19 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                         <button
                           onClick={() => handlePlanAction(item, 'confirm')}
                           disabled={confirmingPlanIds.includes(item.id)}
-                          className="rounded-xl bg-warm-700 text-cream-100 py-2 text-sm font-medium active:scale-[0.98] transition-all disabled:opacity-60"
+                          className="min-h-12 rounded-xl bg-sage-100 text-sage-600 py-2 text-sm font-semibold active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-sage-300 transition-all disabled:opacity-60"
                         >
-                          {confirmingPlanIds.includes(item.id) ? 'Saving...' : 'Done'}
+                          {confirmingPlanIds.includes(item.id) ? 'Saving...' : 'Mark done'}
                         </button>
                         <button
                           onClick={() => { setMoveCandidate(item); setMoveDate(tomorrowKey); setMoveError(null) }}
-                          className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                          className="min-h-12 rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-sage-300 transition-all"
                         >
                           Move →
                         </button>
                         <button
                           onClick={() => setOpenMoreId(current => current === item.id ? null : item.id)}
-                          className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] transition-all"
+                          className="min-h-12 rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-sage-300 transition-all"
                         >
                           More
                         </button>
@@ -588,108 +597,127 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           )}
         </div>
 
-        <WeeklySummaryCard href="/mci-user/weekly-summary" role="mci_user" />
-
-        {/* Context Card */}
-        {contextCard ? (
-          <ContextCardDisplay
-            card={contextCard}
-            isGenerating={generatingCard}
-            collapsed={contextCardCollapsed}
-            onExpand={() => setContextCardCollapsed(false)}
-            onShowWaiting={showWaitingTasks}
-            onDismiss={dismissContextCard}
-            pendingCount={openPlannedCount}
-            timeZone={profile.timezone}
-          />
-        ) : generatingCard ? (
-          <div className="card p-5 animate-pulse-soft">
-            <div className="h-4 bg-cream-200 rounded-pill w-1/3 mb-3" />
-            <div className="h-3 bg-cream-200 rounded-pill w-full mb-2" />
-            <div className="h-3 bg-cream-200 rounded-pill w-4/5" />
-          </div>
-        ) : null}
-
-        {/* Confirmed Timeline */}
-        {displayActivities.length > 0 && (
-          <div className="animate-fade-up">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-warm-500 text-sm font-medium">Completed today</p>
-              <span className="text-xs text-sage-600">{displayActivities.length} done</span>
-            </div>
-
-            {showAllCompleted ? (
-              <div className="space-y-4">
-                {(['Morning', 'Afternoon', 'Evening'] as const).map(period => {
-                  const group = groupedActivities[period]
-                  if (!group || group.length === 0) return null
-                  return (
-                    <div key={period}>
-                      <p className="text-xs font-medium text-warm-300 uppercase tracking-wide mb-2">{period}</p>
-                      <div className="space-y-2">{group.map(renderCompletedActivity)}</div>
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="space-y-2">{completedPreview.map(renderCompletedActivity)}</div>
-            )}
-
-            {displayActivities.length > 3 && (
-              <button
-                type="button"
-                onClick={() => setShowAllCompleted(current => !current)}
-                className="w-full min-h-11 mt-3 rounded-xl border border-sage-200 bg-sage-50 text-sm font-medium text-warm-600 active:scale-[0.99] transition-all"
-                aria-expanded={showAllCompleted}
-              >
-                {showAllCompleted
-                  ? 'Show fewer completed'
-                  : `Show all ${displayActivities.length} completed`}
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Activity Tiles Grid */}
-        <div className="animate-fade-up">
-          <button
-            type="button"
-            onClick={() => setManualTilesExpanded(current => !current)}
-            className="w-full rounded-xl border border-cream-300 bg-cream-100 px-4 py-3
-                       flex items-center justify-between text-left active:scale-[0.99] transition-all"
-            aria-expanded={manualTilesExpanded}
-          >
-            <span className="text-sm font-medium text-warm-600">＋ Add one thing manually</span>
-            <span className="text-warm-400" aria-hidden="true">{manualTilesExpanded ? '⌃' : '⌄'}</span>
-          </button>
-          {manualTilesExpanded && (
-            <div className="grid grid-cols-3 gap-2 mt-3">
-              {ACTIVITY_TILES.map((tile, i) => (
-                <button
-                  key={tile.category}
-                  onClick={() => setSelectedTile(tile)}
-                  className={`${tile.colorClass} border rounded-xl p-3 text-left
-                              opacity-90 hover:opacity-100 active:scale-[0.96] transition-all
-                              animate-fade-up`}
-                  style={{ animationDelay: `${i * 0.04}s` }}
-                >
-                  <span className="text-xl block mb-1">{tile.icon}</span>
-                  <span className="text-xs font-medium text-warm-700">{tile.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
-      {/* Activity Log Modal */}
-      {selectedTile && (
-        <ActivityLogModal
-          tile={selectedTile}
-          plannedFor={todayKey}
-          onPlanned={handleActivityPlanned}
-          onClose={() => setSelectedTile(null)}
-        />
+      {recallOpen && (
+        <div className="fixed inset-0 z-50 flex items-end bg-warm-900/35 px-0" role="dialog" aria-modal="true" aria-labelledby="recall-title">
+          <div className="w-full max-w-lg mx-auto rounded-t-3xl bg-[#FBF5E9] px-5 pb-8 pt-4 shadow-float safe-bottom">
+            <div className="w-10 h-1 bg-warm-300/50 rounded-pill mx-auto mb-5" />
+            <button
+              type="button"
+              onClick={() => setRecallOpen(false)}
+              className="mb-4 min-h-11 rounded-xl px-1 text-base font-semibold text-warm-500 focus:outline-none focus:ring-2 focus:ring-sage-300"
+            >
+              ‹ Back to home
+            </button>
+            {recallLoading ? (
+              <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card animate-pulse-soft">
+                <div className="h-5 w-28 rounded-pill bg-cream-200 mb-4" />
+                <div className="h-7 w-4/5 rounded-pill bg-cream-200 mb-3" />
+                <div className="h-4 w-full rounded-pill bg-cream-200" />
+              </div>
+            ) : recallResolved === 'yes' ? (
+              <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
+                <p id="recall-title" className="text-xs font-bold uppercase tracking-wide text-sage-600">All caught up</p>
+                <p className="mt-3 font-serif text-2xl font-semibold leading-8 text-warm-900">
+                  Good. You're all caught up.
+                </p>
+                <p className="mt-3 text-base font-medium leading-6 text-warm-500">
+                  I'll keep things ready for you.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setRecallOpen(false)}
+                  className="mt-5 w-full min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                >
+                  Back to home
+                </button>
+              </div>
+            ) : recallResolved === 'no' ? (
+              <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
+                <p id="recall-title" className="font-serif text-2xl font-semibold leading-8 text-warm-900">Thanks, that helps.</p>
+                <label htmlFor="recall-correction" className="mt-4 block text-base font-semibold text-warm-700">
+                  What were you doing?
+                </label>
+                <input
+                  id="recall-correction"
+                  value={recallCorrection}
+                  onChange={event => setRecallCorrection(event.target.value)}
+                  placeholder="I was..."
+                  className="mt-3 min-h-14 w-full rounded-xl border-2 border-cream-300 bg-cream-50 px-4 text-lg font-semibold text-warm-900 placeholder:text-warm-300 focus:outline-none focus:border-sage-400 focus:ring-2 focus:ring-sage-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => saveRecallCorrection(recallCorrection)}
+                  disabled={recallSaving || !recallCorrection.trim()}
+                  className="mt-5 w-full min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                >
+                  {recallSaving ? 'Saving...' : 'Save and go home'}
+                </button>
+              </div>
+            ) : recallAnswer ? (
+              <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
+                <p id="recall-title" className="text-xs font-bold uppercase tracking-wide text-sage-600">Your day so far</p>
+                <span className={`mt-4 inline-flex items-center gap-2 rounded-pill px-3 py-1 text-xs font-bold uppercase tracking-wide ${
+                  recallAnswer.confidence === 'certain'
+                    ? 'bg-sage-100 text-sage-600'
+                    : recallAnswer.confidence === 'guess'
+                    ? 'bg-cream-200 text-terracotta-700'
+                    : 'bg-warm-100 text-warm-500'
+                }`}>
+                  <span className="w-2 h-2 rounded-full bg-current" aria-hidden="true" />
+                  {recallAnswer.confidenceLabel}
+                </span>
+                <p className="mt-4 font-serif text-2xl font-semibold leading-8 text-warm-900">
+                  {recallAnswer.answer}
+                </p>
+                <p className="mt-3 text-base font-medium leading-6 text-warm-500">
+                  {recallAnswer.source}
+                </p>
+                {recallAnswer.confidence === 'unknown' ? (
+                  <>
+                    <input
+                      value={recallCorrection}
+                      onChange={event => setRecallCorrection(event.target.value)}
+                      placeholder="What are you doing right now?"
+                      className="mt-5 min-h-14 w-full rounded-xl border-2 border-cream-300 bg-cream-50 px-4 text-lg font-semibold text-warm-900 placeholder:text-warm-300 focus:outline-none focus:border-sage-400 focus:ring-2 focus:ring-sage-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => saveRecallCorrection(recallCorrection, 'doing_now')}
+                      disabled={recallSaving || !recallCorrection.trim()}
+                      className="mt-4 w-full min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                    >
+                      {recallSaving ? 'Saving...' : 'Tell Context'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-5 text-lg font-semibold text-warm-800">
+                      {recallAnswer.confidence === 'guess' ? 'Does that sound right?' : 'Is that right?'}
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setRecallResolved('yes')}
+                        className="min-h-[60px] rounded-xl bg-sage-500 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRecallResolved('no')}
+                        className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+                      >
+                        No
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
       )}
 
       {/* Reminder Settings Sheet */}

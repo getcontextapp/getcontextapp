@@ -8,7 +8,6 @@ import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import { formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, PlannedActivity } from '@/types'
-import WeeklySummaryCard from '@/components/weekly/WeeklySummaryCard'
 
 interface Props {
   careProfile: Profile
@@ -16,9 +15,6 @@ interface Props {
   initialActivities: ActivityLog[]
   initialPlannedActivities: PlannedActivity[]
 }
-
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const COMPLETED_BATCH_SIZE = 20
 
 type ConfirmedEntry = {
   id: string
@@ -83,23 +79,6 @@ function getConfirmedEntries(
   })
 }
 
-function groupConfirmedByDay(entries: ConfirmedEntry[]) {
-  const groups: Record<string, ConfirmedEntry[]> = {}
-  for (const entry of entries) {
-    if (!groups[entry.dayKey]) groups[entry.dayKey] = []
-    groups[entry.dayKey].push(entry)
-  }
-  return groups
-}
-
-function getCategoryBreakdown(entries: Array<{ category: ActivityLog['category'] }>) {
-  const counts: Record<string, number> = {}
-  for (const entry of entries) {
-    counts[entry.category] = (counts[entry.category] ?? 0) + 1
-  }
-  return Object.entries(counts).sort((a, b) => b[1] - a[1])
-}
-
 const PERIOD_ORDER: Record<string, number> = {
   morning: 0,
   afternoon: 1,
@@ -113,8 +92,6 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const supabase = createClient()
   const [activities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
-  const [visibleCompletedCount, setVisibleCompletedCount] = useState(3)
-  const [weeklyOverviewOpen, setWeeklyOverviewOpen] = useState(false)
   const [skippedActivitiesOpen, setSkippedActivitiesOpen] = useState(false)
   const [testSending, setTestSending] = useState(false)
   const [testSent, setTestSent] = useState(false)
@@ -129,7 +106,6 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
 
   const displayActivities = suppressNearbyDuplicateActivities(activities, plannedActivities)
   const confirmedEntries = getConfirmedEntries(displayActivities, plannedActivities, careProfile.timezone)
-  const confirmedByDay = groupConfirmedByDay(confirmedEntries)
 
   useEffect(() => {
     trackClientEvent('care_partner_dashboard_viewed', {
@@ -139,24 +115,10 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
     })
   }, [initialActivities.length, initialPlannedActivities.length, mciProfile])
 
-  // Build last 7 days for the week strip
-  const weekDays = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date()
-    d.setDate(d.getDate() - (6 - i))
-    return {
-      key: getLocalDateKey(d, careProfile.timezone),
-      label: DAYS[d.getDay()],
-      dayNum: d.getDate(),
-      count: confirmedByDay[getLocalDateKey(d, careProfile.timezone)]?.length ?? 0,
-      isToday: getLocalDateKey(d, careProfile.timezone) === getLocalDateKey(new Date(), careProfile.timezone),
-    }
-  })
-
-  // Today's stats
   const todayKey = getLocalDateKey(new Date(), careProfile.timezone)
-  const todayConfirmedEntries = [...(confirmedByDay[todayKey] ?? [])].reverse()
-  const categoryBreakdown = getCategoryBreakdown(todayConfirmedEntries)
-    .filter(([category]) => category !== 'custom')
+  const todayConfirmedEntries = confirmedEntries
+    .filter(entry => entry.dayKey === todayKey)
+    .reverse()
   const sortedPlannedActivities = [...plannedActivities].sort((a, b) => {
     const periodDiff = (PERIOD_ORDER[a.expected_period] ?? 9) - (PERIOD_ORDER[b.expected_period] ?? 9)
     if (periodDiff !== 0) return periodDiff
@@ -171,8 +133,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
     item => item.status === 'planned' || item.status === 'not_now',
   )
   const skippedActivities = sortedPlannedActivities.filter(item => item.status === 'skipped')
-  const openPlanCount = waitingActivities.length
-  const visibleCompletedEntries = todayConfirmedEntries.slice(0, visibleCompletedCount)
+  const visibleCompletedEntries = todayConfirmedEntries
 
   async function sendTestSummary() {
     if (!careProfile.phone_e164 && !carePhone.trim()) return
@@ -279,21 +240,24 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
 
         {/* Member info card */}
         {mciProfile ? (
-          <div className="card p-5 flex items-center gap-4 animate-fade-up">
-            <div className="w-12 h-12 rounded-full bg-sage-100 flex items-center justify-center text-2xl flex-shrink-0">
-              🧑‍🦳
+          <div className="card p-5 animate-fade-up">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-sage-100 flex items-center justify-center text-2xl flex-shrink-0">
+                🧑‍🦳
+              </div>
+              <div className="flex-1">
+                <p className="font-medium text-warm-900">{mciProfile.display_name}</p>
+                <p className="text-sm text-warm-400">A calm view of today</p>
+              </div>
+              <div className="px-3 py-1 rounded-pill text-xs font-medium bg-sage-100 text-sage-600">
+                ○ Quiet
+              </div>
             </div>
-            <div className="flex-1">
-              <p className="font-medium text-warm-900">{mciProfile.display_name}</p>
-              <p className="text-sm text-warm-400">
-                {todayConfirmedEntries.length} completed, {openPlanCount} waiting
-              </p>
-            </div>
-            <div className={`px-3 py-1 rounded-pill text-xs font-medium ${
-              todayConfirmedEntries.length > 0 ? 'bg-sage-100 text-sage-600' : 'bg-cream-200 text-warm-400'
-            }`}>
-              {todayConfirmedEntries.length > 0 ? '● Active' : '○ Quiet'}
-            </div>
+            <p className="mt-4 rounded-2xl bg-sage-50 px-4 py-3 text-base font-medium leading-6 text-sage-600">
+              {todayConfirmedEntries.length > 0
+                ? `${mciProfile.display_name} has some notes from earlier today. Nothing needs your attention.`
+                : `${mciProfile.display_name} has a quiet day so far. Nothing needs your attention.`}
+            </p>
           </div>
         ) : (
           <div className="card p-5 border-2 border-dashed border-cream-300 animate-fade-up">
@@ -306,17 +270,14 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
           </div>
         )}
 
-        {/* Waiting now */}
+        {/* Planned today */}
         <div className="animate-fade-up delay-100">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-warm-500 text-sm font-medium">Waiting now</p>
-            {openPlanCount > 0 && (
-              <span className="text-xs text-warm-400">{openPlanCount} waiting</span>
-            )}
+            <p className="text-warm-900 text-lg font-semibold">Planned today</p>
           </div>
           {waitingActivities.length === 0 ? (
             <div className="card p-5 text-center">
-              <p className="text-warm-400 text-sm">Nothing is waiting right now.</p>
+              <p className="text-warm-400 text-sm">No plans are showing for the rest of today.</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -338,12 +299,8 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                               {item.repeat_rule && item.repeat_rule !== 'none' ? ` · ${REPEAT_LABELS[item.repeat_rule]}` : ''}
                             </p>
                           </div>
-                          <span className={`text-[11px] rounded-pill px-2 py-0.5 whitespace-nowrap ${
-                            item.status === 'not_now'
-                              ? 'bg-cream-200 text-warm-600'
-                              : 'bg-terracotta-50 text-terracotta-600'
-                          }`}>
-                            {item.status === 'not_now' ? 'Later' : 'Waiting'}
+                          <span className="text-[11px] rounded-pill px-2 py-0.5 whitespace-nowrap bg-cream-200 text-warm-600">
+                            {item.status === 'not_now' ? 'Later' : 'Planned'}
                           </span>
                         </div>
                       </div>
@@ -363,7 +320,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                 aria-controls="skipped-activities"
               >
                 <span className="text-sm font-medium text-warm-600">
-                  {skippedActivities.length} skipped today
+                  Other plans from today
                 </span>
                 <span className="text-warm-400" aria-hidden="true">{skippedActivitiesOpen ? '⌃' : '⌄'}</span>
               </button>
@@ -385,19 +342,14 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
           )}
         </div>
 
-        <WeeklySummaryCard href="/care-partner/weekly-summary" role="care_partner" />
-
         {/* Completed today */}
         <div className="animate-fade-up delay-200">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-warm-500 text-sm font-medium">Completed today</p>
-            {todayConfirmedEntries.length > 0 && (
-              <span className="text-xs text-sage-600">{todayConfirmedEntries.length} completed</span>
-            )}
+            <p className="text-warm-900 text-lg font-semibold">Done earlier</p>
           </div>
           {todayConfirmedEntries.length === 0 ? (
             <div className="card p-6 text-center">
-              <p className="text-warm-400 text-sm">No activities completed yet today.</p>
+              <p className="text-warm-400 text-sm">Nothing has been noted here yet today.</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -422,94 +374,6 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                   </div>
                 )
               })}
-            </div>
-          )}
-          {todayConfirmedEntries.length > 3 && (
-            <div className="mt-3 space-y-2">
-              {visibleCompletedCount < todayConfirmedEntries.length ? (
-                <button
-                  type="button"
-                  onClick={() => setVisibleCompletedCount(current =>
-                    current === 3
-                      ? Math.min(COMPLETED_BATCH_SIZE, todayConfirmedEntries.length)
-                      : Math.min(current + COMPLETED_BATCH_SIZE, todayConfirmedEntries.length)
-                  )}
-                  className="w-full min-h-12 rounded-xl border border-sage-200 bg-sage-50 px-4 text-base font-medium text-warm-700 active:scale-[0.99] transition-all"
-                  aria-expanded={visibleCompletedCount > 3}
-                >
-                  {visibleCompletedCount === 3
-                    ? `Show all ${todayConfirmedEntries.length} completed`
-                    : `Show ${Math.min(COMPLETED_BATCH_SIZE, todayConfirmedEntries.length - visibleCompletedCount)} more completed`}
-                </button>
-              ) : null}
-              {visibleCompletedCount > 3 && (
-                <button
-                  type="button"
-                  onClick={() => setVisibleCompletedCount(3)}
-                  className="w-full min-h-11 rounded-xl px-4 text-sm font-medium text-warm-500 underline decoration-warm-200 underline-offset-4"
-                >
-                  Show fewer completed
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Weekly overview */}
-        <div className="animate-fade-up delay-300">
-          <button
-            type="button"
-            onClick={() => setWeeklyOverviewOpen(current => !current)}
-            className="w-full min-h-14 rounded-xl border border-cream-300 bg-cream-100 px-4 py-3 flex items-center justify-between gap-4 text-left active:scale-[0.99] transition-all"
-            aria-expanded={weeklyOverviewOpen}
-            aria-controls="weekly-overview"
-          >
-            <span>
-              <span className="block text-base font-medium text-warm-700">Recent activity details</span>
-              <span className="block text-xs text-warm-400 mt-0.5">Activity types and the last 7 days</span>
-            </span>
-            <span className="text-xl text-warm-400" aria-hidden="true">{weeklyOverviewOpen ? '⌃' : '⌄'}</span>
-          </button>
-
-          {weeklyOverviewOpen && (
-            <div id="weekly-overview" className="mt-3 space-y-5 rounded-xl border border-cream-200 bg-white p-4">
-              {categoryBreakdown.length > 0 && (
-                <div>
-                  <p className="text-warm-500 text-sm font-medium mb-3">Completed activity types today</p>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {categoryBreakdown.slice(0, 6).map(([cat, count]) => {
-                      const tile = ACTIVITY_TILES.find(t => t.category === cat)
-                      return (
-                        <div key={cat} className={`${tile?.colorClass ?? 'tile-custom'} border rounded-xl px-3 py-3 text-center`}>
-                          <div className="text-xl mb-1" aria-hidden="true">{tile?.icon ?? '📌'}</div>
-                          <div className="text-xs font-medium text-warm-700">{tile?.label ?? cat}</div>
-                          <div className="text-lg font-semibold text-warm-900">{count}</div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <p className="text-warm-500 text-sm font-medium mb-3">Completed activity this week</p>
-                <div className="grid grid-cols-7 gap-1" aria-label="Completed activities during the last 7 days">
-                  {weekDays.map(day => (
-                    <div
-                      key={day.key}
-                      className={`min-w-0 flex flex-col items-center py-3 px-0.5 rounded-xl ${
-                        day.isToday ? 'bg-cream-200 text-warm-900' : 'bg-cream-100 text-warm-500'
-                      }`}
-                    >
-                      <span className="text-[11px] font-medium">{day.label}</span>
-                      <span className="text-sm font-semibold mt-0.5">{day.dayNum}</span>
-                      <span className="mt-1 text-xs rounded-pill bg-warm-200 text-warm-600 px-1.5 font-medium">
-                        {day.count}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
         </div>

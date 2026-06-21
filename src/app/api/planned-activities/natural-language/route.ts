@@ -48,6 +48,34 @@ function cleanFallbackPlan(note: string) {
     .slice(0, 160)
 }
 
+function detectTimelineCapture(message: string): { type: 'doing_now' | 'did'; text: string } | null {
+  const text = message.trim().replace(/[—–]/g, ',').replace(/\s+/g, ' ')
+  const lower = text.toLowerCase()
+  const nowMatch = lower.match(/^(?:i am|i'm|im|i’m|we are|we're|currently|right now i am|right now i'm|right now im)\s+(.+)$/)
+  if (nowMatch) {
+    return { type: 'doing_now', text: cleanCaptureText(text.replace(/^(?:i am|i'm|im|i’m|we are|we're|currently|right now i am|right now i'm|right now im)\s+/i, '')) }
+  }
+  if (/\b(right now|currently|at the moment)\b/i.test(text) && !/\b(at|around)\s+\d{1,2}/i.test(text)) {
+    return { type: 'doing_now', text: cleanCaptureText(text.replace(/\b(right now|currently|at the moment)\b/gi, '')) }
+  }
+  if (/^(?:i just|just|i already|already|i did|i finished|i completed|i had|i took|i went|i called|i made|i ate|i walked|i visited)\b/i.test(text)) {
+    return { type: 'did', text: cleanCaptureText(text.replace(/^(?:i just|just|i already|already)\s+/i, '')) }
+  }
+  if (/\b(just did|just finished|just completed|just had|just took|just went|just called|just made|just ate|just walked|just visited)\b/i.test(text)) {
+    return { type: 'did', text: cleanCaptureText(text) }
+  }
+  return null
+}
+
+function cleanCaptureText(text: string) {
+  return text
+    .trim()
+    .replace(/^i\s+(?:am|was|did)\s+/i, '')
+    .replace(/[.]+$/, '')
+    .trim()
+    .slice(0, 160)
+}
+
 function buildFallbackPlans(message: string) {
   return message
     .split(/[,;\n]+/)
@@ -159,6 +187,17 @@ export async function POST(request: NextRequest) {
         })
       }
       return NextResponse.json({ error: matches.length > 1 ? 'I found more than one matching task. Please name it more specifically.' : 'I could not find that waiting task today.' }, { status: 422 })
+    }
+
+    const capture = detectTimelineCapture(message)
+    if (capture?.text) {
+      await trackEvent(supabase, {
+        eventName: 'natural_language_timeline_parsed',
+        profile,
+        userId: user.id,
+        properties: { type: capture.type, raw_length: message.length },
+      })
+      return NextResponse.json({ capture })
     }
 
     const parsed = await parseSmsPlanReply(message, profile.display_name, profile.timezone)
