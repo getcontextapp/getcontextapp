@@ -110,7 +110,10 @@ function buildRecallQuestion(evidenceText?: string | null) {
   const detail = cleanContextContent(evidenceText ?? 'following your plan')
     .replace(/[?.!]+$/, '')
     .trim()
-  return `Could you have been ${detail}?`
+  if (/^(at|with|having|getting|making|taking|walking|driving|calling|resting|reading|watching|eating|going)\b/i.test(detail)) {
+    return `Could you have been ${detail}?`
+  }
+  return `Could it have been ${detail}?`
 }
 
 function inferPeriod(text: string): ExpectedPeriod {
@@ -810,10 +813,7 @@ Rules:
     let answer = cleanContextContent(parsed.answer).slice(0, 180)
     const source = cleanContextContent(parsed.source || input.sourceText).slice(0, 180)
 
-    if (input.confidence === 'guess') {
-      const startsAsQuestion = /^(could|were|are|did|might|would|is|does|was)\b/i.test(answer)
-      if (!startsAsQuestion || !/[?]\s*$/.test(answer)) answer = buildRecallQuestion(input.evidenceText)
-    }
+    if (input.confidence === 'guess') answer = buildRecallQuestion(input.evidenceText)
     if (input.confidence === 'certain' && !answer) {
       answer = `You were ${input.evidenceText ?? 'doing something you told me about'}.`
     }

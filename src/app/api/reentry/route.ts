@@ -5,6 +5,8 @@ import { generateRecallAnswer } from '@/lib/anthropic'
 import { trackEvent } from '@/lib/analytics'
 import type { PlannedActivity, TimelineEvent } from '@/types'
 
+type RecallInput = Parameters<typeof generateRecallAnswer>[0]
+
 function formatTime(value: string, timeZone?: string | null) {
   return new Date(value).toLocaleTimeString('en-US', {
     timeZone: timeZone || undefined,
@@ -40,6 +42,33 @@ function getCurrentPlan(plans: PlannedActivity[], timeZone?: string | null) {
     plans.find(item => item.status === 'planned' && item.expected_period === period) ??
     plans.find(item => item.status === 'planned' || item.status === 'not_now') ??
     null
+}
+
+function recallPhrase(text: string, fallbackPrefix = '') {
+  const value = text.trim().replace(/[?.!]+$/, '')
+  const lower = value.toLowerCase()
+  if (!value) return 'doing something from your day'
+  if (/^(at|with|having|getting|making|taking|walking|driving|calling|resting|reading|watching|eating)\b/i.test(value)) {
+    return value
+  }
+  if (lower === 'drive' || lower.startsWith('drive ')) return value.replace(/^drive\b/i, 'driving')
+  if (lower.startsWith('go to ')) return value.replace(/^go\b/i, 'going')
+  if (lower.startsWith('call ')) return value.replace(/^call\b/i, 'calling')
+  if (lower.startsWith('take ')) return value.replace(/^take\b/i, 'taking')
+  if (lower.startsWith('walk ')) return value.replace(/^walk\b/i, 'walking')
+  if (lower.startsWith('eat ')) return value.replace(/^eat\b/i, 'eating')
+  if (lower.startsWith('make ')) return value.replace(/^make\b/i, 'making')
+  return `${fallbackPrefix}${value}`
+}
+
+function unknownMoment(displayName: string, timeZone?: string | null): RecallInput {
+  return {
+    displayName,
+    timeZone,
+    confidence: 'unknown',
+    evidenceText: null,
+    sourceText: 'Tell me, and I will remember it.',
+  }
 }
 
 export async function POST() {
@@ -105,49 +134,74 @@ export async function POST() {
   }
 
   const timeline = (timelineUnavailable ? [] : timelineResult.data ?? []) as TimelineEvent[]
-  const explicitEvent = timeline.find(event => event.confidence === 'high' && (event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply'))
+  const explicitEvents = timeline.filter(event => event.confidence === 'high' && (event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply'))
   const inboundSms = (smsResult.data ?? [])[0]
   const latestActivity = (activityResult.data ?? [])[0]
   const currentPlan = getCurrentPlan((planResult.data ?? []) as PlannedActivity[], profile.timezone)
 
-  let confidence: 'certain' | 'guess' | 'unknown' = 'unknown'
-  let evidenceText: string | null = null
-  let sourceText = 'Tell me, and I will remember it.'
+  const moments: RecallInput[] = []
 
-  if (explicitEvent) {
-    confidence = 'certain'
-    evidenceText = explicitEvent.text
-    sourceText = `You told me at ${formatTime(explicitEvent.created_at, profile.timezone)}.`
-  } else if (inboundSms?.body) {
-    confidence = 'certain'
-    evidenceText = String(inboundSms.body).trim().slice(0, 160)
-    sourceText = `You texted Context at ${formatTime(inboundSms.created_at, profile.timezone)}.`
-  } else if (currentPlan) {
-    confidence = 'guess'
-    evidenceText = currentPlan.note?.trim() || currentPlan.label
-    sourceText = currentPlan.expected_time
-      ? `This is from your ${formatPlanClock(currentPlan.expected_time)} plan.`
-      : "This is from today's plan."
-  } else if (latestActivity) {
-    confidence = 'guess'
-    evidenceText = latestActivity.note?.trim() || latestActivity.label
-    sourceText = 'This is from when something was marked done.'
+  for (const event of explicitEvents.slice(0, 2)) {
+    moments.push({
+      displayName: profile.display_name,
+      timeZone: profile.timezone,
+      confidence: 'certain',
+      evidenceText: event.text,
+      sourceText: `You told me at ${formatTime(event.created_at, profile.timezone)}.`,
+    })
   }
 
-  const answer = await generateRecallAnswer({
-    displayName: profile.display_name,
-    timeZone: profile.timezone,
-    confidence,
-    evidenceText,
-    sourceText,
-  })
+  if (inboundSms?.body) {
+    moments.push({
+      displayName: profile.display_name,
+      timeZone: profile.timezone,
+      confidence: 'certain',
+      evidenceText: String(inboundSms.body).trim().slice(0, 160),
+      sourceText: `You texted Context at ${formatTime(inboundSms.created_at, profile.timezone)}.`,
+    })
+  }
+
+  if (latestActivity) {
+    moments.push({
+      displayName: profile.display_name,
+      timeZone: profile.timezone,
+      confidence: 'guess',
+      evidenceText: recallPhrase(latestActivity.note?.trim() || latestActivity.label),
+      sourceText: "I'm not certain. This was only marked done in Context.",
+    })
+  }
+
+  if (currentPlan) {
+    moments.push({
+      displayName: profile.display_name,
+      timeZone: profile.timezone,
+      confidence: 'guess',
+      evidenceText: recallPhrase(currentPlan.note?.trim() || currentPlan.label, 'getting ready for '),
+      sourceText: currentPlan.expected_time
+        ? `I'm not certain. This is from your ${formatPlanClock(currentPlan.expected_time)} plan.`
+        : "I'm not certain. This is from today's plan.",
+    })
+  }
+
+  moments.push(unknownMoment(profile.display_name, profile.timezone))
+
+  const uniqueMoments = moments.filter((moment, index, list) =>
+    index === list.findIndex(item =>
+      item.confidence === moment.confidence &&
+      item.evidenceText === moment.evidenceText &&
+      item.sourceText === moment.sourceText,
+    ),
+  ).slice(0, 4)
+
+  const answers = await Promise.all(uniqueMoments.map(moment => generateRecallAnswer(moment)))
+  const answer = answers[0]
 
   await trackEvent(supabase, {
     eventName: 'reentry_recall_requested',
     profile,
     userId: user.id,
-    properties: { confidence },
+    properties: { confidence: answer.confidence, moment_count: answers.length },
   })
 
-  return NextResponse.json(answer)
+  return NextResponse.json({ ...answer, moments: answers })
 }

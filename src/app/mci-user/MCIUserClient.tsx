@@ -56,6 +56,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [recallOpen, setRecallOpen] = useState(false)
   const [recallLoading, setRecallLoading] = useState(false)
   const [recallAnswer, setRecallAnswer] = useState<RecallAnswer | null>(null)
+  const [recallMoments, setRecallMoments] = useState<RecallAnswer[]>([])
+  const [recallMomentIndex, setRecallMomentIndex] = useState(0)
   const [recallResolved, setRecallResolved] = useState<'yes' | 'no' | null>(null)
   const [recallCorrection, setRecallCorrection] = useState('')
   const [recallSaving, setRecallSaving] = useState(false)
@@ -249,33 +251,52 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setRecallOpen(true)
     setRecallLoading(true)
     setRecallAnswer(null)
+    setRecallMoments([])
+    setRecallMomentIndex(0)
     setRecallResolved(null)
     setRecallCorrection('')
     try {
       const response = await fetch('/api/reentry', { method: 'POST' })
       const result = await response.json()
       if (!response.ok) {
-        setRecallAnswer({
+        const fallback = {
           confidence: 'unknown',
           confidenceLabel: 'Not sure',
           answer: "I don't have a note for the last little while.",
           source: 'Tell me, and I will remember it.',
           asksConfirmation: false,
-        })
+        } satisfies RecallAnswer
+        setRecallAnswer(fallback)
+        setRecallMoments([fallback])
         return
       }
-      setRecallAnswer(result)
+      const moments = Array.isArray(result.moments) && result.moments.length > 0
+        ? result.moments as RecallAnswer[]
+        : [result as RecallAnswer]
+      setRecallMoments(moments)
+      setRecallAnswer(moments[0])
     } catch {
-      setRecallAnswer({
+      const fallback = {
         confidence: 'unknown',
         confidenceLabel: 'Not sure',
         answer: "I don't have a note for the last little while.",
         source: 'Tell me, and I will remember it.',
         asksConfirmation: false,
-      })
+      } satisfies RecallAnswer
+      setRecallAnswer(fallback)
+      setRecallMoments([fallback])
     } finally {
       setRecallLoading(false)
     }
+  }
+
+  function showNextRecallMoment() {
+    if (recallMoments.length <= 1) return
+    const nextIndex = (recallMomentIndex + 1) % recallMoments.length
+    setRecallMomentIndex(nextIndex)
+    setRecallAnswer(recallMoments[nextIndex])
+    setRecallResolved(null)
+    setRecallCorrection('')
   }
 
   async function saveRecallCorrection(text: string, type: 'doing_now' | 'did' = 'did') {
@@ -770,6 +791,15 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                       </button>
                     </div>
                   </>
+                )}
+                {recallMoments.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={showNextRecallMoment}
+                    className="mt-6 w-full min-h-11 text-base font-semibold text-sage-600 focus:outline-none focus:ring-2 focus:ring-sage-300 rounded-xl"
+                  >
+                    See another moment ›
+                  </button>
                 )}
               </div>
             ) : null}
