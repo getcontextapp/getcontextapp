@@ -95,12 +95,16 @@ export async function POST() {
       .order('created_at', { ascending: true }),
   ])
 
-  const lookupError = timelineResult.error || smsResult.error || activityResult.error || planResult.error
+  const timelineUnavailable = timelineResult.error?.code === '42P01'
+  if (timelineResult.error && !timelineUnavailable) {
+    console.error('[Reentry] Timeline lookup failed:', timelineResult.error.message)
+  }
+  const lookupError = smsResult.error || activityResult.error || planResult.error
   if (lookupError) {
     return NextResponse.json({ error: lookupError.message }, { status: 500 })
   }
 
-  const timeline = (timelineResult.data ?? []) as TimelineEvent[]
+  const timeline = (timelineUnavailable ? [] : timelineResult.data ?? []) as TimelineEvent[]
   const explicitEvent = timeline.find(event => event.confidence === 'high' && (event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply'))
   const inboundSms = (smsResult.data ?? [])[0]
   const latestActivity = (activityResult.data ?? [])[0]

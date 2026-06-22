@@ -450,7 +450,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               </button>
             </div>
           </div>
-          <h2 className="mt-8 font-serif text-[2.75rem] leading-tight font-semibold text-warm-900">
+          <h2 className="mt-8 font-serif text-display leading-tight font-semibold text-warm-900">
             It's {orientationTime},<br />
             {weekday} {partOfDay}.
           </h2>
@@ -468,12 +468,12 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         <div className="rounded-[20px] border-2 border-cream-300 bg-white px-5 shadow-card">
           <div className="flex items-center gap-3 py-4">
             <span className="w-8 h-8 shrink-0 rounded-full bg-sage-100 text-sage-600 flex items-center justify-center font-semibold" aria-hidden="true">✓</span>
-            <p className="min-w-0 flex-1 font-serif text-xl font-semibold leading-6 text-warm-900 break-words">{recentActivity}</p>
+            <p className="min-w-0 flex-1 text-base font-semibold leading-5 text-warm-900 break-words">{recentActivity}</p>
             {recentActivityTime && <span className="text-sm font-semibold text-warm-400">{recentActivityTime}</span>}
           </div>
           <div className="flex items-center gap-3 border-t border-cream-200 py-4">
             <span className="w-8 h-8 shrink-0 rounded-full bg-cream-200 text-terracotta-600 flex items-center justify-center font-semibold" aria-hidden="true">→</span>
-            <p className="min-w-0 flex-1 font-serif text-xl font-semibold leading-6 text-warm-900 break-words">{nextPlanName}</p>
+            <p className="min-w-0 flex-1 text-base font-semibold leading-5 text-warm-900 break-words">{nextPlanName}</p>
             {nextPlanTime && <span className="text-sm font-semibold text-warm-400">{nextPlanTime}</span>}
           </div>
         </div>
@@ -597,6 +597,63 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           )}
         </div>
 
+        {sortedPlannedActivities.some(item => item.status === 'confirmed') && (
+          <div className="animate-fade-up">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-warm-500 text-sm font-medium">Completed today</p>
+            </div>
+            <div className="space-y-2">
+              {sortedPlannedActivities.filter(item => item.status === 'confirmed').map(item => {
+                const tile = ACTIVITY_TILES.find(t => t.category === item.category)
+                const taskName = item.note?.trim() || item.label
+                const categoryName = tile?.label ?? item.label
+                return (
+                  <div key={item.id} className="rounded-xl border border-sage-200 bg-sage-50 px-4 py-3">
+                    <div className="flex items-start gap-3">
+                      <span
+                        className="w-8 h-8 shrink-0 rounded-full bg-sage-100 border border-sage-200 flex items-center justify-center text-sage-600 font-semibold"
+                        aria-hidden="true"
+                      >
+                        ✓
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-[15px] font-medium leading-5 text-warm-700 whitespace-normal break-words">
+                              {taskName}
+                            </p>
+                            <p className="text-xs leading-5 text-warm-400 mt-1">
+                              {tile?.icon ?? '📌'} {item.category !== 'custom' && `${categoryName} · `}
+                              {formatTaskTiming(item.expected_time, item.expected_period)}
+                            </p>
+                          </div>
+                          <span className="rounded-pill bg-sage-100 border border-sage-200 px-2 py-1 text-[11px] font-medium text-sage-600">
+                            Done
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-sage-200/80">
+                          <button
+                            onClick={() => handlePlanAction(item, 'reopen')}
+                            className="min-h-10 rounded-xl border border-sage-300 bg-white/70 px-4 text-sm font-medium text-warm-600 active:scale-[0.98] transition-all"
+                          >
+                            Undo
+                          </button>
+                          <button
+                            onClick={() => setDeleteCandidate(item)}
+                            className="min-h-10 px-2 text-sm font-medium text-terracotta-700 underline decoration-terracotta-200 underline-offset-4"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
       </div>
 
       {recallOpen && (
@@ -619,7 +676,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             ) : recallResolved === 'yes' ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
                 <p id="recall-title" className="text-xs font-bold uppercase tracking-wide text-sage-600">All caught up</p>
-                <p className="mt-3 font-serif text-2xl font-semibold leading-8 text-warm-900">
+                <p className="mt-3 text-xl font-semibold leading-7 text-warm-900">
                   Good. You're all caught up.
                 </p>
                 <p className="mt-3 text-base font-medium leading-6 text-warm-500">
@@ -635,7 +692,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               </div>
             ) : recallResolved === 'no' ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
-                <p id="recall-title" className="font-serif text-2xl font-semibold leading-8 text-warm-900">Thanks, that helps.</p>
+                <p id="recall-title" className="text-xl font-semibold leading-7 text-warm-900">Thanks, that helps.</p>
                 <label htmlFor="recall-correction" className="mt-4 block text-base font-semibold text-warm-700">
                   What were you doing?
                 </label>
@@ -668,7 +725,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                   <span className="w-2 h-2 rounded-full bg-current" aria-hidden="true" />
                   {recallAnswer.confidenceLabel}
                 </span>
-                <p className="mt-4 font-serif text-2xl font-semibold leading-8 text-warm-900">
+                <p className="mt-4 text-xl font-semibold leading-7 text-warm-900">
                   {recallAnswer.answer}
                 </p>
                 <p className="mt-3 text-base font-medium leading-6 text-warm-500">
