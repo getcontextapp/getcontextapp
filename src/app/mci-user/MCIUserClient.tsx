@@ -422,17 +422,19 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   return (
     <div className="min-h-svh bg-cream-50 pb-8 safe-bottom">
-      <div className="bg-[#FBF5E9] border-b border-cream-200 safe-top">
-        <div className="max-w-lg mx-auto px-5 pt-5 pb-4">
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-2 text-sage-600 font-semibold">
-              <span className="w-7 h-7 rounded-full bg-sage-100 flex items-center justify-center" aria-hidden="true">⌁</span>
-              <span>Context</span>
+      <div className="bg-cream-100 border-b border-cream-200 safe-top">
+        <div className="max-w-lg mx-auto px-5 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-warm-400 text-xs font-medium uppercase tracking-wide">{dateStr}</p>
+              <h1 className="font-serif text-lg font-semibold text-warm-900 leading-tight">
+                {greeting}, {profile.display_name}
+              </h1>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowHousehold(true)}
-                className="w-11 h-11 rounded-full bg-cream-100 flex items-center justify-center text-lg hover:bg-cream-200 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
+                className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
                 title="Household"
                 aria-label="Open household"
               >
@@ -440,20 +442,18 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               </button>
               <button
                 onClick={() => setShowSettings(true)}
-                className="w-11 h-11 rounded-full bg-cream-100 flex items-center justify-center text-lg hover:bg-cream-200 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
+                className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
                 title="Settings"
                 aria-label="Open settings"
               >
-                ⚙
+                ⚙️
               </button>
             </div>
           </div>
-          <p className="text-xl font-semibold text-warm-400">{greeting}, {profile.display_name}</p>
-          <h1 className="mt-1 font-serif text-[2rem] leading-tight font-semibold text-warm-900">
+          <h2 className="mt-8 font-serif text-[2.75rem] leading-tight font-semibold text-warm-900">
             It's {orientationTime},<br />
             {weekday} {partOfDay}.
-          </h1>
-          <p className="sr-only">{dateStr}</p>
+          </h2>
         </div>
       </div>
 
@@ -508,7 +508,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         {/* Today's Plan */}
         <div id="todays-plan" tabIndex={-1} className="animate-fade-up scroll-mt-4 focus:outline-none">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-warm-900 text-lg font-semibold">Today's plan</p>
+            <p className="text-warm-500 text-sm font-medium">Today's plan</p>
             {openPlannedCount > 0 && (
               <span className="text-xs text-warm-400">{openPlannedCount} waiting</span>
             )}
@@ -556,19 +556,19 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                         <button
                           onClick={() => handlePlanAction(item, 'confirm')}
                           disabled={confirmingPlanIds.includes(item.id)}
-                          className="min-h-12 rounded-xl bg-sage-100 text-sage-600 py-2 text-sm font-semibold active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-sage-300 transition-all disabled:opacity-60"
+                          className="rounded-xl bg-warm-700 text-cream-100 py-2 text-sm font-medium active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-sage-300 transition-all disabled:opacity-60"
                         >
-                          {confirmingPlanIds.includes(item.id) ? 'Saving...' : 'Mark done'}
+                          {confirmingPlanIds.includes(item.id) ? 'Saving...' : 'Done'}
                         </button>
                         <button
                           onClick={() => { setMoveCandidate(item); setMoveDate(tomorrowKey); setMoveError(null) }}
-                          className="min-h-12 rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-sage-300 transition-all"
+                          className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-sage-300 transition-all"
                         >
                           Move →
                         </button>
                         <button
                           onClick={() => setOpenMoreId(current => current === item.id ? null : item.id)}
-                          className="min-h-12 rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-sage-300 transition-all"
+                          className="rounded-xl border border-warm-200 text-warm-600 py-2 text-sm font-medium active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-sage-300 transition-all"
                         >
                           More
                         </button>

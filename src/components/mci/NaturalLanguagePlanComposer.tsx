@@ -184,7 +184,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
             aria-expanded={expanded}
           >
             <span className="text-lg" aria-hidden="true">＋</span>
-            <span className="flex-1 text-base font-medium text-warm-600">Tell Context what you're doing or planning...</span>
+            <span className="flex-1 text-base font-medium text-warm-600">Tell Context your plans for today...</span>
             <span className="w-9 h-9 shrink-0 rounded-full bg-warm-700 text-cream-50 flex items-center justify-center text-lg" aria-hidden="true">→</span>
           </button>
         )}
@@ -192,9 +192,9 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
         {expanded && (
           <div className="card p-5 border border-cream-200 animate-fade-up">
             <label htmlFor="natural-plan-input" className="font-serif text-lg font-semibold text-warm-900">
-              What's happening?
+              What would you like to do today?
             </label>
-            <p className="text-sm text-warm-400 mt-1">A plan, what you're doing now, or what you just did.</p>
+            <p className="text-sm text-warm-400 mt-1">You can mention plans, what you're doing now, or what you just did.</p>
             <textarea
               ref={inputRef}
               id="natural-plan-input"
@@ -202,7 +202,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
               onChange={event => setMessage(event.target.value)}
               rows={3}
               maxLength={1000}
-              placeholder="For example: Making lunch, or call my care partner at 4."
+              placeholder="For example: Making lunch, take my medicine after breakfast, or call my care partner at 4."
               className="mt-4 w-full resize-none rounded-xl border border-cream-300 bg-cream-50 px-4 py-3
                          text-base leading-relaxed text-warm-800 placeholder:text-warm-300
                          focus:outline-none focus:ring-2 focus:ring-terracotta-300/60"
