@@ -106,7 +106,7 @@ function safeRepeatRule(value: unknown): RepeatRule {
   return VALID_REPEAT_RULES.includes(value as RepeatRule) ? value as RepeatRule : 'none'
 }
 
-function buildRecallQuestion(evidenceText?: string | null) {
+export function buildRecallQuestion(evidenceText?: string | null) {
   const detail = cleanContextContent(evidenceText ?? 'following your plan')
     .replace(/[?.!]+$/, '')
     .trim()
@@ -779,7 +779,7 @@ export async function generateRecallAnswer(input: RecallAnswerInput): Promise<Re
       confidence: 'unknown',
       confidenceLabel,
       answer: "I don't have a note for the last little while.",
-      source: 'Tell me, and I will remember it.',
+      source: input.sourceText || 'Tell me, and I will remember it.',
       asksConfirmation: false,
     }
   }

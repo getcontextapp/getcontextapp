@@ -3,6 +3,7 @@ import { createServerClient } from '@/lib/supabase-server'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { generateRecallAnswer } from '@/lib/anthropic'
 import { trackEvent } from '@/lib/analytics'
+import { isRecallRequest } from '@/lib/recall-intent'
 import type { PlannedActivity, TimelineEvent } from '@/types'
 
 type RecallInput = Parameters<typeof generateRecallAnswer>[0]
@@ -44,6 +45,30 @@ function getCurrentPlan(plans: PlannedActivity[], timeZone?: string | null) {
     null
 }
 
+function minutesFromLocalTime(value: string, timeZone?: string | null) {
+  const now = new Date()
+  const localTime = now.toLocaleString('en-US', {
+    timeZone: timeZone || undefined,
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  })
+  const [localHourText, localMinuteText] = localTime.split(':')
+  const localMinutes = Number(localHourText) * 60 + Number(localMinuteText)
+  const [hourText, minuteText] = value.split(':')
+  const planMinutes = Number(hourText) * 60 + Number(minuteText)
+  if (!Number.isFinite(localMinutes) || !Number.isFinite(planMinutes)) return Number.POSITIVE_INFINITY
+  return Math.abs(planMinutes - localMinutes)
+}
+
+function getNearbyTimedPlan(plans: PlannedActivity[], timeZone?: string | null) {
+  return plans
+    .filter(item => item.status === 'planned' && item.expected_time)
+    .map(item => ({ item, distance: minutesFromLocalTime(item.expected_time!, timeZone) }))
+    .filter(entry => entry.distance <= 90)
+    .sort((left, right) => left.distance - right.distance)[0]?.item ?? null
+}
+
 function recallPhrase(text: string, fallbackPrefix = '') {
   const value = text.trim().replace(/[?.!]+$/, '')
   const lower = value.toLowerCase()
@@ -68,6 +93,20 @@ function unknownMoment(displayName: string, timeZone?: string | null): RecallInp
     confidence: 'unknown',
     evidenceText: null,
     sourceText: 'Tell me, and I will remember it.',
+  }
+}
+
+function planContextMoment(displayName: string, timeZone?: string | null, currentPlan?: PlannedActivity | null): RecallInput {
+  const planText = currentPlan?.note?.trim() || currentPlan?.label
+  const sourceText = planText
+    ? `I can only see today's plan: ${planText}.`
+    : "I can only see today's plan, not what happened."
+  return {
+    displayName,
+    timeZone,
+    confidence: 'unknown',
+    evidenceText: null,
+    sourceText,
   }
 }
 
@@ -134,10 +173,16 @@ export async function POST() {
   }
 
   const timeline = (timelineUnavailable ? [] : timelineResult.data ?? []) as TimelineEvent[]
-  const explicitEvents = timeline.filter(event => event.confidence === 'high' && (event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply'))
-  const inboundSms = (smsResult.data ?? [])[0]
-  const latestActivity = (activityResult.data ?? [])[0]
-  const currentPlan = getCurrentPlan((planResult.data ?? []) as PlannedActivity[], profile.timezone)
+  const explicitEvents = timeline.filter(event =>
+    event.confidence === 'high' &&
+    (event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply') &&
+    !isRecallRequest(event.text),
+  )
+  const inboundSms = (smsResult.data ?? []).find(message => message.body && !isRecallRequest(String(message.body)))
+  const activities = activityResult.data ?? []
+  const plans = (planResult.data ?? []) as PlannedActivity[]
+  const currentPlan = getCurrentPlan(plans, profile.timezone)
+  const nearbyTimedPlan = getNearbyTimedPlan(plans, profile.timezone)
 
   const moments: RecallInput[] = []
 
@@ -161,29 +206,31 @@ export async function POST() {
     })
   }
 
-  if (latestActivity) {
+  for (const activity of activities.slice(0, 3)) {
     moments.push({
       displayName: profile.display_name,
       timeZone: profile.timezone,
       confidence: 'guess',
-      evidenceText: recallPhrase(latestActivity.note?.trim() || latestActivity.label),
+      evidenceText: recallPhrase(activity.note?.trim() || activity.label),
       sourceText: "I'm not certain. This was only marked done in Context.",
     })
   }
 
-  if (currentPlan) {
+  if (nearbyTimedPlan) {
     moments.push({
       displayName: profile.display_name,
       timeZone: profile.timezone,
       confidence: 'guess',
-      evidenceText: recallPhrase(currentPlan.note?.trim() || currentPlan.label, 'getting ready for '),
-      sourceText: currentPlan.expected_time
-        ? `I'm not certain. This is from your ${formatPlanClock(currentPlan.expected_time)} plan.`
-        : "I'm not certain. This is from today's plan.",
+      evidenceText: recallPhrase(nearbyTimedPlan.note?.trim() || nearbyTimedPlan.label, 'getting ready for '),
+      sourceText: `I'm not certain. This is only near your ${formatPlanClock(nearbyTimedPlan.expected_time!)} plan.`,
     })
   }
 
-  moments.push(unknownMoment(profile.display_name, profile.timezone))
+  moments.push(
+    moments.length > 0
+      ? unknownMoment(profile.display_name, profile.timezone)
+      : planContextMoment(profile.display_name, profile.timezone, currentPlan),
+  )
 
   const uniqueMoments = moments.filter((moment, index, list) =>
     index === list.findIndex(item =>

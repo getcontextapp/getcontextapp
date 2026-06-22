@@ -6,6 +6,7 @@ import { ACTIVITY_TILES } from '@/types'
 import { addDaysToKey, periodForTime } from '@/lib/task-scheduling'
 import { ensureNextOccurrence } from '@/lib/task-scheduling-server'
 import { getLocalDateKey } from '@/lib/dates'
+import { isRecallRequest } from '@/lib/recall-intent'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
 const VALID_CATEGORIES = new Set(ACTIVITY_TILES.map(tile => tile.category))
@@ -159,6 +160,16 @@ export async function POST(request: NextRequest) {
   if (body.action === 'parse') {
     const message = body.message?.trim().slice(0, 1000)
     if (!message) return NextResponse.json({ error: 'Tell Context what you plan to do.' }, { status: 400 })
+
+    if (isRecallRequest(message)) {
+      await trackEvent(supabase, {
+        eventName: 'natural_language_recall_requested',
+        profile,
+        userId: user.id,
+        properties: { raw_length: message.length },
+      })
+      return NextResponse.json({ recall_request: true })
+    }
 
     if (/\b(change|move|rename|edit|repeat|stop repeating)\b/i.test(message)) {
       const todayKey = getLocalDateKey(new Date(), profile.timezone)

@@ -23,9 +23,10 @@ interface Props {
   plannedFor: string
   onSaved: (items: PlannedActivity[]) => void
   onTimelineSaved?: (event: TimelineEvent) => void
+  onRecallRequested?: () => void
 }
 
-export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTimelineSaved }: Props) {
+export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTimelineSaved, onRecallRequested }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [message, setMessage] = useState('')
   const [drafts, setDrafts] = useState<DraftPlan[]>([])
@@ -63,7 +64,14 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
         setError(result.error ?? 'Context could not understand that yet.')
         return
       }
-      if (result.capture) {
+      if (result.recall_request) {
+        setMessage('')
+        setDrafts([])
+        setCapture(null)
+        setModification(null)
+        setExpanded(false)
+        onRecallRequested?.()
+      } else if (result.capture) {
         setCapture(result.capture)
         setModification(null)
         setDrafts([])

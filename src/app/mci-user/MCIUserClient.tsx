@@ -484,6 +484,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           plannedFor={todayKey}
           onSaved={handleNaturalPlansSaved}
           onTimelineSaved={handleTimelineSaved}
+          onRecallRequested={openRecall}
         />
 
         <div className="rounded-[20px] border-2 border-cream-300 bg-white px-5 shadow-card">
