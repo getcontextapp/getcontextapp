@@ -168,6 +168,17 @@ function outcomeKey(role: OutcomeRole, session: OutcomeSession, measureKey: stri
   return `${role}:${session}:${measureKey}`
 }
 
+function isMissingTableError(error: { code?: string; message?: string } | null) {
+  return Boolean(
+    error &&
+    (
+      error.code === '42P01' ||
+      error.code === 'PGRST205' ||
+      error.message?.toLowerCase().includes('study_outcomes')
+    ),
+  )
+}
+
 export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const service = createServiceClient()
   const now = new Date()
@@ -203,7 +214,8 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   if (smsResult.error) throw new Error(smsResult.error.message)
   if (plansResult.error) throw new Error(plansResult.error.message)
   if (activitiesResult.error) throw new Error(activitiesResult.error.message)
-  if (outcomesResult.error && outcomesResult.error.code !== '42P01') throw new Error(outcomesResult.error.message)
+  const outcomesUnavailable = isMissingTableError(outcomesResult.error)
+  if (outcomesResult.error && !outcomesUnavailable) throw new Error(outcomesResult.error.message)
 
   const profiles = (profilesResult.data ?? []) as ProfileRow[]
   const households = (householdsResult.data ?? []) as HouseholdRow[]
@@ -211,7 +223,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const sms = (smsResult.data ?? []) as SmsRow[]
   const plans = (plansResult.data ?? []) as PlanRow[]
   const activities = (activitiesResult.data ?? []) as ActivityRow[]
-  const outcomes = (outcomesResult.error?.code === '42P01' ? [] : outcomesResult.data ?? []) as OutcomeRow[]
+  const outcomes = (outcomesUnavailable ? [] : outcomesResult.data ?? []) as OutcomeRow[]
 
   const includedHouseholds = households.filter(household => !filters.householdId || household.id === filters.householdId)
   const householdIds = new Set(includedHouseholds.map(household => household.id))
