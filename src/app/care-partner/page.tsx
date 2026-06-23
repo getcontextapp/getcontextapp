@@ -5,7 +5,17 @@ import { getLinkedMciProfile } from '@/lib/household-links'
 import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
 import CarePartnerClient from './CarePartnerClient'
 
-export default async function CarePartnerPage() {
+function dashboardSource(value: string | string[] | undefined) {
+  const source = Array.isArray(value) ? value[0] : value
+  return source === 'sms_link' || source === 'home_screen' ? source : 'direct'
+}
+
+export default async function CarePartnerPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const params = await searchParams
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -48,6 +58,7 @@ export default async function CarePartnerPage() {
       mciProfile={linkedProfile}
       initialActivities={activities ?? []}
       initialPlannedActivities={plannedActivities ?? []}
+      dashboardSource={dashboardSource(params?.source)}
     />
   )
 }

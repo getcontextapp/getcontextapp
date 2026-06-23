@@ -10,6 +10,7 @@ create table if not exists sms_messages (
   phone_e164    text not null,
   body          text not null,
   twilio_sid    text,
+  reminder_log_id uuid,
   status        text not null default 'recorded',
   metadata      jsonb not null default '{}'::jsonb,
   created_at    timestamptz not null default now()
@@ -20,6 +21,9 @@ create index if not exists sms_messages_profile_time
 
 create index if not exists sms_messages_household_time
   on sms_messages (household_id, created_at desc);
+
+create index if not exists sms_messages_reminder_log
+  on sms_messages (reminder_log_id);
 
 alter table sms_messages enable row level security;
 
@@ -38,4 +42,3 @@ create policy "household sms messages"
 
 grant select on sms_messages to authenticated;
 grant all on sms_messages to service_role;
-

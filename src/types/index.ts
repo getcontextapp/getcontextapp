@@ -42,7 +42,7 @@ export interface ActivityLog {
   created_at: string
 }
 
-export type PlannedActivityStatus = 'planned' | 'confirmed' | 'not_now' | 'skipped'
+export type PlannedActivityStatus = 'planned' | 'confirmed' | 'not_now' | 'skipped' | 'abandoned'
 export type ExpectedPeriod = 'morning' | 'afternoon' | 'evening' | 'anytime'
 export type RepeatRule = 'none' | 'daily' | 'weekdays' | 'weekly'
 export type PlannedActivitySource = 'manual' | 'sms_ai'
@@ -130,6 +130,7 @@ export interface SmsMessage {
   phone_e164: string
   body: string
   twilio_sid: string | null
+  reminder_log_id: string | null
   status: string
   metadata: Record<string, unknown>
   created_at: string

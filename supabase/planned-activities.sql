@@ -18,7 +18,7 @@ create table if not exists planned_activities (
   moved_from_id              uuid references planned_activities(id) on delete set null,
   planned_for                date not null default current_date,
   status                     text not null default 'planned'
-                             check (status in ('planned', 'confirmed', 'not_now', 'skipped')),
+                             check (status in ('planned', 'confirmed', 'not_now', 'skipped', 'abandoned')),
   confirmed_activity_log_id  uuid references activity_logs(id) on delete set null,
   confirmed_at               timestamptz,
   source                     text not null default 'manual' check (source in ('manual', 'sms_ai')),

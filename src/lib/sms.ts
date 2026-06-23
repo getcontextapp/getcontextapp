@@ -19,6 +19,10 @@ export function getAppUrl() {
 
 export const APP_URL = getAppUrl()
 
+export function dashboardLink(path: '/mci-user' | '/care-partner', source: 'sms_link' | 'direct' | 'home_screen' = 'sms_link') {
+  return `${APP_URL}${path}?source=${source}`
+}
+
 export function normalizePhone(phone: string) {
   const trimmed = phone.trim()
   const digits = trimmed.replace(/\D/g, '')
@@ -58,11 +62,12 @@ export async function logSmsMessage(
     phoneE164: string
     body: string
     twilioSid?: string | null
+    reminderLogId?: string | null
     status?: string | null
     metadata?: Record<string, unknown>
   },
 ) {
-  const { error } = await supabase.from('sms_messages').insert({
+  const row: Record<string, unknown> = {
     household_id: input.householdId ?? null,
     profile_id: input.profileId ?? null,
     direction: input.direction,
@@ -72,9 +77,17 @@ export async function logSmsMessage(
     twilio_sid: input.twilioSid ?? null,
     status: input.status ?? 'recorded',
     metadata: input.metadata ?? {},
-  })
+  }
+  if (input.reminderLogId) row.reminder_log_id = input.reminderLogId
 
-  if (error) console.error('[SMS] Log failed:', error.message)
+  const { error } = await supabase.from('sms_messages').insert(row)
+  if (error?.code === '42703' && 'reminder_log_id' in row) {
+    delete row.reminder_log_id
+    const { error: retryError } = await supabase.from('sms_messages').insert(row)
+    if (retryError) console.error('[SMS] Log failed:', retryError.message)
+  } else if (error) {
+    console.error('[SMS] Log failed:', error.message)
+  }
 
   if (input.profileId || input.householdId) {
     const normalizedPhone = normalizePhone(input.phoneE164)
@@ -103,7 +116,7 @@ export function buildMorningPrompt(displayName: string) {
   return [
     `Good morning, ${displayName}. What are a few things you want to do today?`,
     ``,
-    `You can reply here, or open Context: ${APP_URL}/mci-user`,
+    `You can reply here, or open Context: ${dashboardLink('/mci-user')}`,
   ].join('\n')
 }
 
@@ -112,7 +125,7 @@ export function buildWelcomeMessage(displayName: string, role: 'mci_user' | 'car
     return [
       `Welcome to Context, ${displayName}.`,
       `This is the Context text number. We will send gentle household updates and daily summaries here.`,
-      `Your care partner dashboard: ${APP_URL}/care-partner`,
+      `Your care partner dashboard: ${dashboardLink('/care-partner')}`,
     ].join('\n\n')
   }
 
@@ -120,27 +133,27 @@ export function buildWelcomeMessage(displayName: string, role: 'mci_user' | 'car
     `Welcome to Context, ${displayName}. You can text this number naturally whenever you like.`,
     `Try: "Walk, call Mary, dinner" to add today's plans.`,
     `Text DONE to choose finished tasks, UNDO to reopen one, DELETE to remove one safely, STATUS to see what is waiting, or HELP for this guide.`,
-    `Your dashboard: ${APP_URL}/mci-user`,
+    `Your dashboard: ${dashboardLink('/mci-user')}`,
   ].join('\n\n')
 }
 
 export function buildMorningFollowup(displayName: string) {
   return [
     `Just checking in, ${displayName}.`,
-    `If it helps, reply with one thing you want to do today, or open Context: ${APP_URL}/mci-user`,
+    `If it helps, reply with one thing you want to do today, or open Context: ${dashboardLink('/mci-user')}`,
   ].join('\n')
 }
 
 export function buildCarePartnerNoResponse(memberName: string) {
   return [
     `Context has not received today's plan from ${memberName} yet.`,
-    `You can check in when convenient or view Context: ${APP_URL}/care-partner`,
+    `You can check in when convenient or view Context: ${dashboardLink('/care-partner')}`,
   ].join('\n')
 }
 
 export function buildPlanSavedReply(count: number) {
   const itemText = count === 1 ? '1 item' : `${count} items`
-  return `I added ${itemText} to today's Context plan. Open it here: ${APP_URL}/mci-user`
+  return `I added ${itemText} to today's Context plan. Open it here: ${dashboardLink('/mci-user')}`
 }
 
 export function twiml(message: string) {

@@ -5,7 +5,17 @@ import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
 import { getHouseholdMembers } from '@/lib/household-links'
 import MCIUserClient from './MCIUserClient'
 
-export default async function MCIUserPage() {
+function dashboardSource(value: string | string[] | undefined) {
+  const source = Array.isArray(value) ? value[0] : value
+  return source === 'sms_link' || source === 'home_screen' ? source : 'direct'
+}
+
+export default async function MCIUserPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const params = await searchParams
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -67,6 +77,7 @@ export default async function MCIUserPage() {
       initialTimelineEvents={timelineEvents ?? []}
       carePartner={carePartner}
       household={household ?? null}
+      dashboardSource={dashboardSource(params?.source)}
     />
   )
 }

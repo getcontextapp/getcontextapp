@@ -19,6 +19,7 @@ interface Props {
   initialTimelineEvents: TimelineEvent[]
   carePartner: Profile | null
   household: { join_code: string; name: string } | null
+  dashboardSource: 'sms_link' | 'direct' | 'home_screen'
 }
 
 const PERIOD_ORDER: Record<string, number> = {
@@ -36,7 +37,7 @@ type RecallAnswer = {
   asksConfirmation: boolean
 }
 
-export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, carePartner, household }: Props) {
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, carePartner, household, dashboardSource }: Props) {
   const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
@@ -131,6 +132,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     trackClientEvent('mci_dashboard_viewed', {
       activity_count: initialActivities.length,
       planned_activity_count: initialPlannedActivities.length,
+      source: dashboardSource,
     })
 
     const channel = supabase
@@ -230,7 +232,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       window.clearInterval(refreshTimer)
       window.clearInterval(clockTimer)
     }
-  }, [profile.household_id, profile.timezone, initialActivities.length, initialPlannedActivities.length, supabase, refreshDashboardData, scheduleContextCardRefresh])
+  }, [profile.household_id, profile.timezone, initialActivities.length, initialPlannedActivities.length, dashboardSource, supabase, refreshDashboardData, scheduleContextCardRefresh])
 
   const handleNaturalPlansSaved = useCallback((items: PlannedActivity[]) => {
     setPlannedActivities(prev => {

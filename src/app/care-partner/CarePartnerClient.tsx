@@ -14,6 +14,7 @@ interface Props {
   mciProfile: Profile | null
   initialActivities: ActivityLog[]
   initialPlannedActivities: PlannedActivity[]
+  dashboardSource: 'sms_link' | 'direct' | 'home_screen'
 }
 
 type ConfirmedEntry = {
@@ -88,7 +89,7 @@ const PERIOD_ORDER: Record<string, number> = {
 
 const SHOW_SMS_TEST_TOOLS = process.env.NEXT_PUBLIC_SHOW_SMS_TEST_TOOLS === 'true'
 
-export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities }: Props) {
+export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities, dashboardSource }: Props) {
   const supabase = createClient()
   const [activities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
@@ -112,8 +113,9 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
       activity_count: initialActivities.length,
       planned_activity_count: initialPlannedActivities.length,
       has_mci_profile: Boolean(mciProfile),
+      source: dashboardSource,
     })
-  }, [initialActivities.length, initialPlannedActivities.length, mciProfile])
+  }, [initialActivities.length, initialPlannedActivities.length, mciProfile, dashboardSource])
 
   const todayKey = getLocalDateKey(new Date(), careProfile.timezone)
   const todayConfirmedEntries = confirmedEntries

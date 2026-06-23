@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { parseSmsPlanReply } from '@/lib/anthropic'
 import { getLocalDateKey } from '@/lib/dates'
-import { buildPlanSavedReply, logSmsMessage, normalizePhone, twiml, APP_URL } from '@/lib/sms'
+import { buildPlanSavedReply, dashboardLink, logSmsMessage, normalizePhone, twiml, APP_URL } from '@/lib/sms'
 import { getSmsProfileMatch } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 import { addDaysToKey } from '@/lib/task-scheduling'
@@ -30,7 +30,7 @@ const UNKNOWN_NUMBER_REPLY = [
 const CARE_PARTNER_LIMIT_REPLY = [
   'This number is registered as a Context care partner.',
   'Care partner SMS is limited to updates and summaries right now. Activity confirmations must come from the MCI member.',
-  `Open your care partner view here: ${APP_URL}/care-partner`,
+  `Open your care partner view here: ${dashboardLink('/care-partner')}`,
 ].join('\n')
 
 async function getPendingItems(supabase: ReturnType<typeof createServiceClient>, profile: any) {
@@ -67,6 +67,25 @@ async function getRecentConversation(supabase: ReturnType<typeof createServiceCl
       direction: message.direction as 'inbound' | 'outbound',
       body: String(message.body ?? '').slice(0, 500),
     }))
+}
+
+async function getPromptingReminderLogId(supabase: ReturnType<typeof createServiceClient>, profileId: string) {
+  const since = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from('reminder_logs')
+    .select('id')
+    .eq('profile_id', profileId)
+    .gte('sent_at', since)
+    .order('sent_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[SMS] Reminder lookup failed:', error.message)
+    return null
+  }
+
+  return data?.id ?? null
 }
 
 function pendingItemLabel(item: any) {
@@ -127,13 +146,13 @@ function buildPendingChoiceReply(pendingItems: any[], actionLabel = 'finished') 
     `I see a few things waiting:`,
     ...lines,
     ``,
-    `Reply with the number you ${actionLabel}, or open Context: ${APP_URL}/mci-user`,
+    `Reply with the number you ${actionLabel}, or open Context: ${dashboardLink('/mci-user')}`,
   ].join('\n')
 }
 
 function buildPendingStatusReply(pendingItems: any[]) {
   if (pendingItems.length === 0) {
-    return `I do not see anything waiting in today's plan. You can open Context here: ${APP_URL}/mci-user`
+    return `I do not see anything waiting in today's plan. You can open Context here: ${dashboardLink('/mci-user')}`
   }
 
   return buildPendingChoiceReply(pendingItems)
@@ -293,7 +312,7 @@ async function reopenMostRecentConfirmedItem(supabase: ReturnType<typeof createS
     .limit(6)
 
   if (!completedItems || completedItems.length === 0) {
-    return `I do not see a completed planned item to undo today. You can open Context here: ${APP_URL}/mci-user`
+    return `I do not see a completed planned item to undo today. You can open Context here: ${dashboardLink('/mci-user')}`
   }
 
   return buildCompletedChoiceReply(completedItems)
@@ -429,7 +448,7 @@ async function deletePlannedItems(
 async function handleDeleteRequest(supabase: ReturnType<typeof createServiceClient>, profile: any) {
   const { data: items } = await getTodaysPlannedItems(supabase, profile)
   if (!items || items.length === 0) {
-    return `I do not see any tasks in today's Context plan. You can open Context here: ${APP_URL}/mci-user`
+    return `I do not see any tasks in today's Context plan. You can open Context here: ${dashboardLink('/mci-user')}`
   }
 
     return buildDeleteChoiceReply(items.filter(Boolean))
@@ -535,7 +554,7 @@ async function handleNumberedSelection(
 
   const promptItems = await loadPromptItems(supabase, profile, prompt.itemIds)
   if (promptItems.every(item => !item)) {
-    return `I do not see anything waiting in today's plan. You can open Context here: ${APP_URL}/mci-user`
+    return `I do not see anything waiting in today's plan. You can open Context here: ${dashboardLink('/mci-user')}`
   }
 
   const selectedIndexes = selections === 'all'
@@ -586,7 +605,7 @@ async function handleConfirmation(supabase: ReturnType<typeof createServiceClien
   const { data: pendingItems } = await getPendingItems(supabase, profile)
 
   if (!pendingItems || pendingItems.length === 0) {
-    return `I do not see anything waiting in today's plan. You can open Context here: ${APP_URL}/mci-user`
+    return `I do not see anything waiting in today's plan. You can open Context here: ${dashboardLink('/mci-user')}`
   }
 
   if (pendingItems.length > 1) {
@@ -624,7 +643,7 @@ function buildSmsHelpReply() {
     `UNDO: move completed tasks back.`,
     `DELETE: safely remove tasks.`,
     `STATUS: see what is waiting.`,
-    `Dashboard: ${APP_URL}/mci-user`,
+    `Dashboard: ${dashboardLink('/mci-user')}`,
   ].join('\n')
 }
 
@@ -668,6 +687,8 @@ export async function POST(request: NextRequest) {
     return xmlResponse(UNKNOWN_NUMBER_REPLY)
   }
 
+  const promptingReminderLogId = await getPromptingReminderLogId(supabase, profile.id)
+
   await logSmsMessage(supabase, {
     householdId: profile.household_id,
     profileId: profile.id,
@@ -676,6 +697,7 @@ export async function POST(request: NextRequest) {
     phoneE164: from,
     body,
     twilioSid: messageSid,
+    reminderLogId: promptingReminderLogId,
     status: 'received',
   })
 
@@ -838,7 +860,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[SMS] Planned activity action failed:', error)
     return sendActionReply(
-      `I could not update that item safely. Nothing else was changed. Please open Context: ${APP_URL}/mci-user`,
+      `I could not update that item safely. Nothing else was changed. Please open Context: ${dashboardLink('/mci-user')}`,
       { action_error: error instanceof Error ? error.message : 'unknown' },
     )
   }
@@ -1001,7 +1023,7 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       console.error('[SMS] Completed activity insert failed:', error.message)
-      return xmlResponse(`I had trouble saving that. Please open Context here: ${APP_URL}/mci-user`)
+      return xmlResponse(`I had trouble saving that. Please open Context here: ${dashboardLink('/mci-user')}`)
     }
 
     await trackEvent(supabase, {
@@ -1070,7 +1092,7 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     console.error('[SMS] Planned insert failed:', error.message)
-    return xmlResponse(`I had trouble saving that. Please open Context here: ${APP_URL}/mci-user`)
+    return xmlResponse(`I had trouble saving that. Please open Context here: ${dashboardLink('/mci-user')}`)
   }
 
   for (const item of (plannedItems ?? []).filter(item => item.repeat_rule !== 'none')) {

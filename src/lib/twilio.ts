@@ -7,6 +7,10 @@ const fromNumber = process.env.TWILIO_PHONE_NUMBER!  // E.164, e.g. +18005550100
 
 let _client: ReturnType<typeof twilio> | null = null
 
+function sourcedDashboardUrl(appUrl: string, path: '/mci-user' | '/care-partner') {
+  return `${appUrl}${path}?source=sms_link`
+}
+
 function getClient() {
   if (!_client) _client = twilio(accountSid, authToken)
   return _client
@@ -64,7 +68,7 @@ export function buildPendingPlanReminderMessage(
     `Still waiting in today's plan:`,
     ...lines,
     ``,
-    `Tap to confirm or mark later: ${appUrl}/mci-user`,
+    `Tap to confirm or mark later: ${sourcedDashboardUrl(appUrl, '/mci-user')}`,
   ].join('\n')
 }
 
@@ -92,7 +96,7 @@ export function buildDailySummaryMessage(
       ? 'No activities were logged today.'
       : `${activities.length} ${activities.length === 1 ? 'activity' : 'activities'} logged in total.`,
     ``,
-    `Full view: ${appUrl}/care-partner`,
+    `Full view: ${sourcedDashboardUrl(appUrl, '/care-partner')}`,
   ].join('\n')
 }
 
@@ -118,7 +122,7 @@ export function buildPersonalDailySummaryMessage(
     activities.length === 0 ? 'Nothing was confirmed today.' : '',
     pendingCount > 0 ? `${pendingCount} item${pendingCount !== 1 ? 's' : ''} still waiting in today's plan.` : `Everything in today's plan is settled.`,
     ``,
-    `Open Context: ${appUrl}/mci-user`,
+    `Open Context: ${sourcedDashboardUrl(appUrl, '/mci-user')}`,
   ].filter(Boolean).join('\n')
 }
 

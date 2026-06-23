@@ -1,8 +1,23 @@
-import type { ReactNode } from 'react'
+'use client'
+
+import { useState } from 'react'
 import Link from 'next/link'
-import type { AnalyticsFilters } from '@/lib/pilot-analytics'
+import type { AnalyticsFilters, OutcomeRole, OutcomeSession } from '@/lib/pilot-analytics'
 
 type AnalyticsData = Awaited<ReturnType<typeof import('@/lib/pilot-analytics').loadPilotAnalytics>>
+type OutcomeRow = AnalyticsData['outcomeRows'][number]
+type OutcomeScore = OutcomeRow['scores'][number]
+
+type OutcomeEdit = {
+  householdId: string
+  householdName: string
+  profileId: string | null
+  role: OutcomeRole
+  session: OutcomeSession
+  measureKey: string
+  label: string
+  score: number | null
+} | null
 
 function formatDate(value: string | null) {
   if (!value) return 'Not yet'
@@ -14,70 +29,20 @@ function formatDate(value: string | null) {
   })
 }
 
-function formatMinutes(value: number) {
-  if (!value) return 'No replies yet'
-  if (value < 60) return `${value} min`
-  return `${(value / 60).toFixed(1)} hr`
+function formatHours(value: number) {
+  if (value < 1) return 'Less than 1 hour'
+  if (value === 1) return '1 hour'
+  return `${value} hours`
 }
 
-function Card({ label, value, note }: { label: string; value: ReactNode; note?: string }) {
-  return (
-    <div className="rounded-2xl border border-cream-200 bg-white p-5 shadow-card">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-warm-400">{label}</p>
-      <p className="mt-2 font-serif text-3xl font-semibold text-warm-900">{value}</p>
-      {note && <p className="mt-1 text-xs text-warm-400">{note}</p>}
-    </div>
-  )
+function phaseLabel(value: string) {
+  return value[0].toUpperCase() + value.slice(1)
 }
 
-function LineChart({ data }: { data: AnalyticsData['daily'] }) {
-  const width = 760
-  const height = 230
-  const padding = 30
-  const max = Math.max(1, ...data.flatMap(day => [day.events, day.inbound, day.completions]))
-  const points = (key: 'events' | 'inbound' | 'completions') => data.map((day, index) => {
-    const x = padding + (index / Math.max(1, data.length - 1)) * (width - padding * 2)
-    const y = height - padding - (day[key] / max) * (height - padding * 2)
-    return `${x},${y}`
-  }).join(' ')
-
-  return (
-    <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[680px] w-full" role="img" aria-label="Daily engagement trend">
-        {[0, .25, .5, .75, 1].map(tick => (
-          <line key={tick} x1={padding} x2={width - padding} y1={height - padding - tick * (height - padding * 2)}
-            y2={height - padding - tick * (height - padding * 2)} stroke="#E8D5B4" strokeWidth="1" />
-        ))}
-        <polyline points={points('events')} fill="none" stroke="#5A7A4A" strokeWidth="4" strokeLinejoin="round" />
-        <polyline points={points('inbound')} fill="none" stroke="#C47448" strokeWidth="4" strokeLinejoin="round" />
-        <polyline points={points('completions')} fill="none" stroke="#887E6E" strokeWidth="4" strokeLinejoin="round" />
-      </svg>
-      <div className="flex flex-wrap gap-5 text-xs text-warm-500">
-        <span><b className="text-sage-500">●</b> Product events</span>
-        <span><b className="text-terracotta-400">●</b> SMS replies</span>
-        <span><b className="text-warm-400">●</b> Task completions</span>
-      </div>
-    </div>
-  )
-}
-
-function BarList({ rows }: { rows: AnalyticsData['features'] }) {
-  const max = Math.max(1, ...rows.map(row => row.count))
-  return (
-    <div className="space-y-3">
-      {rows.map(row => (
-        <div key={row.name}>
-          <div className="mb-1 flex justify-between gap-3 text-xs">
-            <span className="truncate text-warm-600">{row.name.replaceAll('_', ' ')}</span>
-            <span className="font-semibold text-warm-800">{row.count}</span>
-          </div>
-          <div className="h-2 rounded-full bg-cream-100">
-            <div className="h-2 rounded-full bg-sage-400" style={{ width: `${Math.max(3, row.count / max * 100)}%` }} />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
+function flagClass(flag: string) {
+  if (flag === 'red') return 'bg-terracotta-100 text-terracotta-700 border-terracotta-200'
+  if (flag === 'amber') return 'bg-cream-200 text-warm-700 border-cream-300'
+  return 'bg-sage-100 text-sage-700 border-sage-200'
 }
 
 function exportUrl(dataset: string, filters: AnalyticsFilters) {
@@ -90,18 +55,288 @@ function exportUrl(dataset: string, filters: AnalyticsFilters) {
   return `/api/admin/analytics/export?${params}`
 }
 
-export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
-  const { kpis } = data
+function DyadHealthPanel({ data }: { data: AnalyticsData }) {
+  return (
+    <section>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="font-serif text-2xl font-semibold">Dyad health</h2>
+          <p className="text-sm text-warm-500">One card per household, centered on study status and silence risk.</p>
+        </div>
+        <a className="text-sm font-semibold text-terracotta-600 underline" href={exportUrl('dyads', data.filters)}>Export CSV</a>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        {data.dyads.map(dyad => (
+          <article key={dyad.id} className="rounded-2xl border border-cream-200 bg-white p-5 shadow-card">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-serif text-xl font-semibold text-warm-900">{dyad.name}</h3>
+                <p className="mt-1 text-sm text-warm-500">{dyad.mciName} + {dyad.cpName}</p>
+              </div>
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${flagClass(dyad.statusFlag)}`}>
+                {dyad.statusFlag}
+              </span>
+            </div>
+            <dl className="mt-5 grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-warm-400">Study day</dt>
+                <dd className="mt-1 font-semibold">{dyad.daysSinceOnboarding}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-warm-400">Phase</dt>
+                <dd className="mt-1 font-semibold">{phaseLabel(dyad.studyPhase)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-warm-400">MCI last active</dt>
+                <dd className="mt-1">{formatDate(dyad.mciLastActive)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-warm-400">CP last active</dt>
+                <dd className="mt-1">{formatDate(dyad.cpLastActive)}</dd>
+              </div>
+              <div className="col-span-2">
+                <dt className="text-xs font-semibold uppercase tracking-wide text-warm-400">MCI SMS response rate</dt>
+                <dd className="mt-2 flex items-center gap-3">
+                  <span className="font-serif text-2xl font-semibold">{dyad.mciSmsResponseRate}%</span>
+                  <span className="h-2 flex-1 rounded-full bg-cream-100">
+                    <span className="block h-2 rounded-full bg-sage-500" style={{ width: `${dyad.mciSmsResponseRate}%` }} />
+                  </span>
+                </dd>
+              </div>
+            </dl>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function OutcomeCell({
+  row,
+  score,
+  session,
+  onEdit,
+}: {
+  row: OutcomeRow
+  score: OutcomeScore
+  session: OutcomeSession
+  onEdit: (edit: NonNullable<OutcomeEdit>) => void
+}) {
+  const value = session === 'pre' ? score.pre : score.post
+  const profileId = score.role === 'mci' ? row.mciProfileId : row.cpProfileId
+
+  return (
+    <button
+      type="button"
+      onClick={() => onEdit({
+        householdId: row.householdId,
+        householdName: row.householdName,
+        profileId,
+        role: score.role,
+        session,
+        measureKey: score.key,
+        label: score.label,
+        score: value,
+      })}
+      className="min-h-9 rounded-lg border border-cream-200 bg-cream-50 px-2 text-sm font-semibold text-warm-800 hover:bg-white focus:outline-none focus:ring-2 focus:ring-sage-300"
+    >
+      {value ?? 'Enter'}
+    </button>
+  )
+}
+
+function OutcomeScoresPanel({ data, onSaved }: { data: AnalyticsData; onSaved: (row: OutcomeRow) => void }) {
+  const [edit, setEdit] = useState<OutcomeEdit>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function saveScore(score: number) {
+    if (!edit) return
+    setSaving(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/admin/analytics/outcomes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...edit, score }),
+      })
+      const result = await response.json()
+      if (!response.ok) {
+        setError(result.error ?? 'Could not save score.')
+        return
+      }
+      onSaved(result.row)
+      setEdit(null)
+    } catch {
+      setError('Could not connect. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="rounded-2xl border border-cream-200 bg-white p-5 shadow-card">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="font-serif text-xl font-semibold">Outcome scores</h2>
+          <p className="text-xs text-warm-400">Manual pre and post scores. Delta is post minus pre.</p>
+        </div>
+        <a className="text-sm font-semibold text-terracotta-600 underline" href={exportUrl('outcomes', data.filters)}>Export CSV</a>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1200px] text-left text-sm">
+          <thead className="text-xs uppercase tracking-wide text-warm-400">
+            <tr>
+              <th className="pb-3">Dyad</th>
+              <th className="pb-3">Phase</th>
+              {data.outcomeMeasures.map(measure => (
+                <th key={`${measure.role}-${measure.key}`} className="pb-3">{measure.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.outcomeRows.map(row => (
+              <tr key={row.householdId} className="border-t border-cream-100 align-top">
+                <td className="py-3 font-semibold">{row.householdName}</td>
+                <td className="py-3">{phaseLabel(row.studyPhase)}</td>
+                {row.scores.map(score => (
+                  <td key={`${score.role}-${score.key}`} className="py-3 pr-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-warm-400">Pre</p>
+                        <OutcomeCell row={row} score={score} session="pre" onEdit={setEdit} />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-warm-400">Post</p>
+                        <OutcomeCell row={row} score={score} session="post" onEdit={setEdit} />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-warm-400">Delta</p>
+                        <span className="flex min-h-9 items-center justify-center rounded-lg bg-white px-2 text-sm font-semibold text-warm-700">
+                          {score.delta === null ? '-' : score.delta > 0 ? `+${score.delta}` : score.delta}
+                        </span>
+                      </div>
+                    </div>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {edit && (
+        <div className="fixed inset-0 z-50 flex items-end bg-warm-900/35 px-4 py-6 sm:items-center" role="dialog" aria-modal="true">
+          <div className="mx-auto w-full max-w-md rounded-2xl border border-cream-200 bg-cream-50 p-5 shadow-float">
+            <h3 className="font-serif text-xl font-semibold">Enter score</h3>
+            <p className="mt-1 text-sm text-warm-500">{edit.householdName}: {edit.label}, {edit.session}</p>
+            <div className="mt-5 grid grid-cols-5 gap-2">
+              {[1, 2, 3, 4, 5].map(score => (
+                <button
+                  key={score}
+                  type="button"
+                  onClick={() => saveScore(score)}
+                  disabled={saving}
+                  className={`min-h-12 rounded-xl border text-base font-semibold focus:outline-none focus:ring-2 focus:ring-sage-300 ${
+                    edit.score === score ? 'border-sage-500 bg-sage-100 text-sage-800' : 'border-cream-300 bg-white text-warm-800'
+                  }`}
+                >
+                  {score}
+                </button>
+              ))}
+            </div>
+            {error && <p className="mt-3 text-sm text-terracotta-700">{error}</p>}
+            <button type="button" onClick={() => setEdit(null)} className="mt-5 min-h-11 w-full rounded-xl border border-cream-300 bg-white text-sm font-semibold text-warm-600">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function StudyArcTimeline({ data }: { data: AnalyticsData }) {
+  const markers = new Set([2, 5, 10, 14, 15])
+  const dotTypes = [
+    ['planLogged', 'bg-sage-500', 'Plan logged'],
+    ['planCompleted', 'bg-warm-500', 'Plan completed'],
+    ['smsReplied', 'bg-terracotta-500', 'SMS replied'],
+    ['contextViewed', 'bg-cream-500', 'Context viewed'],
+  ] as const
+
+  return (
+    <section className="rounded-2xl border border-cream-200 bg-white p-5 shadow-card">
+      <h2 className="font-serif text-xl font-semibold">Study arc timeline</h2>
+      <p className="mb-5 text-xs text-warm-400">Days 1 to 28 from onboarding. Markers show days 2, 5, 10, 14, and quiet period start on day 15.</p>
+      <div className="space-y-5 overflow-x-auto">
+        {data.studyArc.map(row => (
+          <div key={row.householdId} className="min-w-[900px]">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold">{row.householdName}</p>
+              <p className="text-xs text-warm-400">{phaseLabel(row.studyPhase)}</p>
+            </div>
+            <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(28, minmax(0, 1fr))' }}>
+              {row.days.map(day => (
+                <div key={day.day} className={`relative min-h-14 rounded-lg border px-1 py-1 ${markers.has(day.day) ? 'border-warm-400 bg-cream-100' : 'border-cream-100 bg-cream-50'}`}>
+                  <p className="text-[10px] font-semibold text-warm-400">{day.day}</p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {dotTypes.map(([key, color, label]) => day[key] > 0 && (
+                      <span key={key} title={`${label}: ${day[key]}`} className={`h-2.5 w-2.5 rounded-full ${color}`} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex flex-wrap gap-4 text-xs text-warm-500">
+        {dotTypes.map(([, color, label]) => <span key={label}><b className={`${color} inline-block h-2.5 w-2.5 rounded-full`} /> {label}</span>)}
+      </div>
+    </section>
+  )
+}
+
+function BarList({ rows }: { rows: AnalyticsData['features'] }) {
+  const max = Math.max(1, ...rows.map(row => row.count))
+  return (
+    <div className="space-y-3">
+      {rows.length === 0 && <p className="text-sm text-warm-400">No study-facing events in this period.</p>}
+      {rows.map(row => (
+        <div key={row.name}>
+          <div className="mb-1 flex justify-between gap-3 text-xs">
+            <span className="truncate text-warm-600">{row.label}</span>
+            <span className="font-semibold text-warm-800">{row.count}</span>
+          </div>
+          <div className="h-2 rounded-full bg-cream-100">
+            <div className="h-2 rounded-full bg-sage-400" style={{ width: `${Math.max(3, row.count / max * 100)}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export default function AnalyticsDashboard({ data: initialData }: { data: AnalyticsData }) {
+  const [data, setData] = useState(initialData)
+
+  function updateOutcomeRow(row: OutcomeRow) {
+    setData(current => ({
+      ...current,
+      outcomeRows: current.outcomeRows.map(existing => existing.householdId === row.householdId ? row : existing),
+    }))
+  }
 
   return (
     <div className="min-h-svh bg-cream-50 text-warm-900">
       <header className="border-b border-cream-200 bg-warm-900 text-cream-50">
         <div className="mx-auto max-w-7xl px-5 py-7">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cream-400">Context pilot intelligence</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cream-400">Context study monitoring</p>
           <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <h1 className="font-serif text-3xl font-semibold">Engagement & SMS Analytics</h1>
-              <p className="mt-1 text-sm text-cream-400">Live product usage, retention, response behavior, and participant journeys.</p>
+              <h1 className="font-serif text-3xl font-semibold">Dyad Study Console</h1>
+              <p className="mt-1 text-sm text-cream-400">Dyad health, study arc activity, outcomes, and operational silence flags.</p>
             </div>
             <Link href="/" className="rounded-xl border border-cream-400/40 px-4 py-2 text-sm hover:bg-white/10">Back to Context</Link>
           </div>
@@ -109,7 +344,21 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-8 px-5 py-7">
-        <form className="grid gap-3 rounded-2xl border border-cream-200 bg-white p-4 shadow-card md:grid-cols-[1fr_1fr_1fr_auto]">
+        {data.silentDyads.length > 0 && (
+          <section className="rounded-2xl border border-terracotta-200 bg-terracotta-50 p-5 shadow-card">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-terracotta-700">Silent dyad alert</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {data.silentDyads.map(dyad => (
+                <div key={dyad.id} className="rounded-xl bg-white px-4 py-3 text-sm">
+                  <span className="font-semibold">{dyad.name}</span>
+                  <span className="text-warm-500"> has had no activity for {formatHours(dyad.silentHours)}.</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <form className="grid gap-3 rounded-2xl border border-cream-200 bg-white p-4 shadow-card md:grid-cols-[1fr_1fr_auto]">
           <label className="text-xs font-semibold uppercase tracking-wide text-warm-400">
             Period
             <select name="days" defaultValue={data.filters.days} className="mt-1 block w-full rounded-xl border border-cream-300 bg-cream-50 px-3 py-2 text-sm text-warm-800">
@@ -121,86 +370,34 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
             </select>
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-warm-400">
-            Household
+            Dyad
             <select name="household" defaultValue={data.filters.householdId} className="mt-1 block w-full rounded-xl border border-cream-300 bg-cream-50 px-3 py-2 text-sm text-warm-800">
-              <option value="">All households</option>
+              <option value="">All dyads</option>
               {data.households.map(household => <option key={household.id} value={household.id}>{household.name}</option>)}
-            </select>
-          </label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-warm-400">
-            Role
-            <select name="role" defaultValue={data.filters.role} className="mt-1 block w-full rounded-xl border border-cream-300 bg-cream-50 px-3 py-2 text-sm text-warm-800">
-              <option value="">All roles</option>
-              <option value="mci_user">MCI members</option>
-              <option value="care_partner">Care partners</option>
             </select>
           </label>
           <button className="self-end rounded-xl bg-warm-800 px-5 py-2.5 text-sm font-semibold text-white hover:bg-warm-900">Apply filters</button>
         </form>
 
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card label="Participants" value={kpis.profiles} note={`${kpis.households} connected households`} />
-          <Card label="Active users" value={kpis.activeUsers} note={`${kpis.activationRate}% household activation`} />
-          <Card label="Task completion" value={`${kpis.completionRate}%`} note={`${kpis.plans} plans · ${kpis.activities} activity logs`} />
-          <Card label="Prompt response" value={`${kpis.promptResponseRate}%`} note={`Median ${formatMinutes(kpis.medianResponseMinutes)}`} />
-          <Card label="Outbound SMS" value={kpis.outboundSms} note={`${kpis.smsFailureRate}% recorded failed`} />
-          <Card label="SMS replies" value={kpis.inboundSms} note={`Average ${formatMinutes(kpis.averageResponseMinutes)}`} />
-          {data.roleSummary.map(row => (
-            <Card key={row.role} label={row.role === 'mci_user' ? 'MCI engagement' : 'Care partner engagement'}
-              value={row.events} note={`${row.active}/${row.profiles} active · ${row.inboundSms} replies`} />
-          ))}
-        </section>
+        <DyadHealthPanel data={data} />
+        <OutcomeScoresPanel data={data} onSaved={updateOutcomeRow} />
+        <StudyArcTimeline data={data} />
 
-        <section className="grid gap-5 lg:grid-cols-[1.6fr_1fr]">
-          <div className="rounded-2xl border border-cream-200 bg-white p-5 shadow-card">
-            <h2 className="font-serif text-xl font-semibold">Engagement trend</h2>
-            <p className="mb-5 text-xs text-warm-400">Daily product events, participant SMS replies, and completed plans.</p>
-            <LineChart data={data.daily} />
-          </div>
-          <div className="rounded-2xl border border-cream-200 bg-white p-5 shadow-card">
-            <h2 className="font-serif text-xl font-semibold">Feature adoption</h2>
-            <p className="mb-5 text-xs text-warm-400">Most frequent tracked actions in the selected period.</p>
-            <BarList rows={data.features} />
-          </div>
+        <section className="rounded-2xl border border-cream-200 bg-white p-5 shadow-card">
+          <h2 className="font-serif text-xl font-semibold">Study activity adoption</h2>
+          <p className="mb-5 text-xs text-warm-400">Study-facing tracked actions in the selected period.</p>
+          <BarList rows={data.features} />
         </section>
 
         <section className="rounded-2xl border border-cream-200 bg-white p-5 shadow-card">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 className="font-serif text-xl font-semibold">Weekly retention cohorts</h2>
-              <p className="text-xs text-warm-400">Percentage active in each week after profile creation.</p>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[700px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-warm-400">
-                <tr><th className="pb-3">Cohort</th><th className="pb-3">Size</th>{Array.from({ length: 8 }, (_, week) => <th key={week} className="pb-3 text-center">W{week}</th>)}</tr>
-              </thead>
-              <tbody>
-                {data.cohorts.map(row => (
-                  <tr key={row.cohort} className="border-t border-cream-100">
-                    <td className="py-3 font-medium">{row.cohort}</td><td>{row.size}</td>
-                    {row.retention.map((value, week) => (
-                      <td key={week} className="p-1 text-center">
-                        <span className="block rounded-lg py-2 text-xs font-semibold" style={{ backgroundColor: `rgba(90,122,74,${Math.max(.06, value / 100)})` }}>{value}%</span>
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-cream-200 bg-white p-5 shadow-card">
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-            <div><h2 className="font-serif text-xl font-semibold">Household health</h2><p className="text-xs text-warm-400">Connected members, completion, replies, and recent activity.</p></div>
+            <div><h2 className="font-serif text-xl font-semibold">Household health</h2><p className="text-xs text-warm-400">Dyad phase, completion, replies, and recent activity.</p></div>
             <a className="text-sm font-semibold text-terracotta-600 underline" href={exportUrl('households', data.filters)}>Export CSV</a>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-warm-400"><tr><th className="pb-3">Household</th><th>Members</th><th>Plans</th><th>Completion</th><th>SMS replies</th><th>Last active</th></tr></thead>
-              <tbody>{data.householdRows.map(row => <tr key={row.id} className="border-t border-cream-100"><td className="py-3 font-semibold">{row.name}</td><td>{row.members}</td><td>{row.plans}</td><td>{row.completionRate}%</td><td>{row.smsReplies}</td><td>{formatDate(row.lastActive)}</td></tr>)}</tbody>
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="text-xs uppercase tracking-wide text-warm-400"><tr><th className="pb-3">Household</th><th>Study phase</th><th>Members</th><th>Plans</th><th>Completion</th><th>SMS replies</th><th>Last active</th><th>Status</th></tr></thead>
+              <tbody>{data.householdRows.map(row => <tr key={row.id} className="border-t border-cream-100"><td className="py-3 font-semibold">{row.name}</td><td>{phaseLabel(row.studyPhase)}</td><td>{row.members}</td><td>{row.plans}</td><td>{row.completionRate}%</td><td>{row.smsReplies}</td><td>{formatDate(row.lastActive)}</td><td><span className={`rounded-full border px-2 py-1 text-xs font-semibold ${flagClass(row.statusFlag)}`}>{row.statusFlag}</span></td></tr>)}</tbody>
             </table>
           </div>
         </section>
@@ -216,9 +413,9 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1100px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-warm-400"><tr><th className="pb-3">Participant</th><th>Role</th><th>Household</th><th>Joined</th><th>First dashboard</th><th>First plan</th><th>First completion</th><th>First SMS reply</th><th>Last active</th></tr></thead>
-              <tbody>{data.journeys.map(row => <tr key={row.profileId} className="border-t border-cream-100"><td className="py-3 font-semibold">{row.name}</td><td>{row.role === 'mci_user' ? 'MCI' : 'CP'}</td><td>{row.household}</td><td>{formatDate(row.joinedAt)}</td><td>{formatDate(row.firstDashboard)}</td><td>{formatDate(row.firstPlan)}</td><td>{formatDate(row.firstCompletion)}</td><td>{formatDate(row.firstSmsReply)}</td><td>{formatDate(row.lastActive)}</td></tr>)}</tbody>
+            <table className="w-full min-w-[1200px] text-left text-sm">
+              <thead className="text-xs uppercase tracking-wide text-warm-400"><tr><th className="pb-3">Participant</th><th>Role</th><th>Household</th><th>Study phase</th><th>Joined</th><th>First dashboard</th><th>First plan</th><th>First completion</th><th>First SMS reply</th><th>Last active</th></tr></thead>
+              <tbody>{data.journeys.map(row => <tr key={row.profileId} className="border-t border-cream-100"><td className="py-3 font-semibold">{row.name}</td><td>{row.roleLabel}</td><td>{row.household}</td><td>{phaseLabel(row.studyPhase)}</td><td>{formatDate(row.joinedAt)}</td><td>{formatDate(row.firstDashboard)}</td><td>{formatDate(row.firstPlan)}</td><td>{formatDate(row.firstCompletion)}</td><td>{formatDate(row.firstSmsReply)}</td><td>{formatDate(row.lastActive)}</td></tr>)}</tbody>
             </table>
           </div>
         </section>
