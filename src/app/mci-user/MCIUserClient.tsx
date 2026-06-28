@@ -60,6 +60,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [recallMoments, setRecallMoments] = useState<RecallAnswer[]>([])
   const [recallMomentIndex, setRecallMomentIndex] = useState(0)
   const [recallResolved, setRecallResolved] = useState<'yes' | 'no' | null>(null)
+  const [recallExhausted, setRecallExhausted] = useState(false)
+  const [recallConfirmedText, setRecallConfirmedText] = useState('')
   const [recallCorrection, setRecallCorrection] = useState('')
   const [recallSaving, setRecallSaving] = useState(false)
 
@@ -249,6 +251,16 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setTimelineEvents(prev => prev.some(item => item.id === event.id) ? prev : [event, ...prev])
   }, [])
 
+  function formatRecallTime(value?: string | null) {
+    if (!value) return ''
+    return new Date(value).toLocaleTimeString('en-US', {
+      timeZone: profile.timezone,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+  }
+
   async function openRecall() {
     setRecallOpen(true)
     setRecallLoading(true)
@@ -256,8 +268,24 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setRecallMoments([])
     setRecallMomentIndex(0)
     setRecallResolved(null)
+    setRecallExhausted(false)
+    setRecallConfirmedText('')
     setRecallCorrection('')
     try {
+      const sessionResponse = await fetch('/api/reentry/session-status')
+      const sessionStatus = await sessionResponse.json().catch(() => ({}))
+      if (sessionStatus.recentSession) {
+        setRecallAnswer({
+          confidence: 'certain',
+          confidenceLabel: 'Certain',
+          answer: `Earlier you confirmed: ${sessionStatus.lastConfirmedText}`,
+          source: sessionStatus.lastConfirmedAt ? `Confirmed at ${formatRecallTime(sessionStatus.lastConfirmedAt)}` : 'Confirmed earlier today.',
+          asksConfirmation: false,
+        })
+        setRecallMoments([])
+        return
+      }
+
       const response = await fetch('/api/reentry', { method: 'POST' })
       const result = await response.json()
       if (!response.ok) {
@@ -292,13 +320,73 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     }
   }
 
+  async function saveRecoverySessionAction(
+    action: 'confirmed' | 'rejected' | 'exhausted',
+    options: { confirmedText?: string; confidence?: string; momentsReviewed?: number } = {},
+  ) {
+    await fetch('/api/reentry/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action,
+        confirmed_text: options.confirmedText,
+        confidence: options.confidence,
+        moments_reviewed: options.momentsReviewed,
+      }),
+    }).catch(() => undefined)
+  }
+
+  async function exhaustRecallSession() {
+    await saveRecoverySessionAction('exhausted', {
+      momentsReviewed: Math.min(recallMomentIndex + 1, recallMoments.length || 1),
+    })
+    setRecallExhausted(true)
+    setRecallResolved(null)
+    setRecallConfirmedText('')
+    setRecallCorrection('')
+  }
+
   function showNextRecallMoment() {
     if (recallMoments.length <= 1) return
-    const nextIndex = (recallMomentIndex + 1) % recallMoments.length
+    const nextIndex = recallMomentIndex + 1
+    if (nextIndex >= recallMoments.length) {
+      void exhaustRecallSession()
+      return
+    }
     setRecallMomentIndex(nextIndex)
     setRecallAnswer(recallMoments[nextIndex])
     setRecallResolved(null)
+    setRecallExhausted(false)
+    setRecallConfirmedText('')
     setRecallCorrection('')
+  }
+
+  async function confirmCurrentRecallMoment() {
+    if (!recallAnswer) return
+    const confirmedText = recallAnswer.answer
+    setRecallSaving(true)
+    try {
+      await saveRecoverySessionAction('confirmed', {
+        confirmedText,
+        confidence: recallAnswer.confidence,
+      })
+      setRecallConfirmedText(confirmedText)
+      setRecallResolved('yes')
+      if (recallMomentIndex + 1 >= recallMoments.length) {
+        await saveRecoverySessionAction('exhausted', {
+          momentsReviewed: Math.min(recallMomentIndex + 1, recallMoments.length || 1),
+        })
+      }
+    } finally {
+      setRecallSaving(false)
+    }
+  }
+
+  async function rejectCurrentRecallMoment() {
+    await saveRecoverySessionAction('rejected', {
+      confidence: recallAnswer?.confidence,
+    })
+    setRecallResolved('no')
   }
 
   async function saveRecallCorrection(text: string, type: 'doing_now' | 'did' = 'did') {
@@ -318,6 +406,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       })
       const result = await response.json().catch(() => ({}))
       if (response.ok && result.event) handleTimelineSaved(result.event)
+      setRecallConfirmedText(value)
       setRecallResolved('yes')
     } finally {
       setRecallSaving(false)
@@ -697,14 +786,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                 <div className="h-7 w-4/5 rounded-pill bg-cream-200 mb-3" />
                 <div className="h-4 w-full rounded-pill bg-cream-200" />
               </div>
-            ) : recallResolved === 'yes' ? (
+            ) : recallExhausted ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
-                <p id="recall-title" className="text-xs font-bold uppercase tracking-wide text-sage-600">All caught up</p>
-                <p className="mt-3 text-xl font-semibold leading-7 text-warm-900">
-                  Good. You're all caught up.
-                </p>
-                <p className="mt-3 text-base font-medium leading-6 text-warm-500">
-                  I'll keep things ready for you.
+                <p id="recall-title" className="text-xl font-semibold leading-7 text-warm-900">
+                  That's everything I know about your day.
                 </p>
                 <button
                   type="button"
@@ -713,6 +798,43 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                 >
                   Back to home
                 </button>
+              </div>
+            ) : recallResolved === 'yes' ? (
+              <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
+                <p id="recall-title" className="text-xl font-semibold leading-7 text-warm-900">
+                  I'll remember that {recallConfirmedText}.
+                </p>
+                <p className="mt-3 text-base font-medium leading-6 text-warm-500">
+                  {recallMomentIndex + 1 < recallMoments.length
+                    ? "There's one more part of today I'm less certain about."
+                    : "That's everything I know about your day."}
+                </p>
+                {recallMomentIndex + 1 < recallMoments.length ? (
+                  <div className="mt-5 grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={showNextRecallMoment}
+                      className="min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                    >
+                      Review it
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void exhaustRecallSession()}
+                      className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+                    >
+                      Not now
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setRecallOpen(false)}
+                    className="mt-5 w-full min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                  >
+                    Back to home
+                  </button>
+                )}
               </div>
             ) : recallResolved === 'no' ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
@@ -772,6 +894,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                       {recallSaving ? 'Saving...' : 'Tell Context'}
                     </button>
                   </>
+                ) : !recallAnswer.asksConfirmation ? (
+                  <button
+                    type="button"
+                    onClick={() => setRecallOpen(false)}
+                    className="mt-5 w-full min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                  >
+                    Back to home
+                  </button>
                 ) : (
                   <>
                     <p className="mt-5 text-lg font-semibold text-warm-800">
@@ -780,14 +910,15 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                     <div className="mt-3 grid grid-cols-2 gap-3">
                       <button
                         type="button"
-                        onClick={() => setRecallResolved('yes')}
-                        className="min-h-[60px] rounded-xl bg-sage-500 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                        onClick={() => void confirmCurrentRecallMoment()}
+                        disabled={recallSaving}
+                        className="min-h-[60px] rounded-xl bg-sage-500 text-lg font-semibold text-white disabled:opacity-60 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
                       >
-                        Yes
+                        {recallSaving ? 'Saving...' : 'Yes'}
                       </button>
                       <button
                         type="button"
-                        onClick={() => setRecallResolved('no')}
+                        onClick={() => void rejectCurrentRecallMoment()}
                         className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
                       >
                         No
