@@ -3,7 +3,7 @@ import { createServerClient } from '@/lib/supabase-server'
 import { getLocalDateKey } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
 
-type RecoveryAction = 'confirmed' | 'rejected' | 'exhausted'
+type RecoveryAction = 'shown' | 'confirmed' | 'rejected' | 'exhausted'
 
 function isMissingRecoveryMomentTable(error: { code?: string; message?: string } | null) {
   return Boolean(
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
   const momentKey = typeof body.moment_key === 'string' ? body.moment_key.trim().slice(0, 200) : ''
   const momentsReviewed = Number.isFinite(Number(body.moments_reviewed)) ? Number(body.moments_reviewed) : undefined
 
-  if (!['confirmed', 'rejected', 'exhausted'].includes(action)) {
+  if (!['shown', 'confirmed', 'rejected', 'exhausted'].includes(action)) {
     return NextResponse.json({ error: 'Invalid recovery action' }, { status: 400 })
   }
 
@@ -75,6 +75,30 @@ export async function POST(request: NextRequest) {
   const { session, error: sessionError } = await getOrCreateSession(supabase, profile, user.id, todayKey)
   if (sessionError || !session) {
     return NextResponse.json({ error: sessionError?.message ?? 'Could not start recovery session.' }, { status: 500 })
+  }
+
+  if (action === 'shown') {
+    if (!momentKey) return NextResponse.json({ error: 'Missing moment key.' }, { status: 400 })
+    const now = new Date().toISOString()
+    const { error: momentError } = await supabase
+      .from('recovery_session_moments')
+      .upsert({
+        session_id: session.id,
+        user_id: user.id,
+        household_id: profile.household_id,
+        profile_id: profile.id,
+        session_date: todayKey,
+        moment_key: momentKey,
+        answer_text: confirmedText || null,
+        confidence,
+        status: 'shown',
+        shown_at: now,
+      }, { onConflict: 'user_id,session_date,moment_key', ignoreDuplicates: true })
+
+    if (momentError && !isMissingRecoveryMomentTable(momentError)) {
+      return NextResponse.json({ error: momentError.message }, { status: 500 })
+    }
+    return NextResponse.json({ ok: true })
   }
 
   if (action === 'confirmed') {

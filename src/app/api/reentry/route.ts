@@ -38,6 +38,14 @@ type RecoveryMoment = {
   responded_at: string | null
 }
 
+type RecoverySession = {
+  id: string
+  status: 'active' | 'completed' | 'abandoned'
+  completed_at: string | null
+  last_confirmed_text: string | null
+  last_confirmed_at: string | null
+}
+
 function formatTime(value: string, timeZone?: string | null) {
   return new Date(value).toLocaleTimeString('en-US', {
     timeZone: timeZone || undefined,
@@ -94,6 +102,9 @@ function canonicalTokens(text: string) {
     .replace(/\b(go|going|went)\b/g, 'go')
     .replace(/\b(drive|driving|drove)\b/g, 'drive')
     .replace(/\b(call|calling|called)\b/g, 'call')
+    .replace(/\b(make|making|made)\b/g, 'make')
+    .replace(/\b(complete|completed|completing)\b/g, 'complete')
+    .replace(/\b(mark|marked|marking)\b/g, 'mark')
     .replace(/[^a-z0-9\s]/g, ' ')
 
   return Array.from(new Set(
@@ -223,20 +234,13 @@ function canonicalMomentToRecallInput(moment: CanonicalMoment, displayName: stri
   const evidence = [...moment.evidence].sort(compareEvidence)
   const best = evidence[0]
   const hasCertain = evidence.some(item => item.confidence === 'certain')
-  const supportingSources = evidence
-    .slice(1, 4)
-    .map(item => item.sourceText)
-    .filter(source => source !== best.sourceText)
-  const sourceText = supportingSources.length > 0
-    ? `${best.sourceText} Also seen in ${supportingSources.length} related note${supportingSources.length === 1 ? '' : 's'}.`
-    : best.sourceText
 
   return {
     displayName,
     timeZone,
     confidence: hasCertain ? 'certain' : 'guess',
     evidenceText: best.evidenceText,
-    sourceText,
+    sourceText: best.sourceText,
   }
 }
 
@@ -273,6 +277,17 @@ function recoveryMemoryAnswer(moment: RecoveryMoment, timeZone?: string | null):
   }
 }
 
+function recoverySessionMemoryAnswer(session: RecoverySession, timeZone?: string | null): RecallAnswer | null {
+  if (!session.last_confirmed_text) return null
+  return {
+    confidence: 'certain',
+    confidenceLabel: 'Certain',
+    answer: `Earlier, you confirmed: ${session.last_confirmed_text}`,
+    source: `Confirmed at ${formatTime(session.last_confirmed_at || session.completed_at || new Date().toISOString(), timeZone)}.`,
+    asksConfirmation: false,
+  }
+}
+
 async function getOrCreateRecoverySession(
   supabase: Awaited<ReturnType<typeof createServerClient>>,
   profile: any,
@@ -290,7 +305,7 @@ async function getOrCreateRecoverySession(
 
   if (isMissingRecoveryMomentTable(lookupError)) return { session: null, error: null }
   if (lookupError) return { session: null, error: lookupError }
-  if (existing) return { session: existing, error: null }
+  if (existing) return { session: existing as RecoverySession, error: null }
 
   const { data: created, error: createError } = await supabase
     .from('recovery_sessions')
@@ -304,7 +319,7 @@ async function getOrCreateRecoverySession(
     .select('*')
     .single()
 
-  return { session: created, error: createError }
+  return { session: created as RecoverySession | null, error: createError }
 }
 
 async function getRecoveryMoments(
@@ -322,37 +337,6 @@ async function getRecoveryMoments(
   if (isMissingRecoveryMomentTable(error)) return { moments: [] as RecoveryMoment[], tableAvailable: false, error: null }
   if (error) return { moments: [] as RecoveryMoment[], tableAvailable: false, error }
   return { moments: (data ?? []) as RecoveryMoment[], tableAvailable: true, error: null }
-}
-
-async function recordShownMoments(
-  supabase: Awaited<ReturnType<typeof createServerClient>>,
-  session: any,
-  profile: any,
-  userId: string,
-  todayKey: string,
-  answers: Array<RecallAnswer & { momentKey?: string }>,
-) {
-  if (!session || answers.length === 0) return
-  const now = new Date().toISOString()
-  await supabase
-    .from('recovery_session_moments')
-    .upsert(
-      answers
-        .filter(answer => answer.momentKey)
-        .map(answer => ({
-          session_id: session.id,
-          user_id: userId,
-          household_id: profile.household_id,
-          profile_id: profile.id,
-          session_date: todayKey,
-          moment_key: answer.momentKey,
-          answer_text: answer.answer,
-          confidence: answer.confidence,
-          status: 'shown',
-          shown_at: now,
-        })),
-      { onConflict: 'user_id,session_date,moment_key', ignoreDuplicates: true },
-    )
 }
 
 export async function POST() {
@@ -377,6 +361,36 @@ export async function POST() {
   if (sessionError) {
     console.error('[Reentry] Recovery session lookup failed:', sessionError.message)
   }
+  if (recoverySession?.status === 'completed' && recoverySession.completed_at) {
+    const completedAt = new Date(recoverySession.completed_at).getTime()
+    const recentCutoff = Date.now() - 2 * 60 * 60 * 1000
+    if (completedAt >= recentCutoff) {
+      if (recoverySession.last_confirmed_text) {
+        const answer: RecallAnswer = {
+          confidence: 'certain',
+          confidenceLabel: 'Certain',
+          answer: `Earlier, you confirmed: ${recoverySession.last_confirmed_text}`,
+          source: `Confirmed at ${formatTime(recoverySession.last_confirmed_at || recoverySession.completed_at, profile.timezone)}.`,
+          asksConfirmation: false,
+        }
+        await trackEvent(supabase, {
+          eventName: 'reentry_recall_requested',
+          profile,
+          userId: user.id,
+          properties: { confidence: answer.confidence, moment_count: 1, recovery_memory: true },
+        })
+        return NextResponse.json({ ...answer, moments: [answer] })
+      }
+      const answer: RecallAnswer = {
+        confidence: 'unknown',
+        confidenceLabel: 'Not sure',
+        answer: "That's everything I know about your day.",
+        source: 'You reviewed the notes I had.',
+        asksConfirmation: false,
+      }
+      return NextResponse.json({ ...answer, moments: [answer] })
+    }
+  }
   const recoveryResult = await getRecoveryMoments(supabase, user.id, todayKey)
   if (recoveryResult.error) {
     console.error('[Reentry] Recovery moment lookup failed:', recoveryResult.error.message)
@@ -385,6 +399,23 @@ export async function POST() {
   const confirmedMoments = recoveryMoments.filter(moment => moment.status === 'confirmed')
   const rejectedMomentKeys = new Set(recoveryMoments.filter(moment => moment.status === 'rejected').map(moment => moment.moment_key))
   const shownMomentKeys = new Set(recoveryMoments.filter(moment => moment.status === 'shown').map(moment => moment.moment_key))
+  if (recoverySession?.last_confirmed_text && confirmedMoments.length === 0) {
+    const answer = recoverySessionMemoryAnswer(recoverySession, profile.timezone)
+    if (answer) {
+      await trackEvent(supabase, {
+        eventName: 'reentry_recall_requested',
+        profile,
+        userId: user.id,
+        properties: {
+          confidence: answer.confidence,
+          moment_count: 1,
+          recovery_memory: true,
+          recovery_session_fallback: true,
+        },
+      })
+      return NextResponse.json({ ...answer, moments: [answer] })
+    }
+  }
 
   const [timelineResult, smsResult, activityResult, planResult, reflectionResult] = await Promise.all([
     supabase
@@ -481,7 +512,7 @@ export async function POST() {
       label,
       confidence: 'certain',
       evidenceText: recallPhrase(activity.note?.trim() || activity.label),
-      sourceText: `You completed this ${sourcePeriod(activity.occurred_at, profile.timezone)}.`,
+      sourceText: `Marked done ${sourcePeriod(activity.occurred_at, profile.timezone)}.`,
       occurredAt: activity.occurred_at,
       priority: 2,
       sourceId: `activity:${activity.id}`,
@@ -495,7 +526,7 @@ export async function POST() {
       label,
       confidence: 'certain',
       evidenceText: recallPhrase(plan.note?.trim() || plan.label),
-      sourceText: `You confirmed this at ${formatTime(plan.confirmed_at!, profile.timezone)}.`,
+      sourceText: `Confirmed at ${formatTime(plan.confirmed_at!, profile.timezone)}.`,
       occurredAt: plan.confirmed_at!,
       priority: 3,
       sourceId: `plan:${plan.id}`,
@@ -518,21 +549,7 @@ export async function POST() {
     })
   }
 
-  for (const plan of plans.filter(item => item.status === 'planned').slice(0, 3)) {
-    const label = displayLabel(plan.note?.trim() || plan.label)
-    addCanonicalMoment(canonicalMoments, {
-      key: canonicalKey(label),
-      label,
-      confidence: 'guess',
-      evidenceText: recallPhrase(plan.note?.trim() || plan.label, 'getting ready for '),
-      sourceText: 'You planned this earlier today. This was only planned, not confirmed.',
-      occurredAt: plan.created_at,
-      priority: plannedTimeDistance(plan, profile.timezone) <= 120 ? 5 : 6,
-      sourceId: `plan:${plan.id}`,
-    })
-  }
-
-  const uniqueMomentEntries = canonicalMoments
+  const certainMomentEntries = canonicalMoments
     .map(moment => ({
       ...moment,
       evidence: [...moment.evidence].sort(compareEvidence),
@@ -549,6 +566,43 @@ export async function POST() {
       key: moment.key,
       input: canonicalMomentToRecallInput(moment, profile.display_name, profile.timezone),
     }))
+
+  const plannedMomentEntries: Array<{ key: string; input: RecallInput }> = []
+  if (certainMomentEntries.length === 0 && confirmedMoments.length === 0) {
+    const plannedGroups: CanonicalMoment[] = []
+    for (const plan of plans.filter(item => item.status === 'planned').slice(0, 6)) {
+      const label = displayLabel(plan.note?.trim() || plan.label)
+      const key = canonicalKey(label)
+      if (rejectedMomentKeys.has(key)) continue
+      addCanonicalMoment(plannedGroups, {
+        key,
+        label,
+        confidence: 'guess',
+        evidenceText: recallPhrase(plan.note?.trim() || plan.label, 'getting ready for '),
+        sourceText: 'This was only planned, not confirmed.',
+        occurredAt: plan.expected_time ? `${todayKey}T${plan.expected_time}` : plan.created_at,
+        priority: plannedTimeDistance(plan, profile.timezone) <= 120 ? 5 : 6,
+        sourceId: `plan:${plan.id}`,
+      })
+    }
+    plannedMomentEntries.push(...plannedGroups
+      .map(moment => ({
+        ...moment,
+        evidence: [...moment.evidence].sort(compareEvidence),
+      }))
+      .sort((left, right) => {
+        const leftShown = shownMomentKeys.has(left.key) ? 1 : 0
+        const rightShown = shownMomentKeys.has(right.key) ? 1 : 0
+        if (leftShown !== rightShown) return leftShown - rightShown
+        return compareEvidence(left.evidence[0], right.evidence[0])
+      })
+      .map(moment => ({
+        key: moment.key,
+        input: canonicalMomentToRecallInput(moment, profile.display_name, profile.timezone),
+      })))
+  }
+
+  const uniqueMomentEntries = [...certainMomentEntries, ...plannedMomentEntries]
     .slice(0, 4)
 
   if (uniqueMomentEntries.length === 0) {
@@ -574,9 +628,6 @@ export async function POST() {
     momentKey: moment.key,
   })))
   const answer = answers[0]
-  if (recoveryResult.tableAvailable) {
-    await recordShownMoments(supabase, recoverySession, profile, user.id, todayKey, answers)
-  }
 
   await trackEvent(supabase, {
     eventName: 'reentry_recall_requested',

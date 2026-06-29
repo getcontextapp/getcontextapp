@@ -67,6 +67,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [recallConfirmedText, setRecallConfirmedText] = useState('')
   const [recallCorrection, setRecallCorrection] = useState('')
   const [recallSaving, setRecallSaving] = useState(false)
+  const [recallShownKeys, setRecallShownKeys] = useState<string[]>([])
 
   const localHour = Number(clockNow.toLocaleString('en-US', {
     timeZone: profile.timezone,
@@ -260,6 +261,16 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     return trimmed.replace(/^you\s+/i, 'you ')
   }
 
+  function formatRecallTime(value?: string | null) {
+    if (!value) return ''
+    return new Date(value).toLocaleTimeString('en-US', {
+      timeZone: profile.timezone,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+  }
+
   async function openRecall() {
     setRecallOpen(true)
     setRecallLoading(true)
@@ -270,7 +281,26 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setRecallExhausted(false)
     setRecallConfirmedText('')
     setRecallCorrection('')
+    setRecallShownKeys([])
     try {
+      const sessionResponse = await fetch('/api/reentry/session-status')
+      const sessionStatus = await sessionResponse.json().catch(() => ({}))
+      if (sessionResponse.ok && sessionStatus.recentSession) {
+        const sourceTime = formatRecallTime(sessionStatus.lastConfirmedAt)
+        const recentAnswer = {
+          confidence: 'certain',
+          confidenceLabel: 'Certain',
+          answer: sessionStatus.lastConfirmedText
+            ? `Earlier, you confirmed: ${sessionStatus.lastConfirmedText}`
+            : "That's everything I know about your day.",
+          source: sourceTime ? `Confirmed at ${sourceTime}.` : 'You reviewed the notes I had.',
+          asksConfirmation: false,
+        } satisfies RecallAnswer
+        setRecallAnswer(recentAnswer)
+        setRecallMoments([recentAnswer])
+        return
+      }
+
       const response = await fetch('/api/reentry', { method: 'POST' })
       const result = await response.json()
       if (!response.ok) {
@@ -306,10 +336,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   }
 
   async function saveRecoverySessionAction(
-    action: 'confirmed' | 'rejected' | 'exhausted',
+    action: 'shown' | 'confirmed' | 'rejected' | 'exhausted',
     options: { confirmedText?: string; confidence?: string; momentKey?: string; momentsReviewed?: number } = {},
   ) {
-    await fetch('/api/reentry/confirm', {
+    const response = await fetch('/api/reentry/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -319,13 +349,36 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         moment_key: options.momentKey,
         moments_reviewed: options.momentsReviewed,
       }),
-    }).catch(() => undefined)
+    })
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}))
+      throw new Error(result.error || 'Could not save recall response.')
+    }
+    return true
   }
 
-  async function exhaustRecallSession() {
-    await saveRecoverySessionAction('exhausted', {
-      momentsReviewed: Math.min(recallMomentIndex + 1, recallMoments.length || 1),
+  useEffect(() => {
+    if (!recallOpen || recallLoading || recallResolved || recallExhausted || !recallAnswer?.momentKey) return
+    if (recallShownKeys.includes(recallAnswer.momentKey)) return
+    const momentKey = recallAnswer.momentKey
+    setRecallShownKeys(current => current.includes(momentKey) ? current : [...current, momentKey])
+    saveRecoverySessionAction('shown', {
+      confirmedText: recallAnswer.answer,
+      confidence: recallAnswer.confidence,
+      momentKey,
+    }).catch(error => {
+      console.error('[Reentry] Could not save shown moment:', error)
     })
+  }, [recallAnswer, recallExhausted, recallLoading, recallOpen, recallResolved, recallShownKeys])
+
+  async function exhaustRecallSession() {
+    try {
+      await saveRecoverySessionAction('exhausted', {
+        momentsReviewed: Math.min(recallMomentIndex + 1, recallMoments.length || 1),
+      })
+    } catch (error) {
+      console.error('[Reentry] Could not exhaust session:', error)
+    }
     setRecallExhausted(true)
     setRecallResolved(null)
     setRecallConfirmedText('')
@@ -367,18 +420,27 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           momentsReviewed: Math.min(recallMomentIndex + 1, recallMoments.length || 1),
         })
       }
+    } catch (error) {
+      console.error('[Reentry] Could not confirm moment:', error)
     } finally {
       setRecallSaving(false)
     }
   }
 
   async function rejectCurrentRecallMoment() {
-    await saveRecoverySessionAction('rejected', {
-      confidence: recallAnswer?.confidence,
-      confirmedText: recallAnswer?.answer,
-      momentKey: recallAnswer?.momentKey,
-    })
-    setRecallResolved('no')
+    setRecallSaving(true)
+    try {
+      await saveRecoverySessionAction('rejected', {
+        confidence: recallAnswer?.confidence,
+        confirmedText: recallAnswer?.answer,
+        momentKey: recallAnswer?.momentKey,
+      })
+      setRecallResolved('no')
+    } catch (error) {
+      console.error('[Reentry] Could not reject moment:', error)
+    } finally {
+      setRecallSaving(false)
+    }
   }
 
   async function saveRecallCorrection(text: string, type: 'doing_now' | 'did' = 'did') {
@@ -403,6 +465,13 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     } finally {
       setRecallSaving(false)
     }
+  }
+
+  function showTodaysPlanFromRecall() {
+    setRecallOpen(false)
+    window.setTimeout(() => {
+      document.getElementById('todays-plan')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 50)
   }
 
   const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete') => {
@@ -834,9 +903,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
                 <p id="recall-title" className="text-xl font-semibold leading-7 text-warm-900">Okay, I will not use that right now.</p>
                 <p className="mt-3 text-base font-medium leading-6 text-warm-500">
-                  We can look at another idea, or you can go back to your day.
+                  We can look at another idea, check your plan, or pause here.
                 </p>
-                <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="mt-5 grid grid-cols-1 gap-3">
                   <button
                     type="button"
                     onClick={showNextRecallMoment}
@@ -846,10 +915,17 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                   </button>
                   <button
                     type="button"
+                    onClick={showTodaysPlanFromRecall}
+                    className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+                  >
+                    Show today's plan
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setRecallOpen(false)}
                     className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
                   >
-                    Back to home
+                    I remember now
                   </button>
                 </div>
                 <label htmlFor="recall-correction" className="mt-5 block text-sm font-semibold text-warm-500">
