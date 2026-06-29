@@ -6,6 +6,7 @@ import { trackEvent } from '@/lib/analytics'
 import type { PlannedActivity, TimelineEvent } from '@/types'
 
 type RecallInput = Parameters<typeof generateRecallAnswer>[0]
+type RecallAnswer = Awaited<ReturnType<typeof generateRecallAnswer>>
 
 type MomentEvidence = {
   key: string
@@ -23,6 +24,18 @@ type CanonicalMoment = {
   key: string
   label: string
   evidence: MomentEvidence[]
+}
+
+type RecoveryMomentStatus = 'shown' | 'confirmed' | 'rejected' | 'skipped'
+
+type RecoveryMoment = {
+  id: string
+  moment_key: string
+  answer_text: string | null
+  confidence: string | null
+  status: RecoveryMomentStatus
+  shown_at: string
+  responded_at: string | null
 }
 
 function formatTime(value: string, timeZone?: string | null) {
@@ -165,6 +178,17 @@ function unknownMoment(displayName: string, timeZone?: string | null): RecallInp
   }
 }
 
+function isMissingRecoveryMomentTable(error: { code?: string; message?: string } | null) {
+  return Boolean(
+    error &&
+    (
+      error.code === '42P01' ||
+      error.code === 'PGRST205' ||
+      error.message?.toLowerCase().includes('recovery_session_moments')
+    ),
+  )
+}
+
 function addCanonicalMoment(groups: CanonicalMoment[], evidence: MomentEvidence) {
   const linkedGroup = evidence.linkedActivityId
     ? groups.find(group => group.evidence.some(item => item.sourceId === `activity:${evidence.linkedActivityId}`))
@@ -216,6 +240,121 @@ function canonicalMomentToRecallInput(moment: CanonicalMoment, displayName: stri
   }
 }
 
+function currentLocalMinutes(timeZone?: string | null) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timeZone || undefined,
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(new Date())
+  const hour = Number(parts.find(part => part.type === 'hour')?.value)
+  const minute = Number(parts.find(part => part.type === 'minute')?.value)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  return hour * 60 + minute
+}
+
+function plannedTimeDistance(plan: PlannedActivity, timeZone?: string | null) {
+  if (!plan.expected_time) return Number.POSITIVE_INFINITY
+  const nowMinutes = currentLocalMinutes(timeZone)
+  if (nowMinutes === null) return Number.POSITIVE_INFINITY
+  const [hourText, minuteText] = plan.expected_time.split(':')
+  const planMinutes = Number(hourText) * 60 + Number(minuteText)
+  if (!Number.isFinite(planMinutes)) return Number.POSITIVE_INFINITY
+  return Math.abs(nowMinutes - planMinutes)
+}
+
+function recoveryMemoryAnswer(moment: RecoveryMoment, timeZone?: string | null): RecallAnswer {
+  return {
+    confidence: 'certain',
+    confidenceLabel: 'Certain',
+    answer: `Earlier, you confirmed: ${moment.answer_text || 'something from your day'}`,
+    source: `Confirmed at ${formatTime(moment.responded_at || moment.shown_at, timeZone)}.`,
+    asksConfirmation: false,
+  }
+}
+
+async function getOrCreateRecoverySession(
+  supabase: Awaited<ReturnType<typeof createServerClient>>,
+  profile: any,
+  userId: string,
+  todayKey: string,
+) {
+  const { data: existing, error: lookupError } = await supabase
+    .from('recovery_sessions')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('session_date', todayKey)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (isMissingRecoveryMomentTable(lookupError)) return { session: null, error: null }
+  if (lookupError) return { session: null, error: lookupError }
+  if (existing) return { session: existing, error: null }
+
+  const { data: created, error: createError } = await supabase
+    .from('recovery_sessions')
+    .insert({
+      user_id: userId,
+      household_id: profile.household_id,
+      profile_id: profile.id,
+      session_date: todayKey,
+      status: 'active',
+    })
+    .select('*')
+    .single()
+
+  return { session: created, error: createError }
+}
+
+async function getRecoveryMoments(
+  supabase: Awaited<ReturnType<typeof createServerClient>>,
+  userId: string,
+  todayKey: string,
+) {
+  const { data, error } = await supabase
+    .from('recovery_session_moments')
+    .select('id,moment_key,answer_text,confidence,status,shown_at,responded_at')
+    .eq('user_id', userId)
+    .eq('session_date', todayKey)
+    .order('shown_at', { ascending: false })
+
+  if (isMissingRecoveryMomentTable(error)) return { moments: [] as RecoveryMoment[], tableAvailable: false, error: null }
+  if (error) return { moments: [] as RecoveryMoment[], tableAvailable: false, error }
+  return { moments: (data ?? []) as RecoveryMoment[], tableAvailable: true, error: null }
+}
+
+async function recordShownMoments(
+  supabase: Awaited<ReturnType<typeof createServerClient>>,
+  session: any,
+  profile: any,
+  userId: string,
+  todayKey: string,
+  answers: Array<RecallAnswer & { momentKey?: string }>,
+) {
+  if (!session || answers.length === 0) return
+  const now = new Date().toISOString()
+  await supabase
+    .from('recovery_session_moments')
+    .upsert(
+      answers
+        .filter(answer => answer.momentKey)
+        .map(answer => ({
+          session_id: session.id,
+          user_id: userId,
+          household_id: profile.household_id,
+          profile_id: profile.id,
+          session_date: todayKey,
+          moment_key: answer.momentKey,
+          answer_text: answer.answer,
+          confidence: answer.confidence,
+          status: 'shown',
+          shown_at: now,
+        })),
+      { onConflict: 'user_id,session_date,moment_key', ignoreDuplicates: true },
+    )
+}
+
 export async function POST() {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -234,6 +373,18 @@ export async function POST() {
 
   const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
   const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  const { session: recoverySession, error: sessionError } = await getOrCreateRecoverySession(supabase, profile, user.id, todayKey)
+  if (sessionError) {
+    console.error('[Reentry] Recovery session lookup failed:', sessionError.message)
+  }
+  const recoveryResult = await getRecoveryMoments(supabase, user.id, todayKey)
+  if (recoveryResult.error) {
+    console.error('[Reentry] Recovery moment lookup failed:', recoveryResult.error.message)
+  }
+  const recoveryMoments = recoveryResult.moments
+  const confirmedMoments = recoveryMoments.filter(moment => moment.status === 'confirmed')
+  const rejectedMomentKeys = new Set(recoveryMoments.filter(moment => moment.status === 'rejected').map(moment => moment.moment_key))
+  const shownMomentKeys = new Set(recoveryMoments.filter(moment => moment.status === 'shown').map(moment => moment.moment_key))
 
   const [timelineResult, smsResult, activityResult, planResult, reflectionResult] = await Promise.all([
     supabase
@@ -376,26 +527,56 @@ export async function POST() {
       evidenceText: recallPhrase(plan.note?.trim() || plan.label, 'getting ready for '),
       sourceText: 'You planned this earlier today. This was only planned, not confirmed.',
       occurredAt: plan.created_at,
-      priority: 5,
+      priority: plannedTimeDistance(plan, profile.timezone) <= 120 ? 5 : 6,
       sourceId: `plan:${plan.id}`,
     })
   }
 
-  const uniqueMoments = canonicalMoments
+  const uniqueMomentEntries = canonicalMoments
     .map(moment => ({
       ...moment,
       evidence: [...moment.evidence].sort(compareEvidence),
     }))
-    .sort((left, right) => compareEvidence(left.evidence[0], right.evidence[0]))
-    .map(moment => canonicalMomentToRecallInput(moment, profile.display_name, profile.timezone))
+    .filter(moment => !confirmedMoments.some(confirmed => confirmed.moment_key === moment.key))
+    .filter(moment => !rejectedMomentKeys.has(moment.key))
+    .sort((left, right) => {
+      const leftShown = shownMomentKeys.has(left.key) ? 1 : 0
+      const rightShown = shownMomentKeys.has(right.key) ? 1 : 0
+      if (leftShown !== rightShown) return leftShown - rightShown
+      return compareEvidence(left.evidence[0], right.evidence[0])
+    })
+    .map(moment => ({
+      key: moment.key,
+      input: canonicalMomentToRecallInput(moment, profile.display_name, profile.timezone),
+    }))
     .slice(0, 4)
 
-  if (uniqueMoments.length === 0) {
-    uniqueMoments.push(unknownMoment(profile.display_name, profile.timezone))
+  if (uniqueMomentEntries.length === 0) {
+    const confirmed = confirmedMoments[0]
+    if (confirmed) {
+      const answer = recoveryMemoryAnswer(confirmed, profile.timezone)
+      await trackEvent(supabase, {
+        eventName: 'reentry_recall_requested',
+        profile,
+        userId: user.id,
+        properties: { confidence: answer.confidence, moment_count: 1, recovery_memory: true, filtered_plan_sms_count: planListSmsIds.size },
+      })
+      return NextResponse.json({ ...answer, moments: [answer] })
+    }
+    uniqueMomentEntries.push({
+      key: 'unknown',
+      input: unknownMoment(profile.display_name, profile.timezone),
+    })
   }
 
-  const answers = await Promise.all(uniqueMoments.map(moment => generateRecallAnswer(moment)))
+  const answers = await Promise.all(uniqueMomentEntries.map(async moment => ({
+    ...await generateRecallAnswer(moment.input),
+    momentKey: moment.key,
+  })))
   const answer = answers[0]
+  if (recoveryResult.tableAvailable) {
+    await recordShownMoments(supabase, recoverySession, profile, user.id, todayKey, answers)
+  }
 
   await trackEvent(supabase, {
     eventName: 'reentry_recall_requested',

@@ -5,6 +5,17 @@ import { trackEvent } from '@/lib/analytics'
 
 type RecoveryAction = 'confirmed' | 'rejected' | 'exhausted'
 
+function isMissingRecoveryMomentTable(error: { code?: string; message?: string } | null) {
+  return Boolean(
+    error &&
+    (
+      error.code === '42P01' ||
+      error.code === 'PGRST205' ||
+      error.message?.toLowerCase().includes('recovery_session_moments')
+    ),
+  )
+}
+
 async function getOrCreateSession(supabase: Awaited<ReturnType<typeof createServerClient>>, profile: any, userId: string, todayKey: string) {
   const { data: existing, error: lookupError } = await supabase
     .from('recovery_sessions')
@@ -53,6 +64,7 @@ export async function POST(request: NextRequest) {
   const action = body.action as RecoveryAction
   const confirmedText = typeof body.confirmed_text === 'string' ? body.confirmed_text.trim().slice(0, 500) : ''
   const confidence = typeof body.confidence === 'string' ? body.confidence : null
+  const momentKey = typeof body.moment_key === 'string' ? body.moment_key.trim().slice(0, 200) : ''
   const momentsReviewed = Number.isFinite(Number(body.moments_reviewed)) ? Number(body.moments_reviewed) : undefined
 
   if (!['confirmed', 'rejected', 'exhausted'].includes(action)) {
@@ -79,6 +91,28 @@ export async function POST(request: NextRequest) {
 
     if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
 
+    if (momentKey) {
+      const { error: momentError } = await supabase
+        .from('recovery_session_moments')
+        .upsert({
+          session_id: session.id,
+          user_id: user.id,
+          household_id: profile.household_id,
+          profile_id: profile.id,
+          session_date: todayKey,
+          moment_key: momentKey,
+          answer_text: confirmedText,
+          confidence,
+          status: 'confirmed',
+          shown_at: now,
+          responded_at: now,
+        }, { onConflict: 'user_id,session_date,moment_key' })
+
+      if (momentError && !isMissingRecoveryMomentTable(momentError)) {
+        return NextResponse.json({ error: momentError.message }, { status: 500 })
+      }
+    }
+
     const { error: timelineError } = await supabase
       .from('timeline_events')
       .insert({
@@ -97,18 +131,41 @@ export async function POST(request: NextRequest) {
       eventName: 'reentry_moment_confirmed',
       profile,
       userId: user.id,
-      properties: { confidence, answer_text: confirmedText },
+      properties: { confidence, answer_text: confirmedText, moment_key: momentKey || null },
     })
 
     return NextResponse.json({ ok: true })
   }
 
   if (action === 'rejected') {
+    if (momentKey) {
+      const now = new Date().toISOString()
+      const { error: momentError } = await supabase
+        .from('recovery_session_moments')
+        .upsert({
+          session_id: session.id,
+          user_id: user.id,
+          household_id: profile.household_id,
+          profile_id: profile.id,
+          session_date: todayKey,
+          moment_key: momentKey,
+          answer_text: confirmedText || null,
+          confidence,
+          status: 'rejected',
+          shown_at: now,
+          responded_at: now,
+        }, { onConflict: 'user_id,session_date,moment_key' })
+
+      if (momentError && !isMissingRecoveryMomentTable(momentError)) {
+        return NextResponse.json({ error: momentError.message }, { status: 500 })
+      }
+    }
+
     await trackEvent(supabase, {
       eventName: 'reentry_moment_rejected',
       profile,
       userId: user.id,
-      properties: { confidence },
+      properties: { confidence, moment_key: momentKey || null },
     })
     return NextResponse.json({ ok: true })
   }
