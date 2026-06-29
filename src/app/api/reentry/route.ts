@@ -361,35 +361,21 @@ export async function POST() {
   if (sessionError) {
     console.error('[Reentry] Recovery session lookup failed:', sessionError.message)
   }
-  if (recoverySession?.status === 'completed' && recoverySession.completed_at && recoverySession.last_confirmed_text) {
-    const completedAt = new Date(recoverySession.completed_at).getTime()
-    const recentCutoff = Date.now() - 2 * 60 * 60 * 1000
-    if (completedAt >= recentCutoff) {
-      const answer: RecallAnswer = {
-        confidence: 'certain',
-        confidenceLabel: 'Certain',
-        answer: `Earlier, you confirmed: ${recoverySession.last_confirmed_text}`,
-        source: `Confirmed at ${formatTime(recoverySession.last_confirmed_at || recoverySession.completed_at, profile.timezone)}.`,
-        asksConfirmation: false,
-      }
-      await trackEvent(supabase, {
-        eventName: 'reentry_recall_requested',
-        profile,
-        userId: user.id,
-        properties: { confidence: answer.confidence, moment_count: 1, recovery_memory: true },
-      })
-      return NextResponse.json({ ...answer, moments: [answer] })
-    }
-  }
   const recoveryResult = await getRecoveryMoments(supabase, user.id, todayKey)
   if (recoveryResult.error) {
     console.error('[Reentry] Recovery moment lookup failed:', recoveryResult.error.message)
   }
   const recoveryMoments = recoveryResult.moments
+  const tableAvailable = recoveryResult.tableAvailable
   const confirmedMoments = recoveryMoments.filter(moment => moment.status === 'confirmed')
   const rejectedMomentKeys = new Set(recoveryMoments.filter(moment => moment.status === 'rejected').map(moment => moment.moment_key))
   const shownMomentKeys = new Set(recoveryMoments.filter(moment => moment.status === 'shown').map(moment => moment.moment_key))
-  if (recoverySession?.last_confirmed_text && confirmedMoments.length === 0) {
+
+  // Fallback only when the per-moment table is unavailable: we cannot know which
+  // specific moments were confirmed, so surface the single session-level memory.
+  // When the table IS available we always run the full pipeline so newly completed
+  // activities still rank and confirmed moments come back as pageable statements.
+  if (!tableAvailable && recoverySession?.last_confirmed_text) {
     const answer = recoverySessionMemoryAnswer(recoverySession, profile.timezone)
     if (answer) {
       await trackEvent(supabase, {
@@ -558,12 +544,13 @@ export async function POST() {
     }))
 
   const plannedMomentEntries: Array<{ key: string; input: RecallInput }> = []
-  if (certainMomentEntries.length === 0 && confirmedMoments.length === 0) {
+  if (certainMomentEntries.length === 0) {
     const plannedGroups: CanonicalMoment[] = []
     for (const plan of plans.filter(item => item.status === 'planned').slice(0, 6)) {
       const label = displayLabel(plan.note?.trim() || plan.label)
       const key = canonicalKey(label)
       if (rejectedMomentKeys.has(key)) continue
+      if (confirmedMoments.some(confirmed => confirmed.moment_key === key)) continue
       addCanonicalMoment(plannedGroups, {
         key,
         label,
@@ -592,36 +579,34 @@ export async function POST() {
       })))
   }
 
-  const uniqueMomentEntries = [...certainMomentEntries, ...plannedMomentEntries]
-    .slice(0, 4)
+  // Fresh moments still worth reviewing (Yes/No), capped to keep the flow short.
+  const freshMomentEntries = [...certainMomentEntries, ...plannedMomentEntries].slice(0, 4)
+  const freshAnswers = await generateRecallAnswersBatch(freshMomentEntries)
 
-  if (uniqueMomentEntries.length === 0) {
-    const confirmed = confirmedMoments[0]
-    if (confirmed) {
-      const answer = recoveryMemoryAnswer(confirmed, profile.timezone)
-      await trackEvent(supabase, {
-        eventName: 'reentry_recall_requested',
-        profile,
-        userId: user.id,
-        properties: { confidence: answer.confidence, moment_count: 1, recovery_memory: true, filtered_plan_sms_count: planListSmsIds.size },
-      })
-      return NextResponse.json({ ...answer, moments: [answer] })
-    }
-    uniqueMomentEntries.push({
-      key: 'unknown',
-      input: unknownMoment(profile.display_name, profile.timezone),
-    })
+  // Already-confirmed moments come back as calm statements, placed AFTER anything
+  // still worth reviewing, so the user can page to them with "See another moment".
+  const confirmedAnswers = confirmedMoments.map(moment => ({
+    ...recoveryMemoryAnswer(moment, profile.timezone),
+    momentKey: moment.moment_key,
+  }))
+
+  let moments = [...freshAnswers, ...confirmedAnswers]
+
+  // Genuinely empty day: nothing done, nothing planned, nothing confirmed.
+  if (moments.length === 0) {
+    moments = await generateRecallAnswersBatch([
+      { key: 'unknown', input: unknownMoment(profile.display_name, profile.timezone) },
+    ])
   }
 
-  const answers = await generateRecallAnswersBatch(uniqueMomentEntries)
-  const answer = answers[0]
+  const answer = moments[0]
 
   await trackEvent(supabase, {
     eventName: 'reentry_recall_requested',
     profile,
     userId: user.id,
-    properties: { confidence: answer.confidence, moment_count: answers.length, filtered_plan_sms_count: planListSmsIds.size },
+    properties: { confidence: answer.confidence, moment_count: moments.length, filtered_plan_sms_count: planListSmsIds.size },
   })
 
-  return NextResponse.json({ ...answer, moments: answers })
+  return NextResponse.json({ ...answer, moments })
 }
