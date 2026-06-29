@@ -361,33 +361,23 @@ export async function POST() {
   if (sessionError) {
     console.error('[Reentry] Recovery session lookup failed:', sessionError.message)
   }
-  if (recoverySession?.status === 'completed' && recoverySession.completed_at) {
+  if (recoverySession?.status === 'completed' && recoverySession.completed_at && recoverySession.last_confirmed_text) {
     const completedAt = new Date(recoverySession.completed_at).getTime()
     const recentCutoff = Date.now() - 2 * 60 * 60 * 1000
     if (completedAt >= recentCutoff) {
-      if (recoverySession.last_confirmed_text) {
-        const answer: RecallAnswer = {
-          confidence: 'certain',
-          confidenceLabel: 'Certain',
-          answer: `Earlier, you confirmed: ${recoverySession.last_confirmed_text}`,
-          source: `Confirmed at ${formatTime(recoverySession.last_confirmed_at || recoverySession.completed_at, profile.timezone)}.`,
-          asksConfirmation: false,
-        }
-        await trackEvent(supabase, {
-          eventName: 'reentry_recall_requested',
-          profile,
-          userId: user.id,
-          properties: { confidence: answer.confidence, moment_count: 1, recovery_memory: true },
-        })
-        return NextResponse.json({ ...answer, moments: [answer] })
-      }
       const answer: RecallAnswer = {
-        confidence: 'unknown',
-        confidenceLabel: 'Not sure',
-        answer: "That's everything I know about your day.",
-        source: 'You reviewed the notes I had.',
+        confidence: 'certain',
+        confidenceLabel: 'Certain',
+        answer: `Earlier, you confirmed: ${recoverySession.last_confirmed_text}`,
+        source: `Confirmed at ${formatTime(recoverySession.last_confirmed_at || recoverySession.completed_at, profile.timezone)}.`,
         asksConfirmation: false,
       }
+      await trackEvent(supabase, {
+        eventName: 'reentry_recall_requested',
+        profile,
+        userId: user.id,
+        properties: { confidence: answer.confidence, moment_count: 1, recovery_memory: true },
+      })
       return NextResponse.json({ ...answer, moments: [answer] })
     }
   }
