@@ -137,20 +137,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { error: timelineError } = await supabase
-      .from('timeline_events')
-      .insert({
-        household_id: profile.household_id,
-        user_id: user.id,
-        profile_id: profile.id,
-        text: confirmedText,
-        type: 'did',
-        source: 'user-stated',
-        confidence: 'high',
-      })
-
-    if (timelineError) return NextResponse.json({ error: timelineError.message }, { status: 500 })
-
     await trackEvent(supabase, {
       eventName: 'reentry_moment_confirmed',
       profile,
