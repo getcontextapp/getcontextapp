@@ -370,6 +370,10 @@ export async function POST() {
   const confirmedMoments = recoveryMoments.filter(moment => moment.status === 'confirmed')
   const rejectedMomentKeys = new Set(recoveryMoments.filter(moment => moment.status === 'rejected').map(moment => moment.moment_key))
   const shownMomentKeys = new Set(recoveryMoments.filter(moment => moment.status === 'shown').map(moment => moment.moment_key))
+  // Once a session is exhausted, a moment that was only shown (never answered)
+  // should not loop back on a cold reopen. While the session is still active we
+  // keep it eligible (down-ranked) so "See another moment" can return to it.
+  const sessionExhausted = recoverySession?.status === 'completed'
 
   // Fallback only when the per-moment table is unavailable: we cannot know which
   // specific moments were confirmed, so surface the single session-level memory.
@@ -532,6 +536,7 @@ export async function POST() {
     }))
     .filter(moment => !confirmedMoments.some(confirmed => confirmed.moment_key === moment.key))
     .filter(moment => !rejectedMomentKeys.has(moment.key))
+    .filter(moment => !(sessionExhausted && shownMomentKeys.has(moment.key)))
     .sort((left, right) => {
       const leftShown = shownMomentKeys.has(left.key) ? 1 : 0
       const rightShown = shownMomentKeys.has(right.key) ? 1 : 0
@@ -551,6 +556,7 @@ export async function POST() {
       const key = canonicalKey(label)
       if (rejectedMomentKeys.has(key)) continue
       if (confirmedMoments.some(confirmed => confirmed.moment_key === key)) continue
+      if (sessionExhausted && shownMomentKeys.has(key)) continue
       addCanonicalMoment(plannedGroups, {
         key,
         label,
@@ -592,11 +598,24 @@ export async function POST() {
 
   let moments = [...freshAnswers, ...confirmedAnswers]
 
-  // Genuinely empty day: nothing done, nothing planned, nothing confirmed.
   if (moments.length === 0) {
-    moments = await generateRecallAnswersBatch([
-      { key: 'unknown', input: unknownMoment(profile.display_name, profile.timezone) },
-    ])
+    if (sessionExhausted || shownMomentKeys.size > 0 || rejectedMomentKeys.size > 0) {
+      // The user has already worked through what we know: give a calm, definite end.
+      const sessionComplete: RecallAnswer & { momentKey: string } = {
+        confidence: 'unknown',
+        confidenceLabel: 'Not sure',
+        answer: "That's everything I know right now.",
+        source: 'You reviewed the notes I had.',
+        asksConfirmation: false,
+        momentKey: 'session-complete',
+      }
+      moments = [sessionComplete]
+    } else {
+      // Genuinely empty day: nothing done, nothing planned, nothing reviewed yet.
+      moments = await generateRecallAnswersBatch([
+        { key: 'unknown', input: unknownMoment(profile.display_name, profile.timezone) },
+      ])
+    }
   }
 
   const answer = moments[0]
