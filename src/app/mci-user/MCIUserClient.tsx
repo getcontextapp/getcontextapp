@@ -68,6 +68,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [recallCorrection, setRecallCorrection] = useState('')
   const [recallSaving, setRecallSaving] = useState(false)
   const [recallShownKeys, setRecallShownKeys] = useState<string[]>([])
+  const [recallRemembering, setRecallRemembering] = useState(false)
 
   const localHour = Number(clockNow.toLocaleString('en-US', {
     timeZone: profile.timezone,
@@ -282,6 +283,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setRecallConfirmedText('')
     setRecallCorrection('')
     setRecallShownKeys([])
+    setRecallRemembering(false)
     try {
       const sessionResponse = await fetch('/api/reentry/session-status')
       const sessionStatus = await sessionResponse.json().catch(() => ({}))
@@ -401,6 +403,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setRecallExhausted(false)
     setRecallConfirmedText('')
     setRecallCorrection('')
+    setRecallRemembering(false)
   }
 
   async function confirmCurrentRecallMoment() {
@@ -902,50 +905,72 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             ) : recallResolved === 'no' ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
                 <p id="recall-title" className="text-xl font-semibold leading-7 text-warm-900">Okay, I will not use that right now.</p>
-                <p className="mt-3 text-base font-medium leading-6 text-warm-500">
-                  We can look at another idea, check your plan, or pause here.
-                </p>
-                <div className="mt-5 grid grid-cols-1 gap-3">
-                  <button
-                    type="button"
-                    onClick={showNextRecallMoment}
-                    className="min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
-                  >
-                    Show another idea
-                  </button>
-                  <button
-                    type="button"
-                    onClick={showTodaysPlanFromRecall}
-                    className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
-                  >
-                    Show today's plan
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRecallOpen(false)}
-                    className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
-                  >
-                    I remember now
-                  </button>
-                </div>
-                <label htmlFor="recall-correction" className="mt-5 block text-sm font-semibold text-warm-500">
-                  Optional: tell Context what you remember
-                </label>
-                <input
-                  id="recall-correction"
-                  value={recallCorrection}
-                  onChange={event => setRecallCorrection(event.target.value)}
-                  placeholder="I remember now..."
-                  className="mt-2 min-h-14 w-full rounded-xl border-2 border-cream-300 bg-cream-50 px-4 text-lg font-semibold text-warm-900 placeholder:text-warm-300 focus:outline-none focus:border-sage-400 focus:ring-2 focus:ring-sage-200"
-                />
-                <button
-                  type="button"
-                  onClick={() => saveRecallCorrection(recallCorrection)}
-                  disabled={recallSaving || !recallCorrection.trim()}
-                  className="mt-4 w-full min-h-[56px] rounded-xl bg-sage-600 text-lg font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
-                >
-                  {recallSaving ? 'Saving...' : 'Save this note'}
-                </button>
+                {recallRemembering ? (
+                  <>
+                    <p className="mt-3 text-base font-medium leading-6 text-warm-500">
+                      Tell me what you remember and I will save it.
+                    </p>
+                    <input
+                      id="recall-correction"
+                      value={recallCorrection}
+                      onChange={event => setRecallCorrection(event.target.value)}
+                      placeholder="I remember now..."
+                      autoFocus
+                      className="mt-4 min-h-14 w-full rounded-xl border-2 border-cream-300 bg-cream-50 px-4 text-lg font-semibold text-warm-900 placeholder:text-warm-300 focus:outline-none focus:border-sage-400 focus:ring-2 focus:ring-sage-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => saveRecallCorrection(recallCorrection)}
+                      disabled={recallSaving || !recallCorrection.trim()}
+                      className="mt-4 w-full min-h-[56px] rounded-xl bg-sage-600 text-lg font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                    >
+                      {recallSaving ? 'Saving...' : 'Save this note'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRecallRemembering(false)}
+                      className="mt-3 w-full min-h-11 text-base font-semibold text-warm-500 focus:outline-none focus:ring-2 focus:ring-sage-300 rounded-xl"
+                    >
+                      Back
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-3 text-base font-medium leading-6 text-warm-500">
+                      We can look at another idea, check your plan, or pause here.
+                    </p>
+                    <div className="mt-5 grid grid-cols-1 gap-3">
+                      <button
+                        type="button"
+                        onClick={showNextRecallMoment}
+                        className="min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                      >
+                        Show another idea
+                      </button>
+                      <button
+                        type="button"
+                        onClick={showTodaysPlanFromRecall}
+                        className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+                      >
+                        Show today's plan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRecallRemembering(true)}
+                        className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+                      >
+                        I remember now
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRecallOpen(false)}
+                        className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+                      >
+                        Back to home
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             ) : recallAnswer ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">

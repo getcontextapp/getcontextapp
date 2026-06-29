@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
-import { generateRecallAnswer } from '@/lib/anthropic'
+import { generateRecallAnswersBatch } from '@/lib/anthropic'
+import type { RecallAnswerInput, RecallAnswer } from '@/lib/anthropic'
 import { trackEvent } from '@/lib/analytics'
 import type { PlannedActivity, TimelineEvent } from '@/types'
 
-type RecallInput = Parameters<typeof generateRecallAnswer>[0]
-type RecallAnswer = Awaited<ReturnType<typeof generateRecallAnswer>>
+type RecallInput = RecallAnswerInput
 
 type MomentEvidence = {
   key: string
@@ -623,10 +623,7 @@ export async function POST() {
     })
   }
 
-  const answers = await Promise.all(uniqueMomentEntries.map(async moment => ({
-    ...await generateRecallAnswer(moment.input),
-    momentKey: moment.key,
-  })))
+  const answers = await generateRecallAnswersBatch(uniqueMomentEntries)
   const answer = answers[0]
 
   await trackEvent(supabase, {

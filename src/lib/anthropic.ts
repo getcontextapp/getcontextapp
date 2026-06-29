@@ -858,6 +858,107 @@ Rules:
   }
 }
 
+export async function generateRecallAnswersBatch(
+  moments: Array<{ key: string; input: RecallAnswerInput }>,
+): Promise<Array<RecallAnswer & { momentKey: string }>> {
+  if (moments.length === 0) return []
+
+  const displayName = moments[0].input.displayName
+  const timeZone = moments[0].input.timeZone
+
+  const unknowns = moments.filter(m => m.input.confidence === 'unknown')
+  const toGenerate = moments.filter(m => m.input.confidence !== 'unknown')
+
+  const fallbackResults: Array<RecallAnswer & { momentKey: string }> = unknowns.map(m => ({
+    confidence: 'unknown',
+    confidenceLabel: 'Not sure',
+    answer: "I don't have a note for the last little while.",
+    source: m.input.sourceText || 'Tell me, and I will remember it.',
+    asksConfirmation: false,
+    momentKey: m.key,
+  }))
+
+  if (toGenerate.length === 0) return fallbackResults
+
+  const momentList = toGenerate.map((m, i) => {
+    const label = m.input.confidence === 'certain' ? 'Certain' : 'Best guess'
+    return `Moment ${i + 1} (key: ${m.key}):
+  Confidence: ${label}
+  Evidence: ${m.input.evidenceText ?? 'None'}
+  Source phrase: ${m.input.sourceText}`
+  }).join('\n\n')
+
+  const prompt = `You write short recall answers for Context, an app for older adults with MCI.
+
+User name: ${displayName}
+
+For each moment below, write one answer and one source phrase.
+
+Rules:
+- Return JSON only: an array of objects with keys "key", "answer", "source".
+- Never use em dashes or en dashes.
+- Use plain second-person language ("You were...", not "Ibrahim was...").
+- If confidence is Certain: write one calm declarative sentence. Do not invent facts not in the evidence.
+- If confidence is Best guess: write only a gentle question ("Could you have been...?"). Never state it as fact.
+- Keep each answer under 18 words.
+- Keep each source under 18 words.
+- Do not add percentages.
+- Do not explain that something was planned if it was confirmed.
+
+${momentList}`
+
+  try {
+    const message = await client.messages.create({
+      model: MODEL,
+      max_tokens: 80 * toGenerate.length + 120,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    const raw = message.content[0].type === 'text' ? message.content[0].text : ''
+    const parsed: Array<{ key: string; answer: string; source: string }> = JSON.parse(cleanJson(raw))
+
+    const generated: Array<RecallAnswer & { momentKey: string }> = toGenerate.map((m, i) => {
+      const item = Array.isArray(parsed) ? parsed.find(p => p.key === m.key) ?? parsed[i] : null
+      const confidenceLabel = m.input.confidence === 'certain' ? 'Certain' : 'Best guess'
+      let answer = item ? cleanContextContent(item.answer).slice(0, 180) : ''
+      const source = item ? cleanContextContent(item.source || m.input.sourceText).slice(0, 180) : m.input.sourceText
+
+      if (m.input.confidence === 'guess') answer = buildRecallQuestion(m.input.evidenceText)
+      if (m.input.confidence === 'certain' && !answer) {
+        answer = `You were ${m.input.evidenceText ?? 'doing something you told me about'}.`
+      }
+
+      return {
+        confidence: m.input.confidence,
+        confidenceLabel,
+        answer,
+        source,
+        asksConfirmation: true,
+        momentKey: m.key,
+      }
+    })
+
+    return [...generated, ...fallbackResults]
+  } catch (error) {
+    console.error('[Anthropic] Batch recall answer failed:', error)
+    return [
+      ...toGenerate.map(m => {
+        const confidenceLabel = m.input.confidence === 'certain' ? 'Certain' : 'Best guess'
+        return {
+          confidence: m.input.confidence,
+          confidenceLabel: confidenceLabel as 'Certain' | 'Best guess',
+          answer: m.input.confidence === 'guess'
+            ? buildRecallQuestion(m.input.evidenceText)
+            : `You were ${m.input.evidenceText ?? 'doing something you told me about'}.`,
+          source: m.input.sourceText,
+          asksConfirmation: true,
+          momentKey: m.key,
+        }
+      }),
+      ...fallbackResults,
+    ]
+  }
+}
+
 export async function generateReflectionMemory(rawInput: string): Promise<ReflectionMemory> {
   const prompt = `You are a memory assistant for an older adult with mild cognitive impairment. The user has just described part of their day in their own words.
 
