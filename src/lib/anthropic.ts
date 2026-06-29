@@ -51,6 +51,16 @@ export interface RecallAnswer {
   asksConfirmation: boolean
 }
 
+export interface ReflectionMemory {
+  summary: string
+  nodes: {
+    activities: string[]
+    people: string[]
+    places: string[]
+    feelings: string[]
+  }
+}
+
 export interface PendingSmsItem {
   label: string
   category: string
@@ -87,6 +97,15 @@ function cleanContextContent(value: unknown) {
     .replace(/[—–]/g, ',')
     .replace(/\s+,/g, ',')
     .trim()
+}
+
+function cleanStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map(item => cleanContextContent(item).slice(0, 80))
+        .filter(Boolean)
+        .slice(0, 12)
+    : []
 }
 
 function safeCategory(value: unknown): ActivityCategory {
@@ -836,5 +855,51 @@ Rules:
       source: input.sourceText,
       asksConfirmation: true,
     }
+  }
+}
+
+export async function generateReflectionMemory(rawInput: string): Promise<ReflectionMemory> {
+  const prompt = `You are a memory assistant for an older adult with mild cognitive impairment. The user has just described part of their day in their own words.
+
+Do two things:
+
+1. Write a warm, clear, 2-3 sentence summary of what they described. Write in second person (You went to..., You worked on...). Plain language, no clinical terms, no em dashes.
+
+2. Extract structured memory nodes from what they described. Return them as JSON in this exact format:
+{
+  "summary": "...",
+  "nodes": {
+    "activities": [],
+    "people": [],
+    "places": [],
+    "feelings": []
+  }
+}
+
+Only extract what was explicitly mentioned. Do not infer or add. If a category has nothing, return an empty array. Return only the JSON object, no preamble, no markdown.
+
+User reflection:
+${rawInput}`
+
+  const message = await client.messages.create({
+    model: MODEL,
+    max_tokens: 500,
+    messages: [{ role: 'user', content: prompt }],
+  })
+  const raw = message.content[0].type === 'text' ? message.content[0].text : ''
+  const parsed = JSON.parse(cleanJson(raw))
+  const nodes = parsed.nodes ?? {}
+  const summary = cleanContextContent(parsed.summary).slice(0, 900)
+
+  if (!summary) throw new Error('AI returned an empty reflection summary')
+
+  return {
+    summary,
+    nodes: {
+      activities: cleanStringArray(nodes.activities),
+      people: cleanStringArray(nodes.people),
+      places: cleanStringArray(nodes.places),
+      feelings: cleanStringArray(nodes.feelings),
+    },
   }
 }

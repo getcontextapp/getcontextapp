@@ -3,6 +3,7 @@ import { createServerClient } from '@/lib/supabase-server'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
 import { getHouseholdMembers } from '@/lib/household-links'
+import { reflectionToClient } from '@/lib/reflections'
 import MCIUserClient from './MCIUserClient'
 
 function dashboardSource(value: string | string[] | undefined) {
@@ -59,6 +60,13 @@ export default async function MCIUserPage({
     .order('created_at', { ascending: false })
     .limit(20)
 
+  const { data: reflection } = await supabase
+    .from('reflections')
+    .select('*')
+    .eq('user_id', profile.user_id)
+    .eq('reflection_date', getLocalDateKey(new Date(), profile.timezone))
+    .maybeSingle()
+
   // Fetch household join code
   const { data: household } = await supabase
     .from('households')
@@ -75,6 +83,7 @@ export default async function MCIUserPage({
       initialActivities={activities ?? []}
       initialPlannedActivities={plannedActivities ?? []}
       initialTimelineEvents={timelineEvents ?? []}
+      initialReflection={reflection ? reflectionToClient(reflection) : null}
       carePartner={carePartner}
       household={household ?? null}
       dashboardSource={dashboardSource(params?.source)}

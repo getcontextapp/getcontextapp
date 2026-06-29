@@ -7,6 +7,7 @@ import { getSmsProfileMatch } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 import { addDaysToKey } from '@/lib/task-scheduling'
 import { ensureNextOccurrence } from '@/lib/task-scheduling-server'
+import { saveReflectionInput } from '@/lib/reflections'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity } from '@/types'
 
 function xmlResponse(message: string) {
@@ -86,6 +87,28 @@ async function getPromptingReminderLogId(supabase: ReturnType<typeof createServi
   }
 
   return data?.id ?? null
+}
+
+async function hasRecentReflectionPrompt(supabase: ReturnType<typeof createServiceClient>, profile: any) {
+  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from('sms_messages')
+    .select('id')
+    .eq('profile_id', profile.id)
+    .eq('direction', 'outbound')
+    .eq('purpose', 'daily_summary')
+    .gte('created_at', since)
+    .contains('metadata', { reflection_prompt: true })
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[SMS] Reflection prompt lookup failed:', error.message)
+    return false
+  }
+
+  return Boolean(data?.id)
 }
 
 function pendingItemLabel(item: any) {
@@ -730,6 +753,43 @@ export async function POST(request: NextRequest) {
       metadata,
     })
     return xmlResponse(reply)
+  }
+
+  if (await hasRecentReflectionPrompt(supabase, profile)) {
+    try {
+      await saveReflectionInput(supabase, {
+        id: profile.id,
+        user_id: profile.user_id,
+        household_id: profile.household_id,
+        timezone: profile.timezone,
+      }, body, 'sms')
+      const reply = 'Thank you. I saved that in your Daily Reflection.'
+      await logSmsMessage(supabase, {
+        householdId: profile.household_id,
+        profileId: profile.id,
+        direction: 'outbound',
+        purpose: 'inbound_reflection',
+        phoneE164: from,
+        body: reply,
+        status: 'twiml_reply',
+        metadata: { reflection_reply: true },
+      })
+      return xmlResponse(reply)
+    } catch (error) {
+      console.error('[SMS] Reflection save failed:', error)
+      const reply = 'Context had trouble saving that reflection. Please try again in the app.'
+      await logSmsMessage(supabase, {
+        householdId: profile.household_id,
+        profileId: profile.id,
+        direction: 'outbound',
+        purpose: 'inbound_reflection',
+        phoneE164: from,
+        body: reply,
+        status: 'twiml_reply',
+        metadata: { reflection_reply: true, error: error instanceof Error ? error.message : 'unknown' },
+      })
+      return xmlResponse(reply)
+    }
   }
 
   try {

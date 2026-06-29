@@ -85,6 +85,26 @@ export interface TimelineEvent {
   created_at: string
 }
 
+export interface ReflectionNodes {
+  activities: string[]
+  people: string[]
+  places: string[]
+  feelings: string[]
+}
+
+export interface Reflection {
+  id: string
+  user_id: string
+  household_id: string
+  raw_input: string
+  ai_summary: string
+  nodes: ReflectionNodes
+  source: 'app' | 'sms'
+  reflection_date: string
+  created_at: string
+  updated_at: string
+}
+
 export interface ContextCard {
   id: string
   household_id: string
@@ -115,6 +135,8 @@ export type SmsPurpose =
   | 'care_partner_no_response'
   | 'pending_reminder'
   | 'daily_summary'
+  | 'reflection_prompt'
+  | 'inbound_reflection'
   | 'weekly_summary'
   | 'carry_over'
   | 'inbound_plan_reply'

@@ -122,6 +122,8 @@ export function buildPersonalDailySummaryMessage(
     activities.length === 0 ? 'Nothing was confirmed today.' : '',
     pendingCount > 0 ? `${pendingCount} item${pendingCount !== 1 ? 's' : ''} still waiting in today's plan.` : `Everything in today's plan is settled.`,
     ``,
+    `Before we wrap up today, is there anything you'd like Context to remember?`,
+    ``,
     `Open Context: ${sourcedDashboardUrl(appUrl, '/mci-user')}`,
   ].filter(Boolean).join('\n')
 }

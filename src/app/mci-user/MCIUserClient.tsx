@@ -5,11 +5,12 @@ import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { ACTIVITY_TILES } from '@/types'
-import type { Profile, ActivityLog, PlannedActivity, TimelineEvent } from '@/types'
+import type { Profile, ActivityLog, PlannedActivity, TimelineEvent, Reflection } from '@/types'
 import HouseholdCode from '@/components/mci/HouseholdCode'
 import ReminderSettings from '@/components/mci/ReminderSettings'
 import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanComposer'
 import EditTaskSheet from '@/components/mci/EditTaskSheet'
+import DailyReflection from '@/components/mci/DailyReflection'
 import { addDaysToKey, formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 
 interface Props {
@@ -17,6 +18,7 @@ interface Props {
   initialActivities: ActivityLog[]
   initialPlannedActivities: PlannedActivity[]
   initialTimelineEvents: TimelineEvent[]
+  initialReflection: Reflection | null
   carePartner: Profile | null
   household: { join_code: string; name: string } | null
   dashboardSource: 'sms_link' | 'direct' | 'home_screen'
@@ -38,7 +40,7 @@ type RecallAnswer = {
   momentKey?: string
 }
 
-export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, carePartner, household, dashboardSource }: Props) {
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, dashboardSource }: Props) {
   const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
@@ -756,6 +758,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             </div>
           </div>
         )}
+
+        <DailyReflection initialReflection={initialReflection} />
 
       </div>
 

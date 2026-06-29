@@ -234,6 +234,7 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
         activity_count: activityList.length,
         pending_count: pendingItems?.length ?? 0,
         recipient_role: 'mci_user',
+        reflection_prompt: true,
       },
     })
 
