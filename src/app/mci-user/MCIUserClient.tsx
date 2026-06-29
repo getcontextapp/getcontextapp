@@ -261,6 +261,12 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     })
   }
 
+  function formatRememberedText(value: string) {
+    const trimmed = value.trim().replace(/[?.!]+$/, '')
+    if (!trimmed) return 'that'
+    return trimmed.replace(/^you\s+/i, 'you ')
+  }
+
   async function openRecall() {
     setRecallOpen(true)
     setRecallLoading(true)
@@ -802,7 +808,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             ) : recallResolved === 'yes' ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
                 <p id="recall-title" className="text-xl font-semibold leading-7 text-warm-900">
-                  I'll remember that {recallConfirmedText}.
+                  I'll remember: {formatRememberedText(recallConfirmedText)}.
                 </p>
                 <p className="mt-3 text-base font-medium leading-6 text-warm-500">
                   {recallMomentIndex + 1 < recallMoments.length

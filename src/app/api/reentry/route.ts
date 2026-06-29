@@ -7,6 +7,24 @@ import type { PlannedActivity, TimelineEvent } from '@/types'
 
 type RecallInput = Parameters<typeof generateRecallAnswer>[0]
 
+type MomentEvidence = {
+  key: string
+  label: string
+  confidence: 'certain' | 'guess'
+  evidenceText: string
+  sourceText: string
+  occurredAt: string
+  priority: number
+  sourceId: string
+  linkedActivityId?: string | null
+}
+
+type CanonicalMoment = {
+  key: string
+  label: string
+  evidence: MomentEvidence[]
+}
+
 function formatTime(value: string, timeZone?: string | null) {
   return new Date(value).toLocaleTimeString('en-US', {
     timeZone: timeZone || undefined,
@@ -31,6 +49,59 @@ function recallPhrase(text: string, fallbackPrefix = '') {
   if (lower.startsWith('eat ')) return value.replace(/^eat\b/i, 'eating')
   if (lower.startsWith('make ')) return value.replace(/^make\b/i, 'making')
   return `${fallbackPrefix}${value}`
+}
+
+function displayLabel(text: string) {
+  return text
+    .trim()
+    .replace(/[?.!]+$/, '')
+    .replace(/\s+/g, ' ')
+}
+
+function canonicalTokens(text: string) {
+  const stopWords = new Set([
+    'a',
+    'an',
+    'and',
+    'appointment',
+    'at',
+    'for',
+    'my',
+    'the',
+    'this',
+    'to',
+    'today',
+    'your',
+  ])
+  const normalized = text
+    .toLowerCase()
+    .replace(/\b(this\s+)?(morning|afternoon|evening|tonight|today)\b/g, ' ')
+    .replace(/\b(you|i)\s+(were|was|have|had|did|do|done|completed|confirmed|planned)\b/g, ' ')
+    .replace(/\b(take|took|taking)\b/g, 'take')
+    .replace(/\b(go|going|went)\b/g, 'go')
+    .replace(/\b(drive|driving|drove)\b/g, 'drive')
+    .replace(/\b(call|calling|called)\b/g, 'call')
+    .replace(/[^a-z0-9\s]/g, ' ')
+
+  return Array.from(new Set(
+    normalized
+      .split(/\s+/)
+      .map(token => token.trim())
+      .filter(token => token.length > 1 && !stopWords.has(token)),
+  )).sort()
+}
+
+function canonicalKey(text: string) {
+  const tokens = canonicalTokens(text)
+  return tokens.length > 0 ? tokens.join('|') : displayLabel(text).toLowerCase()
+}
+
+function tokenSimilarity(left: string, right: string) {
+  const leftTokens = new Set(canonicalTokens(left))
+  const rightTokens = new Set(canonicalTokens(right))
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0
+  const overlap = Array.from(leftTokens).filter(token => rightTokens.has(token)).length
+  return overlap / Math.min(leftTokens.size, rightTokens.size)
 }
 
 function reflectionEvidence(nodes: any, summary?: string | null) {
@@ -62,6 +133,11 @@ function periodForTimestamp(value: string, timeZone?: string | null) {
   return 'tonight'
 }
 
+function sourcePeriod(value: string, timeZone?: string | null) {
+  const period = periodForTimestamp(value, timeZone)
+  return period === 'today' ? 'today' : period
+}
+
 function isPlanListSms(body: string, outboundPrompts: Array<{ created_at: string; purpose: string }>, createdAt: string) {
   const text = body.trim()
   const lower = text.toLowerCase()
@@ -86,6 +162,57 @@ function unknownMoment(displayName: string, timeZone?: string | null): RecallInp
     confidence: 'unknown',
     evidenceText: null,
     sourceText: 'Tell me, and I will remember it.',
+  }
+}
+
+function addCanonicalMoment(groups: CanonicalMoment[], evidence: MomentEvidence) {
+  const linkedGroup = evidence.linkedActivityId
+    ? groups.find(group => group.evidence.some(item => item.sourceId === `activity:${evidence.linkedActivityId}`))
+    : null
+  const similarGroup = linkedGroup ?? groups.find(group =>
+    group.key === evidence.key ||
+    tokenSimilarity(group.label, evidence.label) >= 0.8,
+  )
+
+  if (similarGroup) {
+    if (!similarGroup.evidence.some(item => item.sourceId === evidence.sourceId)) {
+      similarGroup.evidence.push(evidence)
+      similarGroup.evidence.sort(compareEvidence)
+    }
+    if (evidence.priority < similarGroup.evidence[0].priority) similarGroup.label = evidence.label
+    return
+  }
+
+  groups.push({
+    key: evidence.key,
+    label: evidence.label,
+    evidence: [evidence],
+  })
+}
+
+function compareEvidence(left: MomentEvidence, right: MomentEvidence) {
+  if (left.priority !== right.priority) return left.priority - right.priority
+  return new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime()
+}
+
+function canonicalMomentToRecallInput(moment: CanonicalMoment, displayName: string, timeZone?: string | null): RecallInput {
+  const evidence = [...moment.evidence].sort(compareEvidence)
+  const best = evidence[0]
+  const hasCertain = evidence.some(item => item.confidence === 'certain')
+  const supportingSources = evidence
+    .slice(1, 4)
+    .map(item => item.sourceText)
+    .filter(source => source !== best.sourceText)
+  const sourceText = supportingSources.length > 0
+    ? `${best.sourceText} Also seen in ${supportingSources.length} related note${supportingSources.length === 1 ? '' : 's'}.`
+    : best.sourceText
+
+  return {
+    displayName,
+    timeZone,
+    confidence: hasCertain ? 'certain' : 'guess',
+    evidenceText: best.evidenceText,
+    sourceText,
   }
 }
 
@@ -180,70 +307,92 @@ export async function POST() {
   const plans = (planResult.data ?? []) as PlannedActivity[]
   const reflection = reflectionUnavailable ? null : reflectionResult.data
 
-  const moments: RecallInput[] = []
+  const canonicalMoments: CanonicalMoment[] = []
 
   for (const event of explicitEvents.slice(0, 2)) {
-    moments.push({
-      displayName: profile.display_name,
-      timeZone: profile.timezone,
+    const label = displayLabel(event.text)
+    addCanonicalMoment(canonicalMoments, {
+      key: canonicalKey(label),
+      label,
       confidence: 'certain',
       evidenceText: event.text,
       sourceText: `You told me at ${formatTime(event.created_at, profile.timezone)}.`,
+      occurredAt: event.created_at,
+      priority: 1,
+      sourceId: `timeline:${event.id}`,
     })
   }
 
   for (const activity of activities.slice(0, 3)) {
-    moments.push({
-      displayName: profile.display_name,
-      timeZone: profile.timezone,
+    const label = displayLabel(activity.note?.trim() || activity.label)
+    addCanonicalMoment(canonicalMoments, {
+      key: canonicalKey(label),
+      label,
       confidence: 'certain',
       evidenceText: recallPhrase(activity.note?.trim() || activity.label),
-      sourceText: `You completed this ${periodForTimestamp(activity.occurred_at, profile.timezone)}.`,
+      sourceText: `You completed this ${sourcePeriod(activity.occurred_at, profile.timezone)}.`,
+      occurredAt: activity.occurred_at,
+      priority: 2,
+      sourceId: `activity:${activity.id}`,
     })
   }
 
   for (const plan of plans.filter(item => item.status === 'confirmed' && item.confirmed_at).slice(0, 3)) {
-    moments.push({
-      displayName: profile.display_name,
-      timeZone: profile.timezone,
+    const label = displayLabel(plan.note?.trim() || plan.label)
+    addCanonicalMoment(canonicalMoments, {
+      key: canonicalKey(label),
+      label,
       confidence: 'certain',
       evidenceText: recallPhrase(plan.note?.trim() || plan.label),
       sourceText: `You confirmed this at ${formatTime(plan.confirmed_at!, profile.timezone)}.`,
+      occurredAt: plan.confirmed_at!,
+      priority: 3,
+      sourceId: `plan:${plan.id}`,
+      linkedActivityId: plan.confirmed_activity_log_id,
     })
   }
 
   if (reflection?.ai_summary) {
     const evidence = reflectionEvidence(reflection.nodes, reflection.ai_summary)
-    moments.push({
-      displayName: profile.display_name,
-      timeZone: profile.timezone,
+    const label = displayLabel(evidence || reflection.ai_summary)
+    addCanonicalMoment(canonicalMoments, {
+      key: canonicalKey(label),
+      label,
       confidence: 'certain',
       evidenceText: evidence || reflection.ai_summary,
       sourceText: 'According to your Reflection today.',
+      occurredAt: reflection.created_at,
+      priority: 4,
+      sourceId: `reflection:${reflection.id}`,
     })
   }
 
   for (const plan of plans.filter(item => item.status === 'planned').slice(0, 3)) {
-    moments.push({
-      displayName: profile.display_name,
-      timeZone: profile.timezone,
+    const label = displayLabel(plan.note?.trim() || plan.label)
+    addCanonicalMoment(canonicalMoments, {
+      key: canonicalKey(label),
+      label,
       confidence: 'guess',
       evidenceText: recallPhrase(plan.note?.trim() || plan.label, 'getting ready for '),
       sourceText: 'You planned this earlier today. This was only planned, not confirmed.',
+      occurredAt: plan.created_at,
+      priority: 5,
+      sourceId: `plan:${plan.id}`,
     })
   }
 
-  if (moments.length === 0) {
-    moments.push(unknownMoment(profile.display_name, profile.timezone))
-  }
+  const uniqueMoments = canonicalMoments
+    .map(moment => ({
+      ...moment,
+      evidence: [...moment.evidence].sort(compareEvidence),
+    }))
+    .sort((left, right) => compareEvidence(left.evidence[0], right.evidence[0]))
+    .map(moment => canonicalMomentToRecallInput(moment, profile.display_name, profile.timezone))
+    .slice(0, 4)
 
-  const uniqueMoments = moments.filter((moment, index, list) =>
-    index === list.findIndex(item =>
-      item.confidence === moment.confidence &&
-      item.evidenceText === moment.evidenceText &&
-      item.sourceText === moment.sourceText,
-    ),
-  ).slice(0, 4)
+  if (uniqueMoments.length === 0) {
+    uniqueMoments.push(unknownMoment(profile.display_name, profile.timezone))
+  }
 
   const answers = await Promise.all(uniqueMoments.map(moment => generateRecallAnswer(moment)))
   const answer = answers[0]
