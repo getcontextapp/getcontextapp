@@ -1,0 +1,301 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
+import {
+  config,
+  makeEvidence,
+  type Evidence,
+  type EpisodeState,
+  type RecoveryIntent,
+  type RecoverySession,
+} from '@/lib/context-rank'
+import type { ActivityLog, PlannedActivity, Profile, Reflection, SmsMessage } from '@/types'
+
+type RecoveryMomentRow = {
+  id: string
+  session_id: string | null
+  moment_key: string
+  answer_text: string | null
+  confidence: string | null
+  status: 'shown' | 'confirmed' | 'rejected' | 'skipped'
+  shown_at: string
+  responded_at: string | null
+}
+
+type RecoverySessionRow = {
+  id: string
+  user_id: string
+  status: 'active' | 'completed' | 'abandoned'
+  created_at: string
+}
+
+type ContextRankAdapterInput = {
+  supabase: SupabaseClient
+  profile: Profile
+  queryTime: number
+  intent: RecoveryIntent
+  sessionId?: string | null
+}
+
+function dateWindow(point: number, beforeMs: number, afterMs: number) {
+  return {
+    earliest: point - beforeMs,
+    latest: point + afterMs,
+    pointEstimate: point,
+  }
+}
+
+function dayWindow(dateKey: string) {
+  const start = Date.parse(`${dateKey}T00:00:00.000Z`)
+  return {
+    earliest: start,
+    latest: start + 24 * 60 * 60 * 1000,
+  }
+}
+
+function taskPlannedWindow(task: PlannedActivity) {
+  if (task.expected_time) {
+    const point = Date.parse(`${task.planned_for}T${task.expected_time}:00.000Z`)
+    if (Number.isFinite(point)) return dateWindow(point, 60 * 60 * 1000, 60 * 60 * 1000)
+  }
+  const base = Date.parse(`${task.planned_for}T00:00:00.000Z`)
+  const ranges: Record<string, [number, number]> = {
+    morning: [6, 12],
+    afternoon: [12, 17],
+    evening: [17, 22],
+    anytime: [0, 24],
+  }
+  const [startHour, endHour] = ranges[task.expected_period] ?? ranges.anytime
+  return {
+    earliest: base + startHour * 60 * 60 * 1000,
+    latest: base + endHour * 60 * 60 * 1000,
+  }
+}
+
+function displayTask(task: PlannedActivity) {
+  return (task.note?.trim() || task.label).trim()
+}
+
+function displayActivity(activity: ActivityLog) {
+  return (activity.note?.trim() || activity.label).trim()
+}
+
+function displayReflection(reflection: Reflection) {
+  const nodes = reflection.nodes
+  const nodeText = [
+    ...(nodes.activities ?? []),
+    ...(nodes.people ?? []),
+    ...(nodes.places ?? []),
+    ...(nodes.feelings ?? []),
+  ].filter(Boolean).slice(0, 8).join(', ')
+  return nodeText ? `${reflection.ai_summary}. ${nodeText}` : reflection.ai_summary
+}
+
+function sessionStateFromRows(rows: RecoveryMomentRow[], sessionId?: string | null) {
+  const states: Record<string, EpisodeState> = {}
+  for (const row of rows) {
+    if (sessionId && row.session_id !== sessionId) continue
+    const state = row.status === 'confirmed'
+      ? 'confirmed'
+      : row.status === 'rejected'
+      ? 'rejected'
+      : row.status === 'shown'
+      ? 'shown'
+      : 'exhausted'
+    states[row.moment_key] = state
+  }
+  return states
+}
+
+async function getOrCreateSession(
+  supabase: SupabaseClient,
+  profile: Profile,
+  queryTime: number,
+  intent: RecoveryIntent,
+  sessionId?: string | null,
+) {
+  if (sessionId) {
+    const { data } = await supabase
+      .from('recovery_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .eq('user_id', profile.user_id)
+      .maybeSingle()
+    if (data) return data as RecoverySessionRow
+  }
+
+  const todayKey = getLocalDateKey(new Date(queryTime), profile.timezone)
+  const { data, error } = await supabase
+    .from('recovery_sessions')
+    .insert({
+      user_id: profile.user_id,
+      household_id: profile.household_id,
+      profile_id: profile.id,
+      session_date: todayKey,
+      status: 'active',
+    })
+    .select('*')
+    .single()
+
+  if (error) throw new Error(error.message)
+  return data as RecoverySessionRow
+}
+
+export async function buildContextRankInput({
+  supabase,
+  profile,
+  queryTime,
+  intent,
+  sessionId,
+}: ContextRankAdapterInput): Promise<{ evidence: Evidence[]; session: RecoverySession }> {
+  if (!profile.household_id) throw new Error('Profile has no household.')
+  const todayRange = getUtcRangeForLocalDay(new Date(queryTime), profile.timezone)
+  const todayKey = getLocalDateKey(new Date(queryTime), profile.timezone)
+  const lookbackMs = config.intentWindowsMs[intent]
+  const windowStart = new Date(Math.min(new Date(todayRange.start).getTime(), queryTime - lookbackMs)).toISOString()
+  const windowEnd = new Date(Math.max(new Date(todayRange.end).getTime(), queryTime + 60 * 60 * 1000)).toISOString()
+
+  const [activityResult, taskResult, smsResult, reflectionResult, sessionRow] = await Promise.all([
+    supabase
+      .from('activity_logs')
+      .select('*')
+      .eq('household_id', profile.household_id)
+      .gte('occurred_at', windowStart)
+      .lt('occurred_at', windowEnd)
+      .order('occurred_at', { ascending: false })
+      .limit(30),
+    supabase
+      .from('planned_activities')
+      .select('*')
+      .eq('household_id', profile.household_id)
+      .eq('planned_for', todayKey)
+      .order('updated_at', { ascending: false })
+      .limit(40),
+    supabase
+      .from('sms_messages')
+      .select('*')
+      .eq('profile_id', profile.id)
+      .gte('created_at', windowStart)
+      .lt('created_at', windowEnd)
+      .order('created_at', { ascending: false })
+      .limit(30),
+    supabase
+      .from('reflections')
+      .select('*')
+      .eq('user_id', profile.user_id)
+      .eq('reflection_date', todayKey)
+      .maybeSingle(),
+    getOrCreateSession(supabase, profile, queryTime, intent, sessionId),
+  ])
+
+  const lookupError = activityResult.error || taskResult.error || smsResult.error
+  if (lookupError) throw new Error(lookupError.message)
+  if (reflectionResult.error && reflectionResult.error.code !== 'PGRST116') throw new Error(reflectionResult.error.message)
+
+  const recoveryResult = await supabase
+    .from('recovery_session_moments')
+    .select('id,session_id,moment_key,answer_text,confidence,status,shown_at,responded_at')
+    .eq('user_id', profile.user_id)
+    .eq('session_date', todayKey)
+    .order('responded_at', { ascending: false })
+    .limit(40)
+
+  const recoveryRows = recoveryResult.error ? [] : (recoveryResult.data ?? []) as RecoveryMomentRow[]
+  const evidence: Evidence[] = []
+
+  for (const activity of (activityResult.data ?? []) as ActivityLog[]) {
+    const point = Date.parse(activity.occurred_at)
+    evidence.push(makeEvidence({
+      id: `activity_log:${activity.id}`,
+      userId: profile.user_id,
+      content: displayActivity(activity),
+      source: 'activity_log',
+      time: dateWindow(point, 30 * 60 * 1000, 30 * 60 * 1000),
+      provenance: `activity_logs:${activity.id}`,
+    }))
+  }
+
+  for (const task of (taskResult.data ?? []) as PlannedActivity[]) {
+    if (task.status === 'confirmed' || task.confirmed_at) {
+      const point = Date.parse(task.confirmed_at ?? task.updated_at)
+      evidence.push(makeEvidence({
+        id: `task_done:${task.id}`,
+        userId: profile.user_id,
+        content: displayTask(task),
+        source: 'task_done',
+        time: dateWindow(point, 2 * 60 * 60 * 1000, 30 * 60 * 1000),
+        provenance: `planned_activities:${task.id}`,
+      }))
+      continue
+    }
+    if (['planned', 'not_now'].includes(task.status)) {
+      evidence.push(makeEvidence({
+        id: `task_planned:${task.id}`,
+        userId: profile.user_id,
+        content: displayTask(task),
+        source: 'task_planned',
+        time: taskPlannedWindow(task),
+        provenance: `planned_activities:${task.id}`,
+      }))
+    }
+  }
+
+  for (const message of (smsResult.data ?? []) as SmsMessage[]) {
+    const point = Date.parse(message.created_at)
+    if (message.direction === 'inbound') {
+      evidence.push(makeEvidence({
+        id: `sms_response:${message.id}`,
+        userId: profile.user_id,
+        content: message.body,
+        source: 'sms_response',
+        time: dateWindow(point, 30 * 60 * 1000, 30 * 60 * 1000),
+        provenance: `sms_messages:${message.id}`,
+      }))
+    } else {
+      evidence.push(makeEvidence({
+        id: `sms_ignored:${message.id}`,
+        userId: profile.user_id,
+        content: message.body,
+        source: 'sms_ignored',
+        time: dateWindow(point, 30 * 60 * 1000, 30 * 60 * 1000),
+        provenance: `sms_messages:${message.id}`,
+      }))
+    }
+  }
+
+  const reflection = reflectionResult.data as Reflection | null
+  if (reflection?.ai_summary) {
+    evidence.push(makeEvidence({
+      id: `reflection:${reflection.id}`,
+      userId: profile.user_id,
+      content: displayReflection(reflection),
+      source: 'reflection',
+      time: dayWindow(reflection.reflection_date),
+      provenance: `reflections:${reflection.id}`,
+    }))
+  }
+
+  for (const row of recoveryRows.filter(item => item.status === 'confirmed' && item.answer_text)) {
+    const point = Date.parse(row.responded_at ?? row.shown_at)
+    evidence.push(makeEvidence({
+      id: `user_confirmation:${row.id}`,
+      userId: profile.user_id,
+      content: row.answer_text!,
+      source: 'user_confirmation',
+      state: 'confirmed',
+      time: dateWindow(point, 2 * 60 * 60 * 1000, 30 * 60 * 1000),
+      provenance: `recovery_session_moments:${row.id}`,
+    }))
+  }
+
+  return {
+    evidence,
+    session: {
+      id: sessionRow.id,
+      userId: profile.user_id,
+      state: 'intent_selected',
+      intent,
+      candidateStates: sessionStateFromRows(recoveryRows, sessionRow.id),
+      history: [],
+    },
+  }
+}

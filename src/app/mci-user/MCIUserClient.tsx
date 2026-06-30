@@ -12,6 +12,7 @@ import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanCom
 import EditTaskSheet from '@/components/mci/EditTaskSheet'
 import DailyReflection from '@/components/mci/DailyReflection'
 import { addDaysToKey, formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
+import type { ContinuityCard, RecoveryIntent, RecoverySession, ScoredCandidate } from '@/lib/context-rank'
 
 interface Props {
   profile: Profile
@@ -31,14 +32,24 @@ const PERIOD_ORDER: Record<string, number> = {
   anytime: 3,
 }
 
-type RecallAnswer = {
-  confidence: 'certain' | 'guess' | 'unknown'
-  confidenceLabel: 'Certain' | 'Best guess' | 'Not sure'
-  answer: string
-  source: string
-  asksConfirmation: boolean
-  momentKey?: string
+type RecoveryApiResponse = {
+  session?: RecoverySession
+  card?: ContinuityCard
+  resolved?: boolean
+  message?: string
+  error?: string
 }
+
+const PRIMARY_RECOVERY_INTENTS: Array<{ intent: RecoveryIntent; label: string }> = [
+  { intent: 'what_was_i_doing', label: 'What was I doing?' },
+  { intent: 'what_should_i_do_next', label: 'What should I do next?' },
+  { intent: 'did_i_finish_this', label: 'Did I finish this?' },
+]
+
+const MORE_RECOVERY_INTENTS: Array<{ intent: RecoveryIntent; label: string }> = [
+  { intent: 'where_did_i_leave_off', label: 'Where did I leave off?' },
+  { intent: 'what_changed_today', label: 'What changed today?' },
+]
 
 export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, dashboardSource }: Props) {
   const [supabase] = useState(createClient)
@@ -57,18 +68,17 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null)
   const [confirmingPlanIds, setConfirmingPlanIds] = useState<string[]>([])
   const [clockNow, setClockNow] = useState(() => new Date())
-  const [recallOpen, setRecallOpen] = useState(false)
-  const [recallLoading, setRecallLoading] = useState(false)
-  const [recallAnswer, setRecallAnswer] = useState<RecallAnswer | null>(null)
-  const [recallMoments, setRecallMoments] = useState<RecallAnswer[]>([])
-  const [recallMomentIndex, setRecallMomentIndex] = useState(0)
-  const [recallResolved, setRecallResolved] = useState<'yes' | 'no' | null>(null)
-  const [recallExhausted, setRecallExhausted] = useState(false)
-  const [recallConfirmedText, setRecallConfirmedText] = useState('')
-  const [recallCorrection, setRecallCorrection] = useState('')
-  const [recallSaving, setRecallSaving] = useState(false)
-  const [recallShownKeys, setRecallShownKeys] = useState<string[]>([])
-  const [recallRemembering, setRecallRemembering] = useState(false)
+  const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const [recoveryMoreOpen, setRecoveryMoreOpen] = useState(false)
+  const [recoveryLoading, setRecoveryLoading] = useState(false)
+  const [recoveryError, setRecoveryError] = useState<string | null>(null)
+  const [recoveryIntent, setRecoveryIntent] = useState<RecoveryIntent | null>(null)
+  const [recoverySession, setRecoverySession] = useState<RecoverySession | null>(null)
+  const [recoveryCard, setRecoveryCard] = useState<ContinuityCard | null>(null)
+  const [recoveryResolvedMessage, setRecoveryResolvedMessage] = useState('')
+  const [recoveryFeedbackSaving, setRecoveryFeedbackSaving] = useState(false)
+  const [recoveryCorrection, setRecoveryCorrection] = useState('')
+  const [recoveryCorrectionFor, setRecoveryCorrectionFor] = useState<string | null>(null)
 
   const localHour = Number(clockNow.toLocaleString('en-US', {
     timeZone: profile.timezone,
@@ -256,222 +266,85 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setTimelineEvents(prev => prev.some(item => item.id === event.id) ? prev : [event, ...prev])
   }, [])
 
-  function formatRememberedText(value: string) {
-    const trimmed = value.trim().replace(/[?.!]+$/, '')
-    if (!trimmed) return 'that'
-    return trimmed.replace(/^you\s+/i, 'you ')
+  function openRecovery() {
+    setRecoveryOpen(true)
+    setRecoveryMoreOpen(false)
+    setRecoveryLoading(false)
+    setRecoveryError(null)
+    setRecoveryIntent(null)
+    setRecoverySession(null)
+    setRecoveryCard(null)
+    setRecoveryResolvedMessage('')
+    setRecoveryFeedbackSaving(false)
+    setRecoveryCorrection('')
+    setRecoveryCorrectionFor(null)
   }
 
-  function formatRecallTime(value?: string | null) {
-    if (!value) return ''
-    return new Date(value).toLocaleTimeString('en-US', {
-      timeZone: profile.timezone,
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    })
-  }
-
-  async function openRecall() {
-    setRecallOpen(true)
-    setRecallLoading(true)
-    setRecallAnswer(null)
-    setRecallMoments([])
-    setRecallMomentIndex(0)
-    setRecallResolved(null)
-    setRecallExhausted(false)
-    setRecallConfirmedText('')
-    setRecallCorrection('')
-    setRecallShownKeys([])
-    setRecallRemembering(false)
+  async function runRecoveryIntent(intent: RecoveryIntent) {
+    setRecoveryIntent(intent)
+    setRecoveryLoading(true)
+    setRecoveryError(null)
+    setRecoveryCard(null)
+    setRecoveryResolvedMessage('')
+    setRecoveryCorrection('')
+    setRecoveryCorrectionFor(null)
     try {
-      const sessionResponse = await fetch('/api/reentry/session-status')
-      const sessionStatus = await sessionResponse.json().catch(() => ({}))
-      if (sessionResponse.ok && sessionStatus.recentSession) {
-        const sourceTime = formatRecallTime(sessionStatus.lastConfirmedAt)
-        const recentAnswer = {
-          confidence: 'certain',
-          confidenceLabel: 'Certain',
-          answer: sessionStatus.lastConfirmedText
-            ? `Earlier, you confirmed: ${sessionStatus.lastConfirmedText}`
-            : "That's everything I know about your day.",
-          source: sourceTime ? `Confirmed at ${sourceTime}.` : 'You reviewed the notes I had.',
-          asksConfirmation: false,
-        } satisfies RecallAnswer
-        setRecallAnswer(recentAnswer)
-        setRecallMoments([recentAnswer])
-        return
-      }
-
-      const response = await fetch('/api/reentry', { method: 'POST' })
-      const result = await response.json()
-      if (!response.ok) {
-        const fallback = {
-          confidence: 'unknown',
-          confidenceLabel: 'Not sure',
-          answer: "I don't have a note for the last little while.",
-          source: 'Tell me, and I will remember it.',
-          asksConfirmation: false,
-        } satisfies RecallAnswer
-        setRecallAnswer(fallback)
-        setRecallMoments([fallback])
-        return
-      }
-      const moments = Array.isArray(result.moments) && result.moments.length > 0
-        ? result.moments as RecallAnswer[]
-        : [result as RecallAnswer]
-      setRecallMoments(moments)
-      setRecallAnswer(moments[0])
-    } catch {
-      const fallback = {
-        confidence: 'unknown',
-        confidenceLabel: 'Not sure',
-        answer: "I don't have a note for the last little while.",
-        source: 'Tell me, and I will remember it.',
-        asksConfirmation: false,
-      } satisfies RecallAnswer
-      setRecallAnswer(fallback)
-      setRecallMoments([fallback])
-    } finally {
-      setRecallLoading(false)
-    }
-  }
-
-  async function saveRecoverySessionAction(
-    action: 'shown' | 'confirmed' | 'rejected' | 'exhausted',
-    options: { confirmedText?: string; confidence?: string; momentKey?: string; momentsReviewed?: number } = {},
-  ) {
-    const response = await fetch('/api/reentry/confirm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action,
-        confirmed_text: options.confirmedText,
-        confidence: options.confidence,
-        moment_key: options.momentKey,
-        moments_reviewed: options.momentsReviewed,
-      }),
-    })
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({}))
-      throw new Error(result.error || 'Could not save recall response.')
-    }
-    return true
-  }
-
-  useEffect(() => {
-    if (!recallOpen || recallLoading || recallResolved || recallExhausted || !recallAnswer?.momentKey) return
-    if (recallShownKeys.includes(recallAnswer.momentKey)) return
-    const momentKey = recallAnswer.momentKey
-    setRecallShownKeys(current => current.includes(momentKey) ? current : [...current, momentKey])
-    saveRecoverySessionAction('shown', {
-      confirmedText: recallAnswer.answer,
-      confidence: recallAnswer.confidence,
-      momentKey,
-    }).catch(error => {
-      console.error('[Reentry] Could not save shown moment:', error)
-    })
-  }, [recallAnswer, recallExhausted, recallLoading, recallOpen, recallResolved, recallShownKeys])
-
-  async function exhaustRecallSession() {
-    try {
-      await saveRecoverySessionAction('exhausted', {
-        momentsReviewed: Math.min(recallMomentIndex + 1, recallMoments.length || 1),
+      const response = await fetch('/api/recovery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent }),
       })
+      const result = await response.json().catch(() => ({})) as RecoveryApiResponse
+      if (!response.ok || result.error) throw new Error(result.error || 'Could not look back over your day.')
+      if (result.session) setRecoverySession(result.session)
+      if (result.card) setRecoveryCard(result.card)
     } catch (error) {
-      console.error('[Reentry] Could not exhaust session:', error)
-    }
-    setRecallExhausted(true)
-    setRecallResolved(null)
-    setRecallConfirmedText('')
-    setRecallCorrection('')
-  }
-
-  function showNextRecallMoment() {
-    if (recallMoments.length <= 1) {
-      void exhaustRecallSession()
-      return
-    }
-    const nextIndex = recallMomentIndex + 1
-    if (nextIndex >= recallMoments.length) {
-      void exhaustRecallSession()
-      return
-    }
-    setRecallMomentIndex(nextIndex)
-    setRecallAnswer(recallMoments[nextIndex])
-    setRecallResolved(null)
-    setRecallExhausted(false)
-    setRecallConfirmedText('')
-    setRecallCorrection('')
-    setRecallRemembering(false)
-  }
-
-  async function confirmCurrentRecallMoment() {
-    if (!recallAnswer) return
-    const confirmedText = recallAnswer.answer
-    setRecallSaving(true)
-    try {
-      await saveRecoverySessionAction('confirmed', {
-        confirmedText,
-        confidence: recallAnswer.confidence,
-        momentKey: recallAnswer.momentKey,
-      })
-      setRecallConfirmedText(confirmedText)
-      setRecallResolved('yes')
-      if (recallMomentIndex + 1 >= recallMoments.length) {
-        await saveRecoverySessionAction('exhausted', {
-          momentsReviewed: Math.min(recallMomentIndex + 1, recallMoments.length || 1),
-        })
-      }
-    } catch (error) {
-      console.error('[Reentry] Could not confirm moment:', error)
+      setRecoveryError(error instanceof Error ? error.message : 'Could not look back over your day.')
     } finally {
-      setRecallSaving(false)
+      setRecoveryLoading(false)
     }
   }
 
-  async function rejectCurrentRecallMoment() {
-    setRecallSaving(true)
+  async function sendRecoveryFeedback(candidate: ScoredCandidate, responseValue: 'confirmed' | 'rejected' | 'corrected') {
+    if (!recoverySession || !recoveryIntent) return
+    const correctionText = recoveryCorrectionFor === candidate.episode.id ? recoveryCorrection.trim() : ''
+    setRecoveryFeedbackSaving(true)
+    setRecoveryError(null)
     try {
-      await saveRecoverySessionAction('rejected', {
-        confidence: recallAnswer?.confidence,
-        confirmedText: recallAnswer?.answer,
-        momentKey: recallAnswer?.momentKey,
-      })
-      setRecallResolved('no')
-    } catch (error) {
-      console.error('[Reentry] Could not reject moment:', error)
-    } finally {
-      setRecallSaving(false)
-    }
-  }
-
-  async function saveRecallCorrection(text: string, type: 'doing_now' | 'did' = 'did') {
-    const value = text.trim()
-    if (!value) return
-    setRecallSaving(true)
-    try {
-      const response = await fetch('/api/timeline-events', {
+      const response = await fetch('/api/recovery/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: value,
-          type,
-          source: 'user-stated',
-          confidence: 'high',
+          session_id: recoverySession.id,
+          episode_id: candidate.episode.id,
+          intent: recoveryIntent,
+          response: responseValue,
+          answer_text: recoveryAnswerText(candidate),
+          correction_text: correctionText,
+          confidence: candidate.confidence,
         }),
       })
-      const result = await response.json().catch(() => ({}))
-      if (response.ok && result.event) handleTimelineSaved(result.event)
-      setRecallConfirmedText(value)
-      setRecallResolved('yes')
+      const result = await response.json().catch(() => ({})) as RecoveryApiResponse
+      if (!response.ok || result.error) throw new Error(result.error || 'Could not save that response.')
+      setRecoveryCorrection('')
+      setRecoveryCorrectionFor(null)
+      if (result.resolved) {
+        setRecoveryResolvedMessage(result.message || "That's everything I know right now.")
+        setRecoveryCard(null)
+        if (result.session) setRecoverySession(result.session)
+        return
+      }
+      if (result.session) setRecoverySession(result.session)
+      if (result.card) setRecoveryCard(result.card)
+    } catch (error) {
+      setRecoveryError(error instanceof Error ? error.message : 'Could not save that response.')
     } finally {
-      setRecallSaving(false)
+      setRecoveryFeedbackSaving(false)
     }
   }
 
-  function showTodaysPlanFromRecall() {
-    setRecallOpen(false)
+  function closeRecoveryAndShowPlan() {
+    setRecoveryOpen(false)
     window.setTimeout(() => {
       document.getElementById('todays-plan')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }, 50)
@@ -596,6 +469,124 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     : ''
   const carePartnerFirstName = carePartner?.display_name?.trim().split(/\s+/)[0] || 'care partner'
 
+  function recoveryIntentTitle(intent: RecoveryIntent) {
+    return [...PRIMARY_RECOVERY_INTENTS, ...MORE_RECOVERY_INTENTS].find(item => item.intent === intent)?.label ?? 'Memory help'
+  }
+
+  function recoveryConfidenceLabel(candidate: ScoredCandidate) {
+    if (candidate.confidence >= 0.78) return 'Certain'
+    if (candidate.confidence >= 0.45) return 'Best guess'
+    return 'Not sure'
+  }
+
+  function recoveryAnswerText(candidate: ScoredCandidate) {
+    const label = candidate.episode.activityLabel.trim()
+    if (!label) return "I don't have enough to name it yet."
+    const completed = candidate.episode.statusDistribution.completed ?? 0
+    const planned = candidate.episode.statusDistribution.planned ?? 0
+    const confirmed = candidate.episode.state === 'confirmed'
+    if (completed >= 0.55 || confirmed) return `You were doing ${label}.`
+    if (planned >= 0.45) return `You may have been planning ${label}.`
+    return `This may be about ${label}.`
+  }
+
+  function recoveryCardPrompt(card: ContinuityCard) {
+    if (card.mode === 'leading') return 'Is that right?'
+    if (card.mode === 'options') return 'Which one sounds closest?'
+    if (card.mode === 'weak_clue') return 'Does this help?'
+    return ''
+  }
+
+  function renderRecoveryCandidate(candidate: ScoredCandidate, index = 0) {
+    const confidence = recoveryConfidenceLabel(candidate)
+    const answerText = recoveryAnswerText(candidate)
+    const correctionOpen = recoveryCorrectionFor === candidate.episode.id
+    const currentRecoveryCard = recoveryCard
+    return (
+      <div key={candidate.episode.id} className={index > 0 ? 'mt-4 rounded-[20px] border-2 border-cream-200 bg-white p-4' : ''}>
+        <span className={`inline-flex items-center gap-2 rounded-pill px-3 py-1 text-xs font-bold uppercase tracking-wide ${
+          confidence === 'Certain'
+            ? 'bg-sage-100 text-sage-600'
+            : confidence === 'Best guess'
+            ? 'bg-cream-200 text-terracotta-700'
+            : 'bg-warm-100 text-warm-500'
+        }`}>
+          <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />
+          {confidence}
+        </span>
+        <p className="mt-4 text-xl font-semibold leading-7 text-warm-900">
+          {answerText}
+        </p>
+        <div className="mt-4 rounded-2xl bg-cream-50 p-4">
+          <p className="text-sm font-semibold text-warm-700">Here's why</p>
+          <p className="mt-1 text-sm leading-5 text-warm-500">{candidate.because.summary}</p>
+          {candidate.because.evidence.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {candidate.because.evidence.map(item => (
+                <li key={item.id} className="text-sm leading-5 text-warm-500">
+                  {item.snippet}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {currentRecoveryCard && currentRecoveryCard.mode !== 'options' && (
+          <p className="mt-5 text-lg font-semibold text-warm-800">{recoveryCardPrompt(currentRecoveryCard)}</p>
+        )}
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => void sendRecoveryFeedback(candidate, 'confirmed')}
+            disabled={recoveryFeedbackSaving}
+            className="min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white disabled:opacity-60 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+          >
+            {recoveryFeedbackSaving ? 'Saving...' : 'Yes'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void sendRecoveryFeedback(candidate, 'rejected')}
+            disabled={recoveryFeedbackSaving}
+            className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 disabled:opacity-60 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+          >
+            No
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setRecoveryCorrectionFor(current => current === candidate.episode.id ? null : candidate.episode.id)
+            setRecoveryCorrection('')
+          }}
+          className="mt-4 min-h-11 w-full rounded-xl text-base font-semibold text-sage-600 focus:outline-none focus:ring-2 focus:ring-sage-300"
+        >
+          Let me fix it
+        </button>
+        {correctionOpen && (
+          <div className="mt-3">
+            <label htmlFor={`recovery-correction-${candidate.episode.id}`} className="block text-sm font-semibold text-warm-500">
+              Optional note
+            </label>
+            <input
+              id={`recovery-correction-${candidate.episode.id}`}
+              value={recoveryCorrection}
+              onChange={event => setRecoveryCorrection(event.target.value)}
+              placeholder="I remember now..."
+              className="mt-2 min-h-14 w-full rounded-xl border-2 border-cream-300 bg-cream-50 px-4 text-lg font-semibold text-warm-900 placeholder:text-warm-300 focus:outline-none focus:border-sage-400 focus:ring-2 focus:ring-sage-200"
+            />
+            <button
+              type="button"
+              onClick={() => void sendRecoveryFeedback(candidate, 'corrected')}
+              disabled={recoveryFeedbackSaving || !recoveryCorrection.trim()}
+              className="mt-3 min-h-[56px] w-full rounded-xl bg-sage-600 text-lg font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+            >
+              Save this
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-svh bg-cream-50 pb-8 safe-bottom">
       <div className="bg-cream-100 border-b border-cream-200 safe-top">
@@ -639,7 +630,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           plannedFor={todayKey}
           onSaved={handleNaturalPlansSaved}
           onTimelineSaved={handleTimelineSaved}
-          onRecallRequested={openRecall}
+          onRecallRequested={openRecovery}
         />
 
         <div className="rounded-[20px] border-2 border-cream-300 bg-white px-5 shadow-card">
@@ -658,10 +649,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         <div className="space-y-3">
           <button
             type="button"
-            onClick={openRecall}
+            onClick={openRecovery}
             className="w-full min-h-[68px] rounded-[18px] bg-sage-600 px-5 text-xl font-semibold text-white shadow-card active:scale-[0.99] focus:outline-none focus:ring-4 focus:ring-sage-300/70 transition-all"
           >
-            What was I doing?
+            Need Help Remembering?
           </button>
           {carePartner?.phone_e164 ? (
             <a
@@ -835,222 +826,132 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
       </div>
 
-      {recallOpen && (
-        <div className="fixed inset-0 z-50 flex items-end bg-warm-900/35 px-0" role="dialog" aria-modal="true" aria-labelledby="recall-title">
+      {recoveryOpen && (
+        <div className="fixed inset-0 z-50 flex items-end bg-warm-900/35 px-0" role="dialog" aria-modal="true" aria-labelledby="recovery-title">
           <div className="w-full max-w-lg mx-auto rounded-t-3xl bg-[#FBF5E9] px-5 pb-8 pt-4 shadow-float safe-bottom">
             <div className="w-10 h-1 bg-warm-300/50 rounded-pill mx-auto mb-5" />
             <button
               type="button"
-              onClick={() => setRecallOpen(false)}
+              onClick={() => setRecoveryOpen(false)}
               className="mb-4 min-h-11 rounded-xl px-1 text-base font-semibold text-warm-500 focus:outline-none focus:ring-2 focus:ring-sage-300"
             >
               ‹ Back to home
             </button>
-            {recallLoading ? (
+            {recoveryLoading ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card animate-pulse-soft">
-                <div className="h-5 w-28 rounded-pill bg-cream-200 mb-4" />
-                <div className="h-7 w-4/5 rounded-pill bg-cream-200 mb-3" />
-                <div className="h-4 w-full rounded-pill bg-cream-200" />
+                <p id="recovery-title" className="text-xl font-semibold leading-7 text-warm-900">
+                  Let me look back over your day...
+                </p>
+                <p className="mt-3 text-base font-medium leading-6 text-warm-500">
+                  I am checking your notes, plans, and activity.
+                </p>
               </div>
-            ) : recallExhausted ? (
+            ) : recoveryResolvedMessage ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
-                <p id="recall-title" className="text-xl font-semibold leading-7 text-warm-900">
-                  That's everything I know about your day.
+                <p id="recovery-title" className="text-xl font-semibold leading-7 text-warm-900">
+                  {recoveryResolvedMessage}
+                </p>
+                <p className="mt-3 text-base font-medium leading-6 text-warm-500">
+                  You can ask again if you need another kind of help.
                 </p>
                 <button
                   type="button"
-                  onClick={() => setRecallOpen(false)}
+                  onClick={() => setRecoveryOpen(false)}
                   className="mt-5 w-full min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
                 >
                   Back to home
                 </button>
               </div>
-            ) : recallResolved === 'yes' ? (
+            ) : recoveryCard ? (
               <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
-                <p id="recall-title" className="text-xl font-semibold leading-7 text-warm-900">
-                  I'll remember: {formatRememberedText(recallConfirmedText)}.
+                <p id="recovery-title" className="text-xs font-bold uppercase tracking-wide text-sage-600">
+                  {recoveryIntent ? recoveryIntentTitle(recoveryIntent) : 'Memory help'}
                 </p>
-                <p className="mt-3 text-base font-medium leading-6 text-warm-500">
-                  {recallMomentIndex + 1 < recallMoments.length
-                    ? "There's one more part of today I'm less certain about."
-                    : "That's everything I know about your day."}
-                </p>
-                {recallMomentIndex + 1 < recallMoments.length ? (
-                  <div className="mt-5 grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={showNextRecallMoment}
-                      className="min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
-                    >
-                      Review it
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void exhaustRecallSession()}
-                      className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
-                    >
-                      Not now
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setRecallOpen(false)}
-                    className="mt-5 w-full min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
-                  >
-                    Back to home
-                  </button>
-                )}
-              </div>
-            ) : recallResolved === 'no' ? (
-              <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
-                <p id="recall-title" className="text-xl font-semibold leading-7 text-warm-900">Okay, I will not use that right now.</p>
-                {recallRemembering ? (
+                {recoveryCard.mode === 'abstain' ? (
                   <>
-                    <p className="mt-3 text-base font-medium leading-6 text-warm-500">
-                      Tell me what you remember and I will save it.
+                    <p className="mt-4 text-xl font-semibold leading-7 text-warm-900">
+                      {recoveryCard.message}
                     </p>
-                    <input
-                      id="recall-correction"
-                      value={recallCorrection}
-                      onChange={event => setRecallCorrection(event.target.value)}
-                      placeholder="I remember now..."
-                      autoFocus
-                      className="mt-4 min-h-14 w-full rounded-xl border-2 border-cream-300 bg-cream-50 px-4 text-lg font-semibold text-warm-900 placeholder:text-warm-300 focus:outline-none focus:border-sage-400 focus:ring-2 focus:ring-sage-200"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => saveRecallCorrection(recallCorrection)}
-                      disabled={recallSaving || !recallCorrection.trim()}
-                      className="mt-4 w-full min-h-[56px] rounded-xl bg-sage-600 text-lg font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
-                    >
-                      {recallSaving ? 'Saving...' : 'Save this note'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRecallRemembering(false)}
-                      className="mt-3 w-full min-h-11 text-base font-semibold text-warm-500 focus:outline-none focus:ring-2 focus:ring-sage-300 rounded-xl"
-                    >
-                      Back
-                    </button>
-                  </>
-                ) : (
-                  <>
                     <p className="mt-3 text-base font-medium leading-6 text-warm-500">
-                      We can look at another idea, check your plan, or pause here.
+                      You can check today's plan or add a quick note when you remember.
                     </p>
                     <div className="mt-5 grid grid-cols-1 gap-3">
                       <button
                         type="button"
-                        onClick={showNextRecallMoment}
+                        onClick={() => {
+                          setRecoveryCard(null)
+                          setRecoveryIntent(null)
+                          setRecoveryResolvedMessage('')
+                          setRecoveryError(null)
+                        }}
                         className="min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
                       >
-                        Show another idea
+                        Try another question
                       </button>
                       <button
                         type="button"
-                        onClick={showTodaysPlanFromRecall}
+                        onClick={closeRecoveryAndShowPlan}
                         className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
                       >
                         Show today's plan
                       </button>
                       <button
                         type="button"
-                        onClick={() => setRecallRemembering(true)}
-                        className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
-                      >
-                        I remember now
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRecallOpen(false)}
+                        onClick={() => setRecoveryOpen(false)}
                         className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
                       >
                         Back to home
                       </button>
                     </div>
                   </>
-                )}
-              </div>
-            ) : recallAnswer ? (
-              <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
-                <p id="recall-title" className="text-xs font-bold uppercase tracking-wide text-sage-600">Your day so far</p>
-                <span className={`mt-4 inline-flex items-center gap-2 rounded-pill px-3 py-1 text-xs font-bold uppercase tracking-wide ${
-                  recallAnswer.confidence === 'certain'
-                    ? 'bg-sage-100 text-sage-600'
-                    : recallAnswer.confidence === 'guess'
-                    ? 'bg-cream-200 text-terracotta-700'
-                    : 'bg-warm-100 text-warm-500'
-                }`}>
-                  <span className="w-2 h-2 rounded-full bg-current" aria-hidden="true" />
-                  {recallAnswer.confidenceLabel}
-                </span>
-                <p className="mt-4 text-xl font-semibold leading-7 text-warm-900">
-                  {recallAnswer.answer}
-                </p>
-                <p className="mt-3 text-base font-medium leading-6 text-warm-500">
-                  {recallAnswer.source}
-                </p>
-                {recallAnswer.confidence === 'unknown' ? (
-                  <>
-                    <input
-                      value={recallCorrection}
-                      onChange={event => setRecallCorrection(event.target.value)}
-                      placeholder="What are you doing right now?"
-                      className="mt-5 min-h-14 w-full rounded-xl border-2 border-cream-300 bg-cream-50 px-4 text-lg font-semibold text-warm-900 placeholder:text-warm-300 focus:outline-none focus:border-sage-400 focus:ring-2 focus:ring-sage-200"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => saveRecallCorrection(recallCorrection, 'doing_now')}
-                      disabled={recallSaving || !recallCorrection.trim()}
-                      className="mt-4 w-full min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white disabled:opacity-50 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
-                    >
-                      {recallSaving ? 'Saving...' : 'Tell Context'}
-                    </button>
-                  </>
-                ) : !recallAnswer.asksConfirmation ? (
-                  <button
-                    type="button"
-                    onClick={() => setRecallOpen(false)}
-                    className="mt-5 w-full min-h-[60px] rounded-xl bg-sage-600 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
-                  >
-                    Back to home
-                  </button>
                 ) : (
                   <>
-                    <p className="mt-5 text-lg font-semibold text-warm-800">
-                      {recallAnswer.confidence === 'guess' ? 'Does that sound right?' : 'Is that right?'}
-                    </p>
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void confirmCurrentRecallMoment()}
-                        disabled={recallSaving}
-                        className="min-h-[60px] rounded-xl bg-sage-500 text-lg font-semibold text-white disabled:opacity-60 focus:outline-none focus:ring-4 focus:ring-sage-300/70"
-                      >
-                        {recallSaving ? 'Saving...' : 'Yes'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void rejectCurrentRecallMoment()}
-                        className="min-h-[60px] rounded-xl border-2 border-cream-300 bg-white text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
-                      >
-                        No
-                      </button>
-                    </div>
+                    {recoveryCard.message && (
+                      <p className="mt-3 text-base font-medium leading-6 text-warm-500">{recoveryCard.message}</p>
+                    )}
+                    {recoveryCard.candidates.map((candidate, index) => renderRecoveryCandidate(candidate, index))}
                   </>
                 )}
-                {recallMoments.length > 1 && (
+              </div>
+            ) : (
+              <div className="rounded-[22px] border-2 border-cream-300 bg-white p-5 shadow-card">
+                <p id="recovery-title" className="text-xl font-semibold leading-7 text-warm-900">
+                  What would help right now?
+                </p>
+                <div className="mt-5 space-y-3">
+                  {PRIMARY_RECOVERY_INTENTS.map(item => (
+                    <button
+                      key={item.intent}
+                      type="button"
+                      onClick={() => void runRecoveryIntent(item.intent)}
+                      className="w-full min-h-[60px] rounded-xl bg-sage-600 px-4 text-lg font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/70"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                   <button
                     type="button"
-                    onClick={showNextRecallMoment}
-                    className="mt-6 w-full min-h-11 text-base font-semibold text-sage-600 focus:outline-none focus:ring-2 focus:ring-sage-300 rounded-xl"
+                    onClick={() => setRecoveryMoreOpen(current => !current)}
+                    className="w-full min-h-[60px] rounded-xl border-2 border-cream-300 bg-white px-4 text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
                   >
-                    See another moment ›
+                    More...
                   </button>
+                  {recoveryMoreOpen && MORE_RECOVERY_INTENTS.map(item => (
+                    <button
+                      key={item.intent}
+                      type="button"
+                      onClick={() => void runRecoveryIntent(item.intent)}
+                      className="w-full min-h-[60px] rounded-xl border-2 border-cream-300 bg-white px-4 text-lg font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                {recoveryError && (
+                  <p className="mt-4 rounded-xl bg-cream-100 px-4 py-3 text-sm font-medium text-warm-600">{recoveryError}</p>
                 )}
               </div>
-            ) : null}
+            )}
           </div>
         </div>
       )}
