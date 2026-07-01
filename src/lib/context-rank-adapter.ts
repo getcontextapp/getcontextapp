@@ -255,7 +255,11 @@ export async function buildContextRankInput({
     getOrCreateSession(supabase, profile, queryTime, intent, sessionId),
   ])
 
-  const lookupError = activityResult.error || taskResult.error || smsResult.error || timelineResult.error
+  if (timelineResult.error) {
+    console.error('[ContextRank] Timeline evidence unavailable:', timelineResult.error.message)
+  }
+
+  const lookupError = activityResult.error || taskResult.error || smsResult.error
   if (lookupError) throw new Error(lookupError.message)
   if (reflectionResult.error && reflectionResult.error.code !== 'PGRST116') throw new Error(reflectionResult.error.message)
 
@@ -286,7 +290,9 @@ export async function buildContextRankInput({
     }))
   }
 
-  for (const event of (timelineResult.data ?? []) as TimelineEvent[]) {
+  const timelineEvents = timelineResult.error ? [] : ((timelineResult.data ?? []) as TimelineEvent[])
+
+  for (const event of timelineEvents) {
     const point = Date.parse(event.created_at)
     const source = event.type === 'sms_reply'
       ? 'sms_response'
