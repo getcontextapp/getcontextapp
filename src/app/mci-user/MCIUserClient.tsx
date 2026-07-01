@@ -12,6 +12,7 @@ import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanCom
 import EditTaskSheet from '@/components/mci/EditTaskSheet'
 import DailyReflection from '@/components/mci/DailyReflection'
 import { addDaysToKey, formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
+import { buildRecoveryAnswerText } from '@/lib/recovery-copy'
 import type { ContinuityCard, RecoveryIntent, RecoverySession, ScoredCandidate } from '@/lib/context-rank'
 
 interface Props {
@@ -480,48 +481,12 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   }
 
   function recoveryAnswerText(candidate: ScoredCandidate) {
-    const rawLabel = candidate.episode.activityLabel.trim()
-    const label = naturalizeActivityLabel(rawLabel)
-    if (!label) return "I don't have enough to name it yet."
-    const completed = candidate.episode.statusDistribution.completed ?? 0
-    const planned = candidate.episode.statusDistribution.planned ?? 0
-    const confirmed = candidate.episode.state === 'confirmed'
-    if (recoveryIntent === 'did_i_finish_this') {
-      if (completed >= 0.55 || confirmed) return `It looks like you marked ${label} done.`
-      return `I am not sure ${label} is finished.`
-    }
-    if (recoveryIntent === 'what_should_i_do_next') {
-      if (planned >= 0.45 && completed < 0.55) return `Your next likely step is ${label}.`
-      return `I do not see a clearer next step than ${label}.`
-    }
-    if (recoveryIntent === 'where_did_i_leave_off') return `You may have left off with ${label}.`
-    if (recoveryIntent === 'what_changed_today') return `One thing I found today is ${label}.`
-    if (completed >= 0.55 || confirmed) return `You may have been doing ${label}.`
-    if (planned >= 0.45) return `You planned ${label}, but I am not sure you did it.`
-    return `This may be about ${label}.`
-  }
-
-  function naturalizeActivityLabel(value: string) {
-    const trimmed = value.trim().replace(/[?.!]+$/, '')
-    if (!trimmed) return ''
-    const lower = trimmed.toLowerCase()
-    const replacements: Array<[RegExp, string]> = [
-      [/^go to (.+)$/i, 'going to $1'],
-      [/^drive$/i, 'driving'],
-      [/^run$/i, 'running'],
-      [/^jog$/i, 'jogging'],
-      [/^dance$/i, 'dancing'],
-      [/^work on (.+)$/i, 'working on $1'],
-      [/^finish (.+)$/i, 'finishing $1'],
-      [/^find (.+)$/i, 'finding $1'],
-      [/^make (.+)$/i, 'making $1'],
-      [/^take (.+)$/i, 'taking $1'],
-      [/^pick up (.+)$/i, 'picking up $1'],
-    ]
-    for (const [pattern, replacement] of replacements) {
-      if (pattern.test(trimmed)) return trimmed.replace(pattern, replacement)
-    }
-    return lower === trimmed ? trimmed : trimmed[0].toLowerCase() + trimmed.slice(1)
+    return buildRecoveryAnswerText({
+      intent: recoveryIntent,
+      activityLabel: candidate.episode.activityLabel,
+      statusDistribution: candidate.episode.statusDistribution,
+      episodeState: candidate.episode.state,
+    })
   }
 
   function recoveryEvidenceSnippets(candidate: ScoredCandidate) {
