@@ -480,14 +480,58 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   }
 
   function recoveryAnswerText(candidate: ScoredCandidate) {
-    const label = candidate.episode.activityLabel.trim()
+    const rawLabel = candidate.episode.activityLabel.trim()
+    const label = naturalizeActivityLabel(rawLabel)
     if (!label) return "I don't have enough to name it yet."
     const completed = candidate.episode.statusDistribution.completed ?? 0
     const planned = candidate.episode.statusDistribution.planned ?? 0
     const confirmed = candidate.episode.state === 'confirmed'
-    if (completed >= 0.55 || confirmed) return `You were doing ${label}.`
-    if (planned >= 0.45) return `You may have been planning ${label}.`
+    if (recoveryIntent === 'did_i_finish_this') {
+      if (completed >= 0.55 || confirmed) return `It looks like you marked ${label} done.`
+      return `I am not sure ${label} is finished.`
+    }
+    if (recoveryIntent === 'what_should_i_do_next') {
+      if (planned >= 0.45 && completed < 0.55) return `Your next likely step is ${label}.`
+      return `I do not see a clearer next step than ${label}.`
+    }
+    if (recoveryIntent === 'where_did_i_leave_off') return `You may have left off with ${label}.`
+    if (recoveryIntent === 'what_changed_today') return `One thing I found today is ${label}.`
+    if (completed >= 0.55 || confirmed) return `You may have been doing ${label}.`
+    if (planned >= 0.45) return `You planned ${label}, but I am not sure you did it.`
     return `This may be about ${label}.`
+  }
+
+  function naturalizeActivityLabel(value: string) {
+    const trimmed = value.trim().replace(/[?.!]+$/, '')
+    if (!trimmed) return ''
+    const lower = trimmed.toLowerCase()
+    const replacements: Array<[RegExp, string]> = [
+      [/^go to (.+)$/i, 'going to $1'],
+      [/^drive$/i, 'driving'],
+      [/^run$/i, 'running'],
+      [/^jog$/i, 'jogging'],
+      [/^dance$/i, 'dancing'],
+      [/^work on (.+)$/i, 'working on $1'],
+      [/^finish (.+)$/i, 'finishing $1'],
+      [/^find (.+)$/i, 'finding $1'],
+      [/^make (.+)$/i, 'making $1'],
+      [/^take (.+)$/i, 'taking $1'],
+      [/^pick up (.+)$/i, 'picking up $1'],
+    ]
+    for (const [pattern, replacement] of replacements) {
+      if (pattern.test(trimmed)) return trimmed.replace(pattern, replacement)
+    }
+    return lower === trimmed ? trimmed : trimmed[0].toLowerCase() + trimmed.slice(1)
+  }
+
+  function recoveryEvidenceSnippets(candidate: ScoredCandidate) {
+    const seen = new Set<string>()
+    return candidate.because.evidence.filter(item => {
+      const normalized = item.snippet.trim().toLowerCase()
+      if (!normalized || seen.has(normalized)) return false
+      seen.add(normalized)
+      return true
+    })
   }
 
   function recoveryCardPrompt(card: ContinuityCard) {
@@ -502,6 +546,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     const answerText = recoveryAnswerText(candidate)
     const correctionOpen = recoveryCorrectionFor === candidate.episode.id
     const currentRecoveryCard = recoveryCard
+    const evidenceSnippets = recoveryEvidenceSnippets(candidate)
     return (
       <div key={candidate.episode.id} className={index > 0 ? 'mt-4 rounded-[20px] border-2 border-cream-200 bg-white p-4' : ''}>
         <span className={`inline-flex items-center gap-2 rounded-pill px-3 py-1 text-xs font-bold uppercase tracking-wide ${
@@ -520,9 +565,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         <div className="mt-4 rounded-2xl bg-cream-50 p-4">
           <p className="text-sm font-semibold text-warm-700">Here's why</p>
           <p className="mt-1 text-sm leading-5 text-warm-500">{candidate.because.summary}</p>
-          {candidate.because.evidence.length > 0 && (
+          {evidenceSnippets.length > 0 && (
             <ul className="mt-3 space-y-2">
-              {candidate.because.evidence.map(item => (
+              {evidenceSnippets.map(item => (
                 <li key={item.id} className="text-sm leading-5 text-warm-500">
                   {item.snippet}
                 </li>
@@ -906,7 +951,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                   </>
                 ) : (
                   <>
-                    {recoveryCard.message && (
+                    {recoveryCard.message && recoveryCard.mode === 'options' && (
                       <p className="mt-3 text-base font-medium leading-6 text-warm-500">{recoveryCard.message}</p>
                     )}
                     {recoveryCard.candidates.map((candidate, index) => renderRecoveryCandidate(candidate, index))}

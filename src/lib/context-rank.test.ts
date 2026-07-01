@@ -76,6 +76,16 @@ test('recent corroborated episode outranks an old task_done for what_was_i_doing
   assert.match(result.candidates[0].episode.activityLabel, /car service|handled car/i)
 })
 
+test('what_should_i_do_next prefers planned work over an already completed item', () => {
+  const evidence = [
+    makeEvidence({ id: 'done-log', userId: 'u1', content: 'go to the gym', source: 'activity_log', time: windowAt(5), provenance: 'activity_logs:done' }),
+    makeEvidence({ id: 'done-task', userId: 'u1', content: 'go to the gym', source: 'task_done', time: windowAt(5), provenance: 'planned_activities:done' }),
+    makeEvidence({ id: 'planned', userId: 'u1', content: 'work on publication', source: 'task_planned', time: windowAt(0), provenance: 'planned_activities:planned' }),
+  ]
+  const result = runContextRank({ evidence, query: query('what_should_i_do_next'), session: session() })
+  assert.match(result.candidates[0].episode.activityLabel, /work on publication/i)
+})
+
 test('rejected candidate does not return in the same session', () => {
   const evidence = [
     makeEvidence({ id: 'a', userId: 'u1', content: 'made breakfast', source: 'task_done', time: windowAt(10), provenance: 'activity_logs:a' }),

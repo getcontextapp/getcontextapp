@@ -154,7 +154,11 @@ function parseNumberedSelections(body: string) {
 type SelectionPrompt = {
   action: 'complete' | 'undo' | 'delete' | 'delete_confirm'
   itemIds: string[]
+  createdAt: string
 }
+
+const SELECTION_PROMPT_MAX_AGE_MS = 30 * 60 * 1000
+const DELETE_CONFIRM_MAX_AGE_MS = 15 * 60 * 1000
 
 function promptItemIds(items: any[], limit = 6) {
   return items.slice(0, limit).map(item => item.id).filter(Boolean)
@@ -557,13 +561,29 @@ async function getActiveSelectionPrompt(
         ? metadata.delete_item_ids.filter((id): id is string => typeof id === 'string')
         : []
 
-    if (metadata?.delete_confirm_prompt) return { action: 'delete_confirm', itemIds } satisfies SelectionPrompt
-    if (metadata?.completion_prompt) return { action: 'complete', itemIds } satisfies SelectionPrompt
-    if (metadata?.undo_prompt) return { action: 'undo', itemIds } satisfies SelectionPrompt
-    if (metadata?.delete_prompt) return { action: 'delete', itemIds } satisfies SelectionPrompt
+    if (metadata?.delete_confirm_prompt) return { action: 'delete_confirm', itemIds, createdAt: message.created_at } satisfies SelectionPrompt
+    if (metadata?.completion_prompt) return { action: 'complete', itemIds, createdAt: message.created_at } satisfies SelectionPrompt
+    if (metadata?.undo_prompt) return { action: 'undo', itemIds, createdAt: message.created_at } satisfies SelectionPrompt
+    if (metadata?.delete_prompt) return { action: 'delete', itemIds, createdAt: message.created_at } satisfies SelectionPrompt
   }
 
   return null
+}
+
+function isPromptFresh(prompt: SelectionPrompt, now = Date.now()) {
+  const age = now - Date.parse(prompt.createdAt)
+  const maxAge = prompt.action === 'delete_confirm' ? DELETE_CONFIRM_MAX_AGE_MS : SELECTION_PROMPT_MAX_AGE_MS
+  return Number.isFinite(age) && age >= 0 && age <= maxAge
+}
+
+function isClearNewSmsIntent(body: string) {
+  const normalized = body.trim().toLowerCase()
+  if (!normalized) return false
+  if (/^(yes|y|yep|yeah|no|n|nope|cancel|stop|nevermind|never mind)$/i.test(normalized)) return false
+  if (parseNumberedSelections(body)) return false
+  return /^(add|plan|done|finished|complete|completed|undo|status|help)\b/i.test(normalized) ||
+    /\b(i plan to|i want to|i need to|i will|i'm going to|im going to)\b/i.test(normalized) ||
+    /^add\s*:/i.test(body)
 }
 
 async function handleNumberedSelection(
@@ -889,12 +909,19 @@ export async function POST(request: NextRequest) {
     }
 
     const activePrompt = await getActiveSelectionPrompt(supabase, profile)
-    if (activePrompt?.action === 'delete_confirm') {
+    const activePromptFresh = activePrompt ? isPromptFresh(activePrompt) : false
+    const shouldBypassActivePrompt = Boolean(activePrompt && (!activePromptFresh || isClearNewSmsIntent(body)))
+
+    if (activePrompt && !activePromptFresh) {
+      console.info('[SMS] Ignoring stale selection prompt:', { profile_id: profile.id, action: activePrompt.action })
+    }
+
+    if (!shouldBypassActivePrompt && activePrompt?.action === 'delete_confirm') {
       const reply = await handleDeleteConfirmation(supabase, profile, body, activePrompt)
       if (reply) return sendActionReply(reply, { delete_confirmation_reply: body })
     }
 
-    if (activePrompt?.action === 'delete') {
+    if (!shouldBypassActivePrompt && activePrompt?.action === 'delete') {
       const result = await handleDeleteSelection(supabase, profile, body, activePrompt)
       if (result) {
         const reply = typeof result === 'string' ? result : result.reply
@@ -908,12 +935,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (activePrompt?.action === 'undo') {
+    if (!shouldBypassActivePrompt && activePrompt?.action === 'undo') {
       const reply = await handleUndoSelection(supabase, profile, body, activePrompt)
       if (reply) return sendActionReply(reply, { undo_selection: body })
     }
 
-    if (activePrompt?.action === 'complete') {
+    if (!shouldBypassActivePrompt && activePrompt?.action === 'complete') {
       const reply = await handleNumberedSelection(supabase, profile, body, activePrompt)
       if (reply) return sendActionReply(reply, { selected_by_number: body })
     }

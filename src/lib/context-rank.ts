@@ -343,7 +343,7 @@ export function supportForEpisode(episode: Episode, evidenceById: Map<string, Ev
 function statusFit(status: Partial<Record<EpisodeStatus, number>>, intent: RecoveryIntent) {
   if (intent === 'what_was_i_doing') return clamp01((status.active ?? 0) * 1 + (status.completed ?? 0) * 0.95 + (status.planned ?? 0) * 0.35 + (status.unknown ?? 0) * 0.25)
   if (intent === 'where_did_i_leave_off') return clamp01((status.active ?? 0) + (status.paused ?? 0) + (status.planned ?? 0) * 0.55 + (status.completed ?? 0) * 0.20 + (status.unknown ?? 0) * 0.35)
-  if (intent === 'what_should_i_do_next') return clamp01((status.planned ?? 0) + (status.paused ?? 0) * 0.75 + (status.active ?? 0) * 0.65 + (status.unknown ?? 0) * 0.25)
+  if (intent === 'what_should_i_do_next') return clamp01((status.planned ?? 0) + (status.paused ?? 0) * 0.75 + (status.active ?? 0) * 0.65 + (status.completed ?? 0) * 0.02 + (status.unknown ?? 0) * 0.10)
   if (intent === 'did_i_finish_this') return clamp01((status.completed ?? 0) + (status.active ?? 0) * 0.35 + (status.planned ?? 0) * 0.25 + (status.unknown ?? 0) * 0.45)
   return clamp01((status.completed ?? 0) + (status.active ?? 0) * 0.5 + (status.planned ?? 0) * 0.4 + (status.unknown ?? 0) * 0.3)
 }
