@@ -21,6 +21,7 @@ type RecoveryMomentRow = {
   status: 'shown' | 'confirmed' | 'rejected' | 'skipped'
   shown_at: string
   responded_at: string | null
+  created_at?: string | null
 }
 
 type RecoverySessionRow = {
@@ -103,6 +104,7 @@ function fallbackCanonicalActivity(value: string) {
     .replace(/\b(worked|working)\s+on\b/g, 'work on')
     .replace(/\b(finished|finishing)\b/g, 'finish')
     .replace(/\b(found|finding)\b/g, 'find')
+    .replace(/\b(drove|driving)\b/g, 'drive')
     .replace(/\s+as\s+done\b/g, ' ')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
@@ -126,9 +128,18 @@ async function canonicalizeEvidence(evidence: Evidence[]) {
 
 function sessionStateFromRows(rows: RecoveryMomentRow[], sessionId?: string | null) {
   const states: Record<string, EpisodeState> = {}
+  const latestByMoment = new Map<string, RecoveryMomentRow>()
+
   for (const row of rows) {
+    const previous = latestByMoment.get(row.moment_key)
+    const rowTime = Date.parse(row.responded_at ?? row.shown_at ?? row.created_at ?? '')
+    const previousTime = previous ? Date.parse(previous.responded_at ?? previous.shown_at ?? previous.created_at ?? '') : -Infinity
+    if (!previous || rowTime >= previousTime) latestByMoment.set(row.moment_key, row)
+  }
+
+  for (const row of latestByMoment.values()) {
     const isCurrentSession = !sessionId || row.session_id === sessionId
-    if (!isCurrentSession && row.status !== 'rejected') continue
+    if (!isCurrentSession && row.status === 'shown') continue
     const state = row.status === 'confirmed'
       ? 'confirmed'
       : row.status === 'rejected'
@@ -265,7 +276,7 @@ export async function buildContextRankInput({
 
   const recoveryResult = await supabase
     .from('recovery_session_moments')
-    .select('id,session_id,moment_key,answer_text,confidence,status,shown_at,responded_at')
+    .select('id,session_id,moment_key,answer_text,confidence,status,shown_at,responded_at,created_at')
     .eq('user_id', profile.user_id)
     .eq('session_date', todayKey)
     .order('responded_at', { ascending: false })
@@ -277,13 +288,21 @@ export async function buildContextRankInput({
     .filter(item => item.status === 'confirmed' && item.answer_text)
     .map(item => fallbackCanonicalActivity(item.answer_text || ''))
     .filter(Boolean)
+  const rejectedRecoveryLabels = recoveryRows
+    .filter(item => item.status === 'rejected' && item.answer_text)
+    .map(item => fallbackCanonicalActivity(item.answer_text || ''))
+    .filter(Boolean)
+  const completedLabels = new Set<string>()
 
   for (const activity of (activityResult.data ?? []) as ActivityLog[]) {
     const point = Date.parse(activity.occurred_at)
+    const activityText = displayActivity(activity)
+    const canonical = fallbackCanonicalActivity(activityText)
+    if (canonical) completedLabels.add(canonical)
     evidence.push(makeEvidence({
       id: `activity_log:${activity.id}`,
       userId: profile.user_id,
-      content: displayActivity(activity),
+      content: activityText,
       source: 'activity_log',
       time: dateWindow(point, 30 * 60 * 1000, 30 * 60 * 1000),
       provenance: `activity_logs:${activity.id}`,
@@ -313,10 +332,13 @@ export async function buildContextRankInput({
   for (const task of (taskResult.data ?? []) as PlannedActivity[]) {
     if (task.status === 'confirmed' || task.confirmed_at) {
       const point = Date.parse(task.confirmed_at ?? task.updated_at)
+      const taskText = displayTask(task)
+      const canonical = fallbackCanonicalActivity(taskText)
+      if (canonical) completedLabels.add(canonical)
       evidence.push(makeEvidence({
         id: `task_done:${task.id}`,
         userId: profile.user_id,
-        content: displayTask(task),
+        content: taskText,
         source: 'task_done',
         time: dateWindow(point, 2 * 60 * 60 * 1000, 30 * 60 * 1000),
         provenance: `planned_activities:${task.id}`,
@@ -327,13 +349,16 @@ export async function buildContextRankInput({
       const taskText = displayTask(task)
       const plannedCanonical = fallbackCanonicalActivity(taskText)
       const contradictsConfirmed = confirmedRecoveryLabels.some(label => defaultSimilarity(label, plannedCanonical) >= 0.6)
+      const contradictsCompleted = Array.from(completedLabels).some(label => defaultSimilarity(label, plannedCanonical) >= 0.6)
+      const wasRejected = rejectedRecoveryLabels.some(label => defaultSimilarity(label, plannedCanonical) >= 0.6)
+      const source = contradictsConfirmed || contradictsCompleted ? 'task_reopened' : 'task_planned'
       evidence.push(makeEvidence({
-        id: `task_planned:${task.id}`,
+        id: `${source}:${task.id}`,
         userId: profile.user_id,
         content: taskText,
-        source: 'task_planned',
-        state: contradictsConfirmed ? 'contradicting' : 'supporting',
-        occurrenceStrength: contradictsConfirmed ? 0.55 : undefined,
+        source,
+        state: contradictsConfirmed || contradictsCompleted || wasRejected ? 'contradicting' : 'supporting',
+        occurrenceStrength: wasRejected ? 0.25 : contradictsConfirmed || contradictsCompleted ? 0.80 : undefined,
         time: taskPlannedWindow(task),
         provenance: `planned_activities:${task.id}`,
       }))

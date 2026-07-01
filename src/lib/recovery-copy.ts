@@ -68,31 +68,30 @@ export function activityPhrases(value: string): ActivityPhrases {
 
   if (simpleMap[simple]) return { raw, ...simpleMap[simple] }
 
-  const goTo = lower.match(/^go to (.+)$/i)
+  const goTo = lower.match(/^(?:go to|going to) (.+)$/i)
   if (goTo) {
     const object = normalizeObject(goTo[1])
     return { raw, infinitive: `go to ${object}`, gerund: `going to ${object}`, object }
   }
 
-  const workOn = lower.match(/^work on (.+)$/i)
+  const workOn = lower.match(/^(?:work on|working on) (.+)$/i)
   if (workOn) {
     const object = normalizeObject(workOn[1])
     return { raw, infinitive: `work on ${object}`, gerund: `working on ${object}`, object: `${object} work` }
   }
 
-  const phrasePatterns: Array<[RegExp, string]> = [
-    [/^finish (.+)$/i, 'finishing'],
-    [/^find (.+)$/i, 'finding'],
-    [/^make (.+)$/i, 'making'],
-    [/^take (.+)$/i, 'taking'],
-    [/^pick up (.+)$/i, 'picking up'],
+  const phrasePatterns: Array<[RegExp, string, string]> = [
+    [/^(?:finish|finishing) (.+)$/i, 'finish', 'finishing'],
+    [/^(?:find|finding) (.+)$/i, 'find', 'finding'],
+    [/^(?:make|making) (.+)$/i, 'make', 'making'],
+    [/^(?:take|taking) (.+)$/i, 'take', 'taking'],
+    [/^(?:pick up|picking up) (.+)$/i, 'pick up', 'picking up'],
   ]
 
-  for (const [pattern, gerundVerb] of phrasePatterns) {
+  for (const [pattern, infinitiveVerb, gerundVerb] of phrasePatterns) {
     const match = lower.match(pattern)
     if (match) {
       const object = normalizeObject(match[1])
-      const infinitiveVerb = lower.slice(0, lower.length - match[1].length).trim()
       return {
         raw,
         infinitive: `${infinitiveVerb} ${object}`,

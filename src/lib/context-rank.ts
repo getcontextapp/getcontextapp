@@ -1,6 +1,6 @@
 export type EvidenceSource =
   | 'user_confirmation' | 'activity_log' | 'task_done' | 'task_planned'
-  | 'sms_response' | 'reflection' | 'ai_parse' | 'sms_ignored'
+  | 'sms_response' | 'reflection' | 'ai_parse' | 'sms_ignored' | 'task_reopened'
 
 export type EvidenceState =
   | 'raw' | 'parsed' | 'linked' | 'supporting' | 'contradicting'
@@ -144,6 +144,7 @@ export const config: ContextRankConfig = {
     task_planned: { occurrenceStrength: 0.35, reliability: { occ: 0.35, sem: 0.80, time: 0.60 } },
     ai_parse: { occurrenceStrength: 0.25, reliability: { occ: 0.30, sem: 0.60, time: 0.30 } },
     sms_ignored: { occurrenceStrength: 0.05, reliability: { occ: 0.05, sem: 0.05, time: 0.05 } },
+    task_reopened: { occurrenceStrength: 0.80, reliability: { occ: 0.85, sem: 0.85, time: 0.70 } },
   },
 }
 
@@ -156,12 +157,21 @@ function clamp01(value: number) {
 }
 
 function normalizeText(value: string) {
-  return value
+  let normalized = value
     .toLowerCase()
-    .replace(/\b(earlier|confirmed|completed|marked|done|doing|did|made|making|make|took|taking|take|went|going|go|this|today|morning|afternoon|evening|night)\b/g, ' ')
+    .replace(/\b(went|going)\s+to\b/g, 'go to')
+    .replace(/\b(made|making)\b/g, 'make')
+    .replace(/\b(took|taking)\b/g, 'take')
+    .replace(/\b(worked|working)\s+on\b/g, 'work on')
+    .replace(/\b(finished|finishing)\b/g, 'finish')
+    .replace(/\b(found|finding)\b/g, 'find')
+    .replace(/\b(drove|driving)\b/g, 'drive')
+  normalized = normalized
+    .replace(/\b(earlier|confirmed|completed|marked|done|doing|did|this|today|morning|afternoon|evening|night)\b/g, ' ')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+  return normalized
 }
 
 function tokens(value: string) {
@@ -196,7 +206,7 @@ function episodeSummary(evidence: Evidence[]) {
 function seedable(evidence: Evidence, hasBetterEvidence: boolean) {
   if (evidence.source === 'sms_ignored') return false
   if (evidence.source === 'ai_parse') return !hasBetterEvidence
-  return ['activity_log', 'task_done', 'task_planned', 'sms_response', 'reflection', 'user_confirmation'].includes(evidence.source)
+  return ['activity_log', 'task_done', 'task_planned', 'sms_response', 'reflection', 'user_confirmation', 'task_reopened'].includes(evidence.source)
 }
 
 function episodeIdFor(evidence: Evidence) {
@@ -206,6 +216,7 @@ function episodeIdFor(evidence: Evidence) {
 
 function initialStatus(evidence: Evidence): Partial<Record<EpisodeStatus, number>> {
   if (evidence.source === 'task_planned') return { planned: 0.70, unknown: 0.30 }
+  if (evidence.source === 'task_reopened') return { planned: 0.65, unknown: 0.35 }
   if (evidence.source === 'user_confirmation') return { completed: 0.72, unknown: 0.28 }
   if (['activity_log', 'task_done', 'sms_response'].includes(evidence.source)) return { completed: 0.82, unknown: 0.18 }
   if (evidence.source === 'reflection') return { completed: 0.55, unknown: 0.45 }
@@ -250,6 +261,7 @@ function sourceLabel(source: EvidenceSource) {
     reflection: 'your reflection',
     ai_parse: 'a saved Context note',
     sms_ignored: 'a missed prompt',
+    task_reopened: 'a task that is waiting again',
   }
   return labels[source]
 }
@@ -300,7 +312,8 @@ function mergeEpisodes(episodes: Episode[], evidence: Evidence[], similarity: Si
       const temp = temporalCompatibility(candidate.interval, episode.interval, cfg)
       const overlap = episode.evidenceIds.some(id => candidate.evidenceIds.includes(id)) ? 1 : 0
       const conflict = episodeConflict([...candidate.evidenceIds, ...episode.evidenceIds].map(id => evidenceById.get(id)).filter(Boolean) as Evidence[])
-      return (0.6 * sem + 0.25 * temp + 0.25 * overlap - 0.35 * conflict) >= cfg.episode.tauMerge
+      const sameActivity = sem >= 0.85 && temp >= 0.25
+      return sameActivity || (0.6 * sem + 0.25 * temp + 0.25 * overlap - 0.35 * conflict) >= cfg.episode.tauMerge
     })
     if (!existing) {
       merged.push({ ...episode, evidenceIds: Array.from(new Set(episode.evidenceIds)) })

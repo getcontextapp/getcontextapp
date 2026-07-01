@@ -13,6 +13,7 @@ import {
   type RecoveryQuery,
   type RecoverySession,
 } from './context-rank'
+import { buildRecoveryAnswerText } from './recovery-copy'
 
 const base = Date.parse('2026-06-29T12:00:00Z')
 
@@ -177,4 +178,48 @@ test('configuration exposes required thresholds and priors', () => {
   assert.equal(config.thresholds.leading, 0.75)
   assert.equal(config.exhaustion.maxShownPerSession, 1)
   assert.equal(config.sourceDefaults.task_done.reliability.time, 0.45)
+})
+
+test('semantic variants fuse into one episode', () => {
+  const evidence = [
+    makeEvidence({ id: 'a', userId: 'u1', content: 'go to the gym', source: 'task_done', time: windowAt(8), provenance: 'planned_activities:a' }),
+    makeEvidence({ id: 'b', userId: 'u1', content: 'going to gym', source: 'activity_log', time: windowAt(7), provenance: 'activity_logs:b' }),
+    makeEvidence({ id: 'c', userId: 'u1', content: 'Earlier, you confirmed going to the gym', source: 'user_confirmation', time: windowAt(6), provenance: 'recovery_session_moments:c' }),
+  ]
+  const episodes = constructEpisodes(evidence)
+  assert.equal(episodes.length, 1)
+})
+
+test('a rejected moment stays hidden across a later session', () => {
+  const evidence = [
+    makeEvidence({ id: 'a', userId: 'u1', content: 'go to the gym', source: 'task_done', time: windowAt(8), provenance: 'planned_activities:a' }),
+    makeEvidence({ id: 'b', userId: 'u1', content: 'work on publication', source: 'task_done', time: windowAt(7), provenance: 'planned_activities:b' }),
+  ]
+  const priorSession: RecoverySession = {
+    ...session(),
+    id: 'later-session',
+    candidateStates: { 'u1:go-to-the-gym': 'rejected' },
+  }
+  const result = runContextRank({ evidence, query: query('what_was_i_doing'), session: priorSession })
+  assert.doesNotMatch(result.card.candidates[0]?.episode.activityLabel ?? '', /gym/i)
+})
+
+test('a reopened task contradicts an earlier confirmation and lowers confidence', () => {
+  const evidence = [
+    makeEvidence({ id: 'yes', userId: 'u1', content: 'make breakfast for Amal', source: 'user_confirmation', time: windowAt(40), provenance: 'recovery_session_moments:yes' }),
+    makeEvidence({ id: 'open', userId: 'u1', content: 'make breakfast for Amal', source: 'task_reopened', state: 'contradicting', time: windowAt(5), provenance: 'planned_activities:open' }),
+  ]
+  const result = runContextRank({ evidence, query: query('what_was_i_doing'), session: session() })
+  assert.ok(result.candidates[0].contradiction > 0)
+  assert.ok(result.candidates[0].confidence < 0.75)
+})
+
+test('natural recovery copy avoids doubled verb phrases', () => {
+  const text = buildRecoveryAnswerText({
+    intent: 'what_was_i_doing',
+    activityLabel: 'go to the gym',
+    statusDistribution: { completed: 0.82 },
+    episodeState: 'ranked',
+  })
+  assert.equal(text, 'You may have been going to the gym.')
 })
