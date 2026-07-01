@@ -126,7 +126,11 @@ async function canonicalizeEvidence(evidence: Evidence[]) {
   })
 }
 
-function sessionStateFromRows(rows: RecoveryMomentRow[], sessionId?: string | null) {
+function sessionStateFromRows(
+  rows: RecoveryMomentRow[],
+  sessionId?: string | null,
+  sessionStatus: RecoverySessionRow['status'] = 'active',
+) {
   const states: Record<string, EpisodeState> = {}
   const latestByMoment = new Map<string, RecoveryMomentRow>()
 
@@ -140,6 +144,7 @@ function sessionStateFromRows(rows: RecoveryMomentRow[], sessionId?: string | nu
   for (const row of latestByMoment.values()) {
     const isCurrentSession = !sessionId || row.session_id === sessionId
     if (!isCurrentSession && row.status === 'shown') continue
+    if (sessionStatus !== 'active' && row.status === 'shown') continue
     const state = row.status === 'confirmed'
       ? 'confirmed'
       : row.status === 'rejected'
@@ -422,7 +427,7 @@ export async function buildContextRankInput({
       userId: profile.user_id,
       state: 'intent_selected',
       intent,
-      candidateStates: sessionStateFromRows(recoveryRows, sessionRow.id),
+      candidateStates: sessionStateFromRows(recoveryRows, sessionRow.id, sessionRow.status),
       history: [],
     },
   }
