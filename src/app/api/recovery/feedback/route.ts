@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
   const intent = body.intent as RecoveryIntent
   const response = body.response as FeedbackResponse
   const answerText = typeof body.answer_text === 'string' ? body.answer_text.trim().slice(0, 500) : ''
+  const activityText = typeof body.activity_text === 'string' ? body.activity_text.trim().slice(0, 240) : ''
   const correctionText = typeof body.correction_text === 'string' ? body.correction_text.trim().slice(0, 500) : ''
   const confidence = Number.isFinite(Number(body.confidence)) ? Number(body.confidence) : null
 
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest) {
       profile_id: profile.id,
       session_date: todayKey,
       moment_key: episodeId,
-      answer_text: correctionText || answerText || null,
+      answer_text: correctionText || activityText || answerText || null,
       confidence: confidence === null ? null : String(confidence),
       status,
       responded_at: new Date(now).toISOString(),
@@ -98,6 +99,18 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       profile_id: profile.id,
       text: correctionText,
+      type: 'did',
+      source: 'user-stated',
+      confidence: 'high',
+    })
+  }
+
+  if (response === 'confirmed' && (activityText || answerText)) {
+    await supabase.from('timeline_events').insert({
+      household_id: profile.household_id,
+      user_id: user.id,
+      profile_id: profile.id,
+      text: activityText || answerText,
       type: 'did',
       source: 'user-stated',
       confidence: 'high',
@@ -120,16 +133,48 @@ export async function POST(request: NextRequest) {
     await supabase
       .from('recovery_sessions')
       .update({
-        status: 'completed',
-        completed_at: new Date(now).toISOString(),
-        last_confirmed_text: answerText || correctionText || null,
+        status: 'active',
+        last_confirmed_text: activityText || answerText || correctionText || null,
         last_confirmed_at: new Date(now).toISOString(),
       })
       .eq('id', sessionId)
 
+    const { evidence, session } = await buildContextRankInput({
+      supabase,
+      profile,
+      queryTime: now,
+      intent,
+      sessionId,
+    })
+    const nextSession = applyFeedback(session, episodeId, response, now)
+    const result = runContextRank({
+      evidence,
+      query: { userId: user.id, queryTime: now, intent },
+      session: nextSession,
+    })
+
+    await recordShownCandidates(supabase, profile, result.session, result.card)
+
+    if (result.card.mode === 'abstain') {
+      await supabase
+        .from('recovery_sessions')
+        .update({
+          status: 'completed',
+          completed_at: new Date(now).toISOString(),
+        })
+        .eq('id', sessionId)
+
+      return NextResponse.json({
+        resolved: true,
+        message: "I'll remember that. That's everything I know right now.",
+        session: result.session,
+      })
+    }
+
     return NextResponse.json({
-      resolved: true,
-      message: "I'll remember that.",
+      resolved: false,
+      session: result.session,
+      card: result.card,
     })
   }
 

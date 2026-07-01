@@ -1,14 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
+import { canonicalizeContextRankEvidence } from '@/lib/anthropic'
 import {
   config,
+  defaultSimilarity,
   makeEvidence,
   type Evidence,
   type EpisodeState,
   type RecoveryIntent,
   type RecoverySession,
 } from '@/lib/context-rank'
-import type { ActivityLog, PlannedActivity, Profile, Reflection, SmsMessage } from '@/types'
+import type { ActivityLog, PlannedActivity, Profile, Reflection, SmsMessage, TimelineEvent } from '@/types'
 
 type RecoveryMomentRow = {
   id: string
@@ -26,6 +28,7 @@ type RecoverySessionRow = {
   user_id: string
   status: 'active' | 'completed' | 'abandoned'
   created_at: string
+  completed_at: string | null
 }
 
 type ContextRankAdapterInput = {
@@ -90,10 +93,42 @@ function displayReflection(reflection: Reflection) {
   return nodeText ? `${reflection.ai_summary}. ${nodeText}` : reflection.ai_summary
 }
 
+function fallbackCanonicalActivity(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\b(earlier|confirmed|completed|marked|done|doing|did|this|today|you|were|was|it|looks|like|planned|plan|may|have|been)\b/g, ' ')
+    .replace(/\b(went|going)\s+to\b/g, 'go to')
+    .replace(/\b(made|making)\b/g, 'make')
+    .replace(/\b(took|taking)\b/g, 'take')
+    .replace(/\b(worked|working)\s+on\b/g, 'work on')
+    .replace(/\b(finished|finishing)\b/g, 'finish')
+    .replace(/\b(found|finding)\b/g, 'find')
+    .replace(/\s+as\s+done\b/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+async function canonicalizeEvidence(evidence: Evidence[]) {
+  const aiCanonical = await canonicalizeContextRankEvidence(
+    evidence.map(item => ({ id: item.id, text: item.rawContent || item.content, source: item.source })),
+  )
+  return evidence.map(item => {
+    const fallback = fallbackCanonicalActivity(item.rawContent || item.content)
+    const canonical = (aiCanonical[item.id] || fallback || item.content).trim()
+    return {
+      ...item,
+      rawContent: item.rawContent || item.content,
+      content: canonical,
+    }
+  })
+}
+
 function sessionStateFromRows(rows: RecoveryMomentRow[], sessionId?: string | null) {
   const states: Record<string, EpisodeState> = {}
   for (const row of rows) {
-    if (sessionId && row.session_id !== sessionId) continue
+    const isCurrentSession = !sessionId || row.session_id === sessionId
+    if (!isCurrentSession && row.status !== 'rejected') continue
     const state = row.status === 'confirmed'
       ? 'confirmed'
       : row.status === 'rejected'
@@ -101,6 +136,7 @@ function sessionStateFromRows(rows: RecoveryMomentRow[], sessionId?: string | nu
       : row.status === 'shown'
       ? 'shown'
       : 'exhausted'
+    if (row.status === 'confirmed' && !isCurrentSession) continue
     states[row.moment_key] = state
   }
   return states
@@ -124,6 +160,30 @@ async function getOrCreateSession(
   }
 
   const todayKey = getLocalDateKey(new Date(queryTime), profile.timezone)
+  const { data: active } = await supabase
+    .from('recovery_sessions')
+    .select('*')
+    .eq('user_id', profile.user_id)
+    .eq('session_date', todayKey)
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (active) return active as RecoverySessionRow
+
+  const { data: completed } = await supabase
+    .from('recovery_sessions')
+    .select('*')
+    .eq('user_id', profile.user_id)
+    .eq('session_date', todayKey)
+    .eq('status', 'completed')
+    .order('completed_at', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (completed) return completed as RecoverySessionRow
+
   const { data, error } = await supabase
     .from('recovery_sessions')
     .insert({
@@ -154,7 +214,7 @@ export async function buildContextRankInput({
   const windowStart = new Date(Math.min(new Date(todayRange.start).getTime(), queryTime - lookbackMs)).toISOString()
   const windowEnd = new Date(Math.max(new Date(todayRange.end).getTime(), queryTime + 60 * 60 * 1000)).toISOString()
 
-  const [activityResult, taskResult, smsResult, reflectionResult, sessionRow] = await Promise.all([
+  const [activityResult, taskResult, smsResult, timelineResult, reflectionResult, sessionRow] = await Promise.all([
     supabase
       .from('activity_logs')
       .select('*')
@@ -179,6 +239,14 @@ export async function buildContextRankInput({
       .order('created_at', { ascending: false })
       .limit(30),
     supabase
+      .from('timeline_events')
+      .select('*')
+      .eq('household_id', profile.household_id)
+      .gte('created_at', windowStart)
+      .lt('created_at', windowEnd)
+      .order('created_at', { ascending: false })
+      .limit(40),
+    supabase
       .from('reflections')
       .select('*')
       .eq('user_id', profile.user_id)
@@ -187,7 +255,7 @@ export async function buildContextRankInput({
     getOrCreateSession(supabase, profile, queryTime, intent, sessionId),
   ])
 
-  const lookupError = activityResult.error || taskResult.error || smsResult.error
+  const lookupError = activityResult.error || taskResult.error || smsResult.error || timelineResult.error
   if (lookupError) throw new Error(lookupError.message)
   if (reflectionResult.error && reflectionResult.error.code !== 'PGRST116') throw new Error(reflectionResult.error.message)
 
@@ -201,6 +269,10 @@ export async function buildContextRankInput({
 
   const recoveryRows = recoveryResult.error ? [] : (recoveryResult.data ?? []) as RecoveryMomentRow[]
   const evidence: Evidence[] = []
+  const confirmedRecoveryLabels = recoveryRows
+    .filter(item => item.status === 'confirmed' && item.answer_text)
+    .map(item => fallbackCanonicalActivity(item.answer_text || ''))
+    .filter(Boolean)
 
   for (const activity of (activityResult.data ?? []) as ActivityLog[]) {
     const point = Date.parse(activity.occurred_at)
@@ -211,6 +283,24 @@ export async function buildContextRankInput({
       source: 'activity_log',
       time: dateWindow(point, 30 * 60 * 1000, 30 * 60 * 1000),
       provenance: `activity_logs:${activity.id}`,
+    }))
+  }
+
+  for (const event of (timelineResult.data ?? []) as TimelineEvent[]) {
+    const point = Date.parse(event.created_at)
+    const source = event.type === 'sms_reply'
+      ? 'sms_response'
+      : event.type === 'completion'
+      ? 'activity_log'
+      : 'user_confirmation'
+    evidence.push(makeEvidence({
+      id: `timeline_event:${event.id}`,
+      userId: profile.user_id,
+      content: event.text,
+      source,
+      time: dateWindow(point, 30 * 60 * 1000, 30 * 60 * 1000),
+      provenance: `timeline_events:${event.id}`,
+      occurrenceStrength: event.confidence === 'high' ? 0.92 : 0.45,
     }))
   }
 
@@ -228,11 +318,16 @@ export async function buildContextRankInput({
       continue
     }
     if (['planned', 'not_now'].includes(task.status)) {
+      const taskText = displayTask(task)
+      const plannedCanonical = fallbackCanonicalActivity(taskText)
+      const contradictsConfirmed = confirmedRecoveryLabels.some(label => defaultSimilarity(label, plannedCanonical) >= 0.6)
       evidence.push(makeEvidence({
         id: `task_planned:${task.id}`,
         userId: profile.user_id,
-        content: displayTask(task),
+        content: taskText,
         source: 'task_planned',
+        state: contradictsConfirmed ? 'contradicting' : 'supporting',
+        occurrenceStrength: contradictsConfirmed ? 0.55 : undefined,
         time: taskPlannedWindow(task),
         provenance: `planned_activities:${task.id}`,
       }))
@@ -287,8 +382,10 @@ export async function buildContextRankInput({
     }))
   }
 
+  const canonicalEvidence = await canonicalizeEvidence(evidence)
+
   return {
-    evidence,
+    evidence: canonicalEvidence,
     session: {
       id: sessionRow.id,
       userId: profile.user_id,

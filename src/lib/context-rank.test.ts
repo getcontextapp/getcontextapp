@@ -98,6 +98,37 @@ test('rejected candidate does not return in the same session', () => {
   assert.notEqual(second.card.candidates[0]?.episode.id, rejectedId)
 })
 
+test('shown candidate does not repeat when max shown per session is one', () => {
+  const evidence = [
+    makeEvidence({ id: 'a', userId: 'u1', content: 'made breakfast', source: 'task_done', time: windowAt(10), provenance: 'activity_logs:a' }),
+    makeEvidence({ id: 'b', userId: 'u1', content: 'went for a walk', source: 'task_done', time: windowAt(12), provenance: 'activity_logs:b' }),
+  ]
+  const first = runContextRank({ evidence, query: query('what_was_i_doing'), session: session() })
+  const shownId = first.card.candidates[0].episode.id
+  const nextSession = {
+    ...first.session,
+    candidateStates: { ...first.session.candidateStates, [shownId]: 'shown' as const },
+  }
+  const second = runContextRank({ evidence, query: query('what_was_i_doing'), session: nextSession })
+  assert.notEqual(second.card.candidates[0]?.episode.id, shownId)
+})
+
+test('because explanation preserves raw evidence snippets after canonicalization', () => {
+  const evidence = [
+    makeEvidence({
+      id: 'a',
+      userId: 'u1',
+      content: 'go to the gym',
+      rawContent: 'Earlier, you confirmed: You were going to the gym.',
+      source: 'user_confirmation',
+      time: windowAt(10),
+      provenance: 'recovery_session_moments:a',
+    }),
+  ]
+  const result = runContextRank({ evidence, query: query('what_was_i_doing'), session: session() })
+  assert.equal(result.card.candidates[0].because.evidence[0].snippet, 'Earlier, you confirmed: You were going to the gym.')
+})
+
 test('random rejection sequences terminate in finite steps', () => {
   const evidence: Evidence[] = [
     makeEvidence({ id: 'a', userId: 'u1', content: 'breakfast', source: 'task_done', time: windowAt(5), provenance: 'a' }),

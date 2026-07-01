@@ -959,6 +959,59 @@ ${momentList}`
   }
 }
 
+export async function canonicalizeContextRankEvidence(
+  items: Array<{ id: string; text: string; source: string }>,
+): Promise<Record<string, string>> {
+  if (!process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY === 'dummy') return {}
+
+  const usableItems = items
+    .map(item => ({
+      id: cleanContextContent(item.id).slice(0, 120),
+      text: cleanContextContent(item.text).slice(0, 180),
+      source: cleanContextContent(item.source).slice(0, 80),
+    }))
+    .filter(item => item.id && item.text)
+    .slice(0, 60)
+
+  if (usableItems.length === 0) return {}
+
+  const prompt = `You canonicalize activity evidence for ContextRank, a recall feature for older adults with MCI.
+
+Return JSON only: an array of objects with keys "id" and "canonical_activity".
+
+Rules:
+- Keep one plain activity phrase per item.
+- Convert variants with the same meaning to the same phrase.
+- Use short verb phrases like "go to the gym", "make breakfast for Amal", "get car repair estimate".
+- Do not infer completion. Only name the activity.
+- Remove UI wording like "Earlier, you confirmed", "marked done", "planned to", "you may have been".
+- Never use em dashes or en dashes.
+- Preserve important people, places, and objects.
+
+Evidence:
+${JSON.stringify(usableItems)}`
+
+  try {
+    const message = await client.messages.create({
+      model: MODEL,
+      max_tokens: 80 * usableItems.length + 120,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    const raw = message.content[0].type === 'text' ? message.content[0].text : ''
+    const parsed: Array<{ id: string; canonical_activity: string }> = JSON.parse(cleanJson(raw))
+    const result: Record<string, string> = {}
+    for (const item of Array.isArray(parsed) ? parsed : []) {
+      const id = cleanContextContent(item.id)
+      const canonical = cleanContextContent(item.canonical_activity).replace(/[?.!]+$/, '').trim().slice(0, 120)
+      if (id && canonical) result[id] = canonical
+    }
+    return result
+  } catch (error) {
+    console.error('[Anthropic] ContextRank canonicalization failed:', error)
+    return {}
+  }
+}
+
 export async function generateReflectionMemory(rawInput: string): Promise<ReflectionMemory> {
   const prompt = `You are a memory assistant for an older adult with mild cognitive impairment. The user has just described part of their day in their own words.
 

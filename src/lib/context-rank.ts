@@ -18,6 +18,7 @@ export interface Evidence {
   id: string
   userId: string
   content: string
+  rawContent?: string
   source: EvidenceSource
   state: EvidenceState
   time: TimeDistribution
@@ -230,7 +231,7 @@ function buildBecause(episode: Episode, evidenceById: Map<string, Evidence>): Be
     .map(item => ({
       id: item.id,
       source: item.source,
-      snippet: item.content.slice(0, 120),
+      snippet: (item.rawContent || item.content).slice(0, 120),
     }))
   const sources = Array.from(new Set(evidence.map(item => sourceLabel(item.source))))
   return {
@@ -360,6 +361,8 @@ function sessionGate(episode: Episode, session: RecoverySession, cfg = config) {
   const state = session.candidateStates[episode.id] ?? episode.state
   if (state === 'rejected' || state === 'exhausted') return 0
   if (state === 'confirmed') return 0
+  if (state === 'shown' && cfg.exhaustion.maxShownPerSession <= 1) return 0
+  if (state === 'shown' && episode.shownCount >= cfg.exhaustion.maxShownPerSession) return 0
   if (state === 'shown') return cfg.scoring.shownPenalty
   return 1
 }
@@ -436,7 +439,7 @@ export function decideContinuityCard(candidates: ScoredCandidate[], query: Recov
     return {
       mode: 'options',
       message: 'These are the best possibilities I found.',
-      candidates: valid.slice(0, 3),
+      candidates: valid.slice(0, Math.max(1, cfg.exhaustion.maxShownPerSession)),
       intent: query.intent,
     }
   }
@@ -531,6 +534,7 @@ export function makeEvidence(input: {
   id: string
   userId: string
   content: string
+  rawContent?: string
   source: EvidenceSource
   state?: EvidenceState
   time: TimeDistribution
@@ -543,6 +547,7 @@ export function makeEvidence(input: {
     id: input.id,
     userId: input.userId,
     content: input.content,
+    rawContent: input.rawContent,
     source: input.source,
     state: input.state ?? 'supporting',
     time: input.time,

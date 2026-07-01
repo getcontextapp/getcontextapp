@@ -321,6 +321,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           intent: recoveryIntent,
           response: responseValue,
           answer_text: recoveryAnswerText(candidate),
+          activity_text: candidate.episode.activityLabel,
           correction_text: correctionText,
           confidence: candidate.confidence,
         }),
