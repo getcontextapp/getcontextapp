@@ -128,6 +128,7 @@ async function canonicalizeEvidence(evidence: Evidence[]) {
 
 function sessionStateFromRows(
   rows: RecoveryMomentRow[],
+  intent: RecoveryIntent,
   sessionId?: string | null,
   sessionStatus: RecoverySessionRow['status'] = 'active',
 ) {
@@ -142,7 +143,12 @@ function sessionStateFromRows(
   }
 
   for (const row of latestByMoment.values()) {
+    const [storedIntent, ...keyParts] = row.moment_key.split(':')
+    const hasIntentPrefix = keyParts.length > 0 && storedIntent.includes('_')
+    const episodeKey = hasIntentPrefix ? keyParts.join(':') : row.moment_key
+    const intentMatches = hasIntentPrefix ? storedIntent === intent : false
     const isCurrentSession = !sessionId || row.session_id === sessionId
+    if (row.status === 'shown' && !intentMatches) continue
     if (!isCurrentSession && row.status === 'shown') continue
     if (sessionStatus !== 'active' && row.status === 'shown') continue
     const state = row.status === 'confirmed'
@@ -152,8 +158,9 @@ function sessionStateFromRows(
       : row.status === 'shown'
       ? 'shown'
       : 'exhausted'
+    if (hasIntentPrefix && !intentMatches && row.status !== 'rejected') continue
     if (row.status === 'confirmed' && !isCurrentSession) continue
-    states[row.moment_key] = state
+    states[episodeKey] = state
   }
   return states
 }
@@ -427,7 +434,7 @@ export async function buildContextRankInput({
       userId: profile.user_id,
       state: 'intent_selected',
       intent,
-      candidateStates: sessionStateFromRows(recoveryRows, sessionRow.id, sessionRow.status),
+      candidateStates: sessionStateFromRows(recoveryRows, intent, sessionRow.id, sessionRow.status),
       history: [],
     },
   }

@@ -29,7 +29,7 @@ async function recordShownCandidates(
       household_id: profile.household_id,
       profile_id: profile.id,
       session_date: sessionDate,
-      moment_key: candidate.episode.id,
+      moment_key: `${session.intent}:${candidate.episode.id}`,
       answer_text: candidate.episode.activityLabel,
       confidence: String(candidate.confidence),
       status: 'shown',
