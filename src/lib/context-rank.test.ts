@@ -223,3 +223,13 @@ test('natural recovery copy avoids doubled verb phrases', () => {
   })
   assert.equal(text, 'You may have been going to the gym.')
 })
+
+test('natural recovery copy handles do activities as doing', () => {
+  const text = buildRecoveryAnswerText({
+    intent: 'what_was_i_doing',
+    activityLabel: 'do STHL coding',
+    statusDistribution: { completed: 0.82 },
+    episodeState: 'ranked',
+  })
+  assert.equal(text, 'You may have been doing sthl coding.')
+})

@@ -81,6 +81,7 @@ export function activityPhrases(value: string): ActivityPhrases {
   }
 
   const phrasePatterns: Array<[RegExp, string, string]> = [
+    [/^(?:do|doing) (.+)$/i, 'do', 'doing'],
     [/^(?:finish|finishing) (.+)$/i, 'finish', 'finishing'],
     [/^(?:find|finding) (.+)$/i, 'find', 'finding'],
     [/^(?:make|making) (.+)$/i, 'make', 'making'],
