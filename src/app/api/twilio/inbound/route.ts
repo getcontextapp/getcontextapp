@@ -151,6 +151,27 @@ function parseNumberedSelections(body: string) {
   return Array.from(new Set(selections))
 }
 
+function parseCarryOverMoveSelection(body: string) {
+  const match = body.trim().match(/^move\s+(.+)$/i)
+  if (!match) return null
+
+  const selectionText = match[1]
+    .trim()
+    .toLowerCase()
+    .replace(/\b(and|plus)\b/g, ',')
+    .replace(/[&+/]/g, ',')
+
+  if (/^(all|both|everything|the rest)$/.test(selectionText)) return 'all' as const
+
+  const selections = selectionText
+    .match(/\d+/g)
+    ?.map(value => Number(value))
+    .filter(value => Number.isInteger(value) && value > 0) ?? []
+
+  if (selections.length === 0) return []
+  return Array.from(new Set(selections))
+}
+
 type SelectionPrompt = {
   action: 'complete' | 'undo' | 'delete' | 'delete_confirm'
   itemIds: string[]
@@ -775,45 +796,8 @@ export async function POST(request: NextRequest) {
     return xmlResponse(reply)
   }
 
-  if (await hasRecentReflectionPrompt(supabase, profile)) {
-    try {
-      await saveReflectionInput(supabase, {
-        id: profile.id,
-        user_id: profile.user_id,
-        household_id: profile.household_id,
-        timezone: profile.timezone,
-      }, body, 'sms')
-      const reply = 'Thank you. I saved that in your Daily Reflection.'
-      await logSmsMessage(supabase, {
-        householdId: profile.household_id,
-        profileId: profile.id,
-        direction: 'outbound',
-        purpose: 'inbound_reflection',
-        phoneE164: from,
-        body: reply,
-        status: 'twiml_reply',
-        metadata: { reflection_reply: true },
-      })
-      return xmlResponse(reply)
-    } catch (error) {
-      console.error('[SMS] Reflection save failed:', error)
-      const reply = 'Context had trouble saving that reflection. Please try again in the app.'
-      await logSmsMessage(supabase, {
-        householdId: profile.household_id,
-        profileId: profile.id,
-        direction: 'outbound',
-        purpose: 'inbound_reflection',
-        phoneE164: from,
-        body: reply,
-        status: 'twiml_reply',
-        metadata: { reflection_reply: true, error: error instanceof Error ? error.message : 'unknown' },
-      })
-      return xmlResponse(reply)
-    }
-  }
-
   try {
-    const carrySelection = body.match(/^move\s+(.+)$/i)
+    const carrySelection = parseCarryOverMoveSelection(body)
     if (carrySelection) {
       const recentPrompt = await supabase.from('sms_messages').select('metadata')
         .eq('profile_id', profile.id).eq('purpose', 'carry_over')
@@ -821,13 +805,15 @@ export async function POST(request: NextRequest) {
       const ids = Array.isArray(recentPrompt.data?.metadata?.prompt_item_ids)
         ? recentPrompt.data.metadata.prompt_item_ids as string[]
         : []
-      const numbers = Array.from(new Set((carrySelection[1].match(/\d+/g) ?? []).map(Number)))
-        .filter(number => number > 0 && number <= ids.length)
+      const numbers = carrySelection === 'all'
+        ? ids.map((_, index) => index + 1)
+        : carrySelection.filter(number => number > 0 && number <= ids.length)
       if (!numbers.length) {
         return sendActionReply('Please reply with MOVE and the task numbers, for example: MOVE 1, 3.', { carry_over: 'invalid_selection' })
       }
       const tomorrowKey = addDaysToKey(getLocalDateKey(new Date(), profile.timezone), 1)
       let moved = 0
+      const movedLabels: string[] = []
       for (const number of numbers) {
         const { data: item } = await supabase.from('planned_activities').select('*')
           .eq('id', ids[number - 1]).eq('household_id', profile.household_id)
@@ -840,7 +826,10 @@ export async function POST(request: NextRequest) {
         if (existingOccurrence) {
           const { error: skipError } = await supabase.from('planned_activities')
             .update({ status: 'skipped', updated_at: new Date().toISOString() }).eq('id', item.id)
-          if (!skipError) moved++
+          if (!skipError) {
+            moved++
+            movedLabels.push(pendingItemLabel(item))
+          }
           continue
         }
         const { error } = await supabase.from('planned_activities').insert({
@@ -853,8 +842,12 @@ export async function POST(request: NextRequest) {
         if (error) continue
         await supabase.from('planned_activities').update({ status: 'skipped', updated_at: new Date().toISOString() }).eq('id', item.id)
         moved++
+        movedLabels.push(pendingItemLabel(item))
       }
-      return sendActionReply(`${moved} ${moved === 1 ? 'task is' : 'tasks are'} now in tomorrow's plan.`, { carry_over: true, moved })
+      if (moved === 0) {
+        return sendActionReply('I could not find those waiting tasks anymore. Nothing was moved.', { carry_over: true, moved })
+      }
+      return sendActionReply(`Okay. I moved ${formatItemList(movedLabels)} to tomorrow.`, { carry_over: true, moved })
     }
 
     if (isBareDone(body)) {
@@ -950,6 +943,43 @@ export async function POST(request: NextRequest) {
       `I could not update that item safely. Nothing else was changed. Please open Context: ${dashboardLink('/mci-user')}`,
       { action_error: error instanceof Error ? error.message : 'unknown' },
     )
+  }
+
+  if (!isClearNewSmsIntent(body) && await hasRecentReflectionPrompt(supabase, profile)) {
+    try {
+      await saveReflectionInput(supabase, {
+        id: profile.id,
+        user_id: profile.user_id,
+        household_id: profile.household_id,
+        timezone: profile.timezone,
+      }, body, 'sms')
+      const reply = 'Thank you. I saved that in your Daily Reflection.'
+      await logSmsMessage(supabase, {
+        householdId: profile.household_id,
+        profileId: profile.id,
+        direction: 'outbound',
+        purpose: 'inbound_reflection',
+        phoneE164: from,
+        body: reply,
+        status: 'twiml_reply',
+        metadata: { reflection_reply: true },
+      })
+      return xmlResponse(reply)
+    } catch (error) {
+      console.error('[SMS] Reflection save failed:', error)
+      const reply = 'Context had trouble saving that reflection. Please try again in the app.'
+      await logSmsMessage(supabase, {
+        householdId: profile.household_id,
+        profileId: profile.id,
+        direction: 'outbound',
+        purpose: 'inbound_reflection',
+        phoneE164: from,
+        body: reply,
+        status: 'twiml_reply',
+        metadata: { reflection_reply: true, error: error instanceof Error ? error.message : 'unknown' },
+      })
+      return xmlResponse(reply)
+    }
   }
 
   const [{ data: pendingItems }, { data: todaysItems }, recentMessages] = await Promise.all([

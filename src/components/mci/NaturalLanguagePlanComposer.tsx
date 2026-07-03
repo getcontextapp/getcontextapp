@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react'
 import { ACTIVITY_TILES } from '@/types'
 import TaskScheduleFields from './TaskScheduleFields'
+import WebSpeechMicButton from './WebSpeechMicButton'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule, TimelineEvent } from '@/types'
 
 interface DraftPlan {
@@ -36,6 +37,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   function openComposer() {
@@ -203,18 +205,29 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
               What would you like to do today?
             </label>
             <p className="text-sm text-warm-400 mt-1">You can mention plans, what you're doing now, or what you just did.</p>
-            <textarea
-              ref={inputRef}
-              id="natural-plan-input"
-              value={message}
-              onChange={event => setMessage(event.target.value)}
-              rows={3}
-              maxLength={1000}
-              placeholder="For example: Making lunch, take my medicine after breakfast, or call my care partner at 4."
-              className="mt-4 w-full resize-none rounded-xl border border-cream-300 bg-cream-50 px-4 py-3
-                         text-base leading-relaxed text-warm-800 placeholder:text-warm-300
-                         focus:outline-none focus:ring-2 focus:ring-terracotta-300/60"
-            />
+            <div className="relative mt-4">
+              <textarea
+                ref={inputRef}
+                id="natural-plan-input"
+                value={message}
+                onChange={event => setMessage(event.target.value)}
+                rows={3}
+                maxLength={1000}
+                placeholder="For example: Making lunch, take my medicine after breakfast, or call my care partner at 4."
+                className="w-full resize-none rounded-xl border border-cream-300 bg-cream-50 px-4 py-3 pr-12
+                           text-base leading-relaxed text-warm-800 placeholder:text-warm-300
+                           focus:outline-none focus:ring-2 focus:ring-terracotta-300/60"
+              />
+              <WebSpeechMicButton
+                value={message}
+                onChange={setMessage}
+                onNotice={setVoiceNotice}
+                className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-full bg-sage-100 text-base"
+                activeClassName="bg-terracotta-100"
+                ariaLabel="Speak plan"
+              />
+            </div>
+            {voiceNotice && <p className="text-sm text-warm-400 mt-2">{voiceNotice}</p>}
             {error && drafts.length === 0 && <p className="text-sm text-terracotta-600 mt-2">{error}</p>}
             <div className="grid grid-cols-[1fr_2fr] gap-2 mt-4">
               <button

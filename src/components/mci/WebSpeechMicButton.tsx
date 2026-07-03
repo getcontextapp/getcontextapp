@@ -65,8 +65,10 @@ export default function WebSpeechMicButton({
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const baseTextRef = useRef('')
   const finalTranscriptRef = useRef('')
+  const shouldKeepListeningRef = useRef(false)
 
   function stopListening() {
+    shouldKeepListeningRef.current = false
     recognitionRef.current?.stop()
     setListening(false)
   }
@@ -84,7 +86,8 @@ export default function WebSpeechMicButton({
     recognitionRef.current = recognition
     baseTextRef.current = value
     finalTranscriptRef.current = ''
-    recognition.continuous = false
+    shouldKeepListeningRef.current = true
+    recognition.continuous = true
     recognition.interimResults = true
     recognition.lang = 'en-US'
 
@@ -103,14 +106,29 @@ export default function WebSpeechMicButton({
     }
 
     recognition.onerror = () => {
-      setListening(false)
-      recognitionRef.current = null
+      if (!shouldKeepListeningRef.current) {
+        setListening(false)
+        recognitionRef.current = null
+      }
     }
 
     recognition.onend = () => {
+      onChange(joinSpeech(baseTextRef.current, finalTranscriptRef.current))
+      if (shouldKeepListeningRef.current) {
+        window.setTimeout(() => {
+          try {
+            recognition.start()
+            setListening(true)
+          } catch {
+            setListening(false)
+            recognitionRef.current = null
+            shouldKeepListeningRef.current = false
+          }
+        }, 150)
+        return
+      }
       setListening(false)
       recognitionRef.current = null
-      onChange(joinSpeech(baseTextRef.current, finalTranscriptRef.current))
     }
 
     try {
@@ -119,6 +137,7 @@ export default function WebSpeechMicButton({
     } catch {
       setListening(false)
       recognitionRef.current = null
+      shouldKeepListeningRef.current = false
     }
   }
 

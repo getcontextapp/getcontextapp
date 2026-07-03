@@ -41,6 +41,8 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
   const [inputOpen, setInputOpen] = useState(!initialReflection)
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -73,6 +75,33 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
     }
   }
 
+  async function clearReflection() {
+    if (!confirmClear) {
+      setConfirmClear(true)
+      setError(null)
+      return
+    }
+
+    setClearing(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/reflections', { method: 'DELETE' })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setError(result.error ?? "Context could not clear today's reflection.")
+        return
+      }
+      setReflection(null)
+      setInputOpen(true)
+      setText('')
+      setConfirmClear(false)
+    } catch {
+      setError('Context could not connect. Please try again.')
+    } finally {
+      setClearing(false)
+    }
+  }
+
   if (reflection && !inputOpen) {
     const nodes = reflection.nodes ?? EMPTY_NODES
     return (
@@ -85,6 +114,7 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
               onClick={() => {
                 setInputOpen(true)
                 setText('')
+                setConfirmClear(false)
               }}
               className="text-sm font-semibold text-sage-600"
             >
@@ -95,6 +125,7 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
               onClick={() => {
                 setInputOpen(true)
                 setText('')
+                setConfirmClear(false)
               }}
               className="text-sm font-semibold text-sage-600"
             >
@@ -111,6 +142,41 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
           <TagRow label="Places" items={nodes.places} tagClass="bg-[#F6ECD7] text-[#7C5616]" />
           <TagRow label="Feelings" items={nodes.feelings} tagClass="bg-[#F5E6F0] text-[#7A2F68]" />
         </div>
+        <div className="mt-4 rounded-[14px] border border-cream-300 bg-white/60 p-3">
+          {confirmClear ? (
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-warm-700">Clear today's reflection?</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmClear(false)}
+                  className="min-h-11 rounded-xl border border-warm-200 text-sm font-semibold text-warm-600"
+                  disabled={clearing}
+                >
+                  Keep it
+                </button>
+                <button
+                  type="button"
+                  onClick={clearReflection}
+                  className="min-h-11 rounded-xl bg-terracotta-700 text-sm font-semibold text-white disabled:opacity-60"
+                  disabled={clearing}
+                >
+                  {clearing ? 'Clearing...' : 'Clear'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={clearReflection}
+              className="min-h-11 text-sm font-semibold text-terracotta-700 underline underline-offset-4"
+              disabled={clearing}
+            >
+              Clear today's reflection
+            </button>
+          )}
+        </div>
+        {error && <p className="mt-2 text-sm font-medium text-terracotta-700">{error}</p>}
       </section>
     )
   }
