@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
+import { getLocalDateKey, getUtcRangeForLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { canonicalizeContextRankEvidence } from '@/lib/anthropic'
 import {
   config,
@@ -48,20 +48,20 @@ function dateWindow(point: number, beforeMs: number, afterMs: number) {
   }
 }
 
-function dayWindow(dateKey: string) {
-  const start = Date.parse(`${dateKey}T00:00:00.000Z`)
+function dayWindow(dateKey: string, timeZone?: string | null) {
+  const range = getUtcRangeForLocalDateKey(dateKey, timeZone)
   return {
-    earliest: start,
-    latest: start + 24 * 60 * 60 * 1000,
+    earliest: Date.parse(range.start),
+    latest: Date.parse(range.end),
   }
 }
 
-function taskPlannedWindow(task: PlannedActivity) {
+function taskPlannedWindow(task: PlannedActivity, timeZone?: string | null) {
   if (task.expected_time) {
-    const point = Date.parse(`${task.planned_for}T${task.expected_time}:00.000Z`)
+    const [hour = 0, minute = 0] = task.expected_time.split(':').map(Number)
+    const point = localDateTimeToUtc(task.planned_for, hour, minute, timeZone)
     if (Number.isFinite(point)) return dateWindow(point, 60 * 60 * 1000, 60 * 60 * 1000)
   }
-  const base = Date.parse(`${task.planned_for}T00:00:00.000Z`)
   const ranges: Record<string, [number, number]> = {
     morning: [6, 12],
     afternoon: [12, 17],
@@ -69,10 +69,45 @@ function taskPlannedWindow(task: PlannedActivity) {
     anytime: [0, 24],
   }
   const [startHour, endHour] = ranges[task.expected_period] ?? ranges.anytime
+  const start = localDateTimeToUtc(task.planned_for, startHour, 0, timeZone)
+  const endDate = endHour >= 24 ? addDaysToDateKey(task.planned_for, 1) : task.planned_for
+  const end = localDateTimeToUtc(endDate, endHour % 24, 0, timeZone)
   return {
-    earliest: base + startHour * 60 * 60 * 1000,
-    latest: base + endHour * 60 * 60 * 1000,
+    earliest: start,
+    latest: end,
   }
+}
+
+function addDaysToDateKey(dateKey: string, days: number) {
+  const date = new Date(`${dateKey}T12:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+function localDateTimeToUtc(dateKey: string, hour: number, minute: number, timeZone?: string | null) {
+  const naiveUtc = Date.UTC(
+    Number(dateKey.slice(0, 4)),
+    Number(dateKey.slice(5, 7)) - 1,
+    Number(dateKey.slice(8, 10)),
+    hour,
+    minute,
+  )
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timeZone || undefined,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+  for (let offsetMinutes = -14 * 60; offsetMinutes <= 14 * 60; offsetMinutes += 5) {
+    const candidate = new Date(naiveUtc + offsetMinutes * 60 * 1000)
+    const parts = Object.fromEntries(formatter.formatToParts(candidate).map(part => [part.type, part.value]))
+    const candidateKey = `${parts.year}-${parts.month}-${parts.day}`
+    if (candidateKey === dateKey && Number(parts.hour) === hour && Number(parts.minute) === minute) return candidate.getTime()
+  }
+  return naiveUtc
 }
 
 function displayTask(task: PlannedActivity) {
@@ -383,7 +418,7 @@ export async function buildContextRankInput({
         source,
         state: contradictsConfirmed || contradictsCompleted || wasRejected ? 'contradicting' : 'supporting',
         occurrenceStrength: wasRejected ? 0.25 : contradictsConfirmed || contradictsCompleted ? 0.80 : undefined,
-        time: taskPlannedWindow(task),
+        time: taskPlannedWindow(task, profile.timezone),
         provenance: `planned_activities:${task.id}`,
       }))
     }
@@ -419,7 +454,7 @@ export async function buildContextRankInput({
       userId: profile.user_id,
       content: displayReflection(reflection),
       source: 'reflection',
-      time: dayWindow(reflection.reflection_date),
+      time: dayWindow(reflection.reflection_date, profile.timezone),
       provenance: `reflections:${reflection.id}`,
     }))
   }

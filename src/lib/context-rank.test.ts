@@ -97,6 +97,47 @@ test('what_should_i_do_next does not surface a completed-only item as next step'
   assert.equal(result.card.candidates.length, 0)
 })
 
+test('what_should_i_do_next can show a pending planned task even when it is not episodic evidence', () => {
+  const evidence = [
+    makeEvidence({ id: 'planned', userId: 'u1', content: 'go to the gym', source: 'task_planned', time: windowAt(-30), provenance: 'planned_activities:planned' }),
+  ]
+  const result = runContextRank({ evidence, query: query('what_should_i_do_next'), session: session() })
+  assert.notEqual(result.card.mode, 'abstain')
+  assert.match(result.card.candidates[0].episode.activityLabel, /go to the gym/i)
+  assert.ok(result.card.candidates[0].confidence >= config.thresholds.options)
+})
+
+test('what_should_i_do_next can resurface a still pending task after it was shown', () => {
+  const evidence = [
+    makeEvidence({ id: 'planned', userId: 'u1', content: 'go to the gym', source: 'task_planned', time: windowAt(-30), provenance: 'planned_activities:planned' }),
+  ]
+  const result = runContextRank({
+    evidence,
+    query: query('what_should_i_do_next'),
+    session: {
+      ...session(),
+      candidateStates: { 'u1:go-to-the-gym': 'shown' },
+    },
+  })
+  assert.notEqual(result.card.mode, 'abstain')
+  assert.match(result.card.candidates[0].episode.activityLabel, /go to the gym/i)
+})
+
+test('what_should_i_do_next keeps a rejected pending task hidden', () => {
+  const evidence = [
+    makeEvidence({ id: 'planned', userId: 'u1', content: 'go to the gym', source: 'task_planned', time: windowAt(-30), provenance: 'planned_activities:planned' }),
+  ]
+  const result = runContextRank({
+    evidence,
+    query: query('what_should_i_do_next'),
+    session: {
+      ...session(),
+      candidateStates: { 'u1:go-to-the-gym': 'rejected' },
+    },
+  })
+  assert.equal(result.card.mode, 'abstain')
+})
+
 test('rejected candidate does not return in the same session', () => {
   const evidence = [
     makeEvidence({ id: 'a', userId: 'u1', content: 'made breakfast', source: 'task_done', time: windowAt(10), provenance: 'activity_logs:a' }),

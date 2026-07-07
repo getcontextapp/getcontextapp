@@ -395,18 +395,33 @@ function statusFit(status: Partial<Record<EpisodeStatus, number>>, intent: Recov
   return clamp01((status.completed ?? 0) + (status.active ?? 0) * 0.5 + (status.planned ?? 0) * 0.4 + (status.unknown ?? 0) * 0.3)
 }
 
-function temporalRelevance(interval: TimeDistribution, queryTime: number, cfg = config) {
+function temporalRelevance(
+  interval: TimeDistribution,
+  queryTime: number,
+  intent: RecoveryIntent = 'what_was_i_doing',
+  status: Partial<Record<EpisodeStatus, number>> = {},
+  cfg = config,
+) {
   const d = queryTime >= interval.earliest && queryTime <= interval.latest
     ? 0
     : Math.min(Math.abs(queryTime - interval.earliest), Math.abs(queryTime - interval.latest))
   const hours = d / (60 * 60 * 1000)
-  return clamp01(Math.exp(-cfg.scoring.kappaPerHour * hours))
+  const decayed = clamp01(Math.exp(-cfg.scoring.kappaPerHour * hours))
+  if (intent === 'what_should_i_do_next' && (status.planned ?? 0) >= 0.45 && (status.completed ?? 0) < 0.55) {
+    const durationHours = Math.max(0, (interval.latest - interval.earliest) / (60 * 60 * 1000))
+    if (durationHours >= 20 && queryTime >= interval.earliest && queryTime <= interval.latest) return 0.62
+    if (queryTime >= interval.earliest && queryTime <= interval.latest) return 1
+    if (queryTime > interval.latest && hours <= 6) return Math.max(decayed, 0.58)
+    if (queryTime < interval.earliest && hours <= 12) return Math.max(decayed, 0.50)
+  }
+  return decayed
 }
 
-function sessionGate(episode: Episode, session: RecoverySession, cfg = config) {
+function sessionGate(episode: Episode, session: RecoverySession, intent: RecoveryIntent, cfg = config) {
   const state = session.candidateStates[episode.id] ?? episode.state
   if (state === 'rejected' || state === 'exhausted') return 0
   if (state === 'confirmed') return 0
+  if (intent === 'what_should_i_do_next' && state === 'shown') return cfg.scoring.shownPenalty
   if (state === 'shown' && cfg.exhaustion.maxShownPerSession <= 1) return 0
   if (state === 'shown' && episode.shownCount >= cfg.exhaustion.maxShownPerSession) return 0
   if (state === 'shown') return cfg.scoring.shownPenalty
@@ -427,10 +442,10 @@ export function scoreEpisodes(
     const support = supportForEpisode(episode, evidenceById, cfg)
     const semantic = Math.max(similarity(episode.activityLabel, queryText), similarity(episodeSummary(episode.evidenceIds.map(id => evidenceById.get(id)).filter(Boolean) as Evidence[]), queryText))
     const typefit = statusFit(episode.statusDistribution, query.intent)
-    const temporal = temporalRelevance(episode.interval, query.queryTime, cfg)
+    const temporal = temporalRelevance(episode.interval, query.queryTime, query.intent, episode.statusDistribution, cfg)
     const relevance = clamp01(Math.max(semantic, 0.72) * typefit * temporal)
     const contradiction = episodeConflict(episode.evidenceIds.map(id => evidenceById.get(id)).filter(Boolean) as Evidence[])
-    const gate = sessionGate(episode, session, cfg)
+    const gate = sessionGate(episode, session, query.intent, cfg)
     const score = clamp01(support * relevance * gate * (1 - contradiction))
     const confidence = clamp01(support * temporal * (1 - contradiction))
     return {
@@ -449,8 +464,8 @@ export function scoreEpisodes(
 function compareCandidates(left: ScoredCandidate, right: ScoredCandidate, query: RecoveryQuery, evidenceById: Map<string, Evidence>, cfg: ContextRankConfig) {
   if (Math.abs(left.score - right.score) >= cfg.scoring.tieEpsilon) return right.score - left.score
   if (left.confidence !== right.confidence) return right.confidence - left.confidence
-  const leftTemporal = temporalRelevance(left.episode.interval, query.queryTime, cfg)
-  const rightTemporal = temporalRelevance(right.episode.interval, query.queryTime, cfg)
+  const leftTemporal = temporalRelevance(left.episode.interval, query.queryTime, query.intent, left.episode.statusDistribution, cfg)
+  const rightTemporal = temporalRelevance(right.episode.interval, query.queryTime, query.intent, right.episode.statusDistribution, cfg)
   if (leftTemporal !== rightTemporal) return rightTemporal - leftTemporal
   const leftOccurrence = noisyOr(left.episode.evidenceIds.map(id => evidenceById.get(id)?.occurrenceStrength ?? 0))
   const rightOccurrence = noisyOr(right.episode.evidenceIds.map(id => evidenceById.get(id)?.occurrenceStrength ?? 0))
@@ -465,7 +480,8 @@ function compareCandidates(left: ScoredCandidate, right: ScoredCandidate, query:
 export function decideContinuityCard(candidates: ScoredCandidate[], query: RecoveryQuery, cfg = config): ContinuityCard {
   const valid = candidates.filter(candidate => candidate.score > 0 && candidate.because.evidence.length > 0)
   const top = valid[0]
-  if (!top || top.confidence < cfg.thresholds.weakClue) {
+  const topStrength = top ? presentationStrength(top, query.intent, cfg) : 0
+  if (!top || topStrength < cfg.thresholds.weakClue) {
     return {
       mode: 'abstain',
       message: "I don't have a clear enough note for that right now.",
@@ -473,28 +489,44 @@ export function decideContinuityCard(candidates: ScoredCandidate[], query: Recov
       intent: query.intent,
     }
   }
-  if (top.confidence >= cfg.thresholds.leading) {
+  if (topStrength >= cfg.thresholds.leading) {
     return {
       mode: 'leading',
       message: leadingMessage(top, query.intent),
-      candidates: [top],
+      candidates: [presentationCandidate(top, query.intent, cfg)],
       intent: query.intent,
     }
   }
-  if (top.confidence >= cfg.thresholds.options) {
+  if (topStrength >= cfg.thresholds.options) {
     return {
       mode: 'options',
       message: 'These are the best possibilities I found.',
-      candidates: valid.slice(0, Math.max(1, cfg.exhaustion.maxShownPerSession)),
+      candidates: valid.slice(0, Math.max(1, cfg.exhaustion.maxShownPerSession)).map(candidate => presentationCandidate(candidate, query.intent, cfg)),
       intent: query.intent,
     }
   }
   return {
     mode: 'weak_clue',
     message: `This is only a clue: ${top.episode.activityLabel}.`,
-    candidates: [top],
+    candidates: [presentationCandidate(top, query.intent, cfg)],
     intent: query.intent,
   }
+}
+
+function presentationStrength(candidate: ScoredCandidate, intent: RecoveryIntent, cfg: ContextRankConfig) {
+  if (
+    intent === 'what_should_i_do_next' &&
+    (candidate.episode.statusDistribution.planned ?? 0) >= 0.45 &&
+    (candidate.episode.statusDistribution.completed ?? 0) < 0.55
+  ) {
+    return Math.max(candidate.confidence, candidate.score, cfg.thresholds.options)
+  }
+  return candidate.confidence
+}
+
+function presentationCandidate(candidate: ScoredCandidate, intent: RecoveryIntent, cfg: ContextRankConfig) {
+  const strength = presentationStrength(candidate, intent, cfg)
+  return strength === candidate.confidence ? candidate : { ...candidate, confidence: strength }
 }
 
 function leadingMessage(candidate: ScoredCandidate, intent: RecoveryIntent) {
