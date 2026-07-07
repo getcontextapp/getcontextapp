@@ -37,6 +37,7 @@ export function buildRecoveryAnswerText({
 
   if (intent === 'what_should_i_do_next') {
     if (planned >= 0.45 && completed < 0.55) return `Your next likely step is to ${phrases.infinitive}.`
+    if (done) return `You already marked ${phrases.object || phrases.gerund} as done.`
     return `I do not see a clearer next step than ${phrases.gerund}.`
   }
 
@@ -68,6 +69,12 @@ export function activityPhrases(value: string): ActivityPhrases {
 
   if (simpleMap[simple]) return { raw, ...simpleMap[simple] }
 
+  const apply = lower.match(/^(?:apply|applying)(?:\s+to)?\s+(.+)$/i)
+  if (apply) {
+    const object = normalizeObject(apply[1])
+    return { raw, infinitive: `apply to ${object}`, gerund: `applying to ${object}`, object }
+  }
+
   const goTo = lower.match(/^(?:go to|going to) (.+)$/i)
   if (goTo) {
     const object = normalizeObject(goTo[1])
@@ -85,6 +92,9 @@ export function activityPhrases(value: string): ActivityPhrases {
     [/^(?:finish|finishing) (.+)$/i, 'finish', 'finishing'],
     [/^(?:find|finding) (.+)$/i, 'find', 'finding'],
     [/^(?:make|making) (.+)$/i, 'make', 'making'],
+    [/^(?:respond|responding) (.+)$/i, 'respond', 'responding'],
+    [/^(?:call|calling) (.+)$/i, 'call', 'calling'],
+    [/^(?:email|emailing) (.+)$/i, 'email', 'emailing'],
     [/^(?:take|taking) (.+)$/i, 'take', 'taking'],
     [/^(?:pick up|picking up) (.+)$/i, 'pick up', 'picking up'],
   ]
@@ -99,6 +109,18 @@ export function activityPhrases(value: string): ActivityPhrases {
         gerund: `${gerundVerb} ${object}`,
         object,
       }
+    }
+  }
+
+  const firstVerb = lower.match(/^([a-z]+)\s+(.+)$/i)
+  if (firstVerb) {
+    const verb = firstVerb[1].toLowerCase()
+    const object = normalizeObject(firstVerb[2])
+    return {
+      raw,
+      infinitive: `${verb} ${object}`,
+      gerund: `${toGerund(verb)} ${object}`,
+      object,
     }
   }
 
@@ -119,4 +141,20 @@ function normalizeObject(value: string) {
 
 function lowercaseFirst(value: string) {
   return value[0].toLowerCase() + value.slice(1)
+}
+
+function toGerund(verb: string) {
+  const irregular: Record<string, string> = {
+    apply: 'applying',
+    run: 'running',
+    jog: 'jogging',
+    make: 'making',
+    take: 'taking',
+    write: 'writing',
+    drive: 'driving',
+  }
+  if (irregular[verb]) return irregular[verb]
+  if (verb.endsWith('ie')) return `${verb.slice(0, -2)}ying`
+  if (verb.endsWith('e') && !verb.endsWith('ee')) return `${verb.slice(0, -1)}ing`
+  return `${verb}ing`
 }

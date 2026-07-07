@@ -14,6 +14,18 @@ test('what was I doing uses a natural gerund form', () => {
   )
 })
 
+test('what was I doing turns apply into applying', () => {
+  assert.equal(
+    buildRecoveryAnswerText({
+      intent: 'what_was_i_doing',
+      activityLabel: 'Apply to jobs',
+      statusDistribution: { completed: 0.8 },
+      episodeState: 'supported',
+    }),
+    'You may have been applying to jobs.',
+  )
+})
+
 test('did I finish this uses marked object as done wording', () => {
   assert.equal(
     buildRecoveryAnswerText({
@@ -35,6 +47,18 @@ test('next step keeps the task as an infinitive', () => {
       episodeState: 'supported',
     }),
     'Your next likely step is to work on publication.',
+  )
+})
+
+test('next step does not invite a completed item as the next action', () => {
+  assert.equal(
+    buildRecoveryAnswerText({
+      intent: 'what_should_i_do_next',
+      activityLabel: 'Apply to jobs',
+      statusDistribution: { completed: 0.8 },
+      episodeState: 'supported',
+    }),
+    'You already marked jobs as done.',
   )
 })
 

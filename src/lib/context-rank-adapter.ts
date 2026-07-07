@@ -112,9 +112,17 @@ function fallbackCanonicalActivity(value: string) {
 }
 
 async function canonicalizeEvidence(evidence: Evidence[]) {
-  const aiCanonical = await canonicalizeContextRankEvidence(
-    evidence.map(item => ({ id: item.id, text: item.rawContent || item.content, source: item.source })),
-  )
+  let aiCanonical: Record<string, string> = {}
+  try {
+    aiCanonical = await Promise.race([
+      canonicalizeContextRankEvidence(
+        evidence.map(item => ({ id: item.id, text: item.rawContent || item.content, source: item.source })),
+      ),
+      new Promise<Record<string, string>>(resolve => windowlessTimeout(resolve, 1200, {})),
+    ])
+  } catch (error) {
+    console.error('[ContextRank] AI canonicalization unavailable:', error)
+  }
   return evidence.map(item => {
     const fallback = fallbackCanonicalActivity(item.rawContent || item.content)
     const canonical = (aiCanonical[item.id] || fallback || item.content).trim()
@@ -124,6 +132,10 @@ async function canonicalizeEvidence(evidence: Evidence[]) {
       content: canonical,
     }
   })
+}
+
+function windowlessTimeout<T>(resolve: (value: T) => void, ms: number, value: T) {
+  setTimeout(() => resolve(value), ms)
 }
 
 function sessionStateFromRows(

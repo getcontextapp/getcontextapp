@@ -87,6 +87,16 @@ test('what_should_i_do_next prefers planned work over an already completed item'
   assert.match(result.candidates[0].episode.activityLabel, /work on publication/i)
 })
 
+test('what_should_i_do_next does not surface a completed-only item as next step', () => {
+  const evidence = [
+    makeEvidence({ id: 'done-log', userId: 'u1', content: 'apply to jobs', source: 'activity_log', time: windowAt(2), provenance: 'activity_logs:done' }),
+    makeEvidence({ id: 'done-task', userId: 'u1', content: 'apply to jobs', source: 'task_done', time: windowAt(2), provenance: 'planned_activities:done' }),
+  ]
+  const result = runContextRank({ evidence, query: query('what_should_i_do_next'), session: session() })
+  assert.equal(result.card.mode, 'abstain')
+  assert.equal(result.card.candidates.length, 0)
+})
+
 test('rejected candidate does not return in the same session', () => {
   const evidence = [
     makeEvidence({ id: 'a', userId: 'u1', content: 'made breakfast', source: 'task_done', time: windowAt(10), provenance: 'activity_logs:a' }),
@@ -165,6 +175,17 @@ test('non-abstain cards always include because evidence', () => {
   const result = runContextRank({ evidence, query: query('what_was_i_doing'), session: session() })
   assert.notEqual(result.card.mode, 'abstain')
   assert.ok(result.card.candidates.every(candidate => candidate.because.evidence.length > 0))
+})
+
+test('because explanation changes with recovery intent', () => {
+  const evidence = [
+    makeEvidence({ id: 'done', userId: 'u1', content: 'apply to jobs', source: 'task_done', time: windowAt(10), provenance: 'planned_activities:done' }),
+    makeEvidence({ id: 'planned', userId: 'u1', content: 'go to the gym', source: 'task_planned', time: windowAt(0), provenance: 'planned_activities:planned' }),
+  ]
+  const finish = runContextRank({ evidence, query: query('did_i_finish_this'), session: session() })
+  const next = runContextRank({ evidence, query: query('what_should_i_do_next'), session: session() })
+  assert.match(finish.card.candidates[0].because.summary, /marked done|done signal/i)
+  assert.match(next.candidates[0].because.summary, /waiting in today's plan/i)
 })
 
 test('identical inputs produce identical outputs', () => {

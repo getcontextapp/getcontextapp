@@ -233,7 +233,7 @@ function mergeStatus(left: Partial<Record<EpisodeStatus, number>>, right: Partia
   return merged
 }
 
-function buildBecause(episode: Episode, evidenceById: Map<string, Evidence>): BecauseExplanation {
+function buildBecause(episode: Episode, evidenceById: Map<string, Evidence>, intent: RecoveryIntent): BecauseExplanation {
   const evidence = episode.evidenceIds
     .map(id => evidenceById.get(id))
     .filter((item): item is Evidence => Boolean(item))
@@ -246,9 +246,37 @@ function buildBecause(episode: Episode, evidenceById: Map<string, Evidence>): Be
     }))
   const sources = Array.from(new Set(evidence.map(item => sourceLabel(item.source))))
   return {
-    summary: sources.length > 0 ? `I'm basing this on ${sources.join(' and ')}.` : 'I do not have enough evidence for this.',
+    summary: buildBecauseSummary(intent, sources, episode.statusDistribution),
     evidence,
   }
+}
+
+function buildBecauseSummary(
+  intent: RecoveryIntent,
+  sources: string[],
+  status: Partial<Record<EpisodeStatus, number>>,
+) {
+  if (sources.length === 0) return 'I do not have enough evidence for this.'
+  const sourceText = sources.join(' and ')
+  const completed = (status.completed ?? 0) >= 0.55
+  const planned = (status.planned ?? 0) >= 0.45
+
+  if (intent === 'what_should_i_do_next') {
+    if (planned && !completed) return `This is still waiting in today's plan, based on ${sourceText}.`
+    return `This may not be a next step because the clues point to it already being done.`
+  }
+  if (intent === 'did_i_finish_this') {
+    return completed
+      ? `The strongest clue is that this was marked done, based on ${sourceText}.`
+      : `I do not have a clear done signal, but I found ${sourceText}.`
+  }
+  if (intent === 'where_did_i_leave_off') {
+    return `I am using the clearest recent thread I found, based on ${sourceText}.`
+  }
+  if (intent === 'what_changed_today') {
+    return `This looks like something that changed today, based on ${sourceText}.`
+  }
+  return `This looks relevant to what you were doing, based on ${sourceText}.`
 }
 
 function sourceLabel(source: EvidenceSource) {
@@ -356,8 +384,13 @@ export function supportForEpisode(episode: Episode, evidenceById: Map<string, Ev
 
 function statusFit(status: Partial<Record<EpisodeStatus, number>>, intent: RecoveryIntent) {
   if (intent === 'what_was_i_doing') return clamp01((status.active ?? 0) * 1 + (status.completed ?? 0) * 0.95 + (status.planned ?? 0) * 0.35 + (status.unknown ?? 0) * 0.25)
-  if (intent === 'where_did_i_leave_off') return clamp01((status.active ?? 0) + (status.paused ?? 0) + (status.planned ?? 0) * 0.55 + (status.completed ?? 0) * 0.20 + (status.unknown ?? 0) * 0.35)
-  if (intent === 'what_should_i_do_next') return clamp01((status.planned ?? 0) + (status.paused ?? 0) * 0.75 + (status.active ?? 0) * 0.65 + (status.completed ?? 0) * 0.02 + (status.unknown ?? 0) * 0.10)
+  if (intent === 'where_did_i_leave_off') return clamp01((status.active ?? 0) + (status.paused ?? 0) + (status.planned ?? 0) * 0.70 + (status.completed ?? 0) * 0.05 + (status.unknown ?? 0) * 0.20)
+  if (intent === 'what_should_i_do_next') {
+    const completed = status.completed ?? 0
+    const planned = status.planned ?? 0
+    if (completed >= 0.55 && planned < 0.45) return 0
+    return clamp01(planned + (status.paused ?? 0) * 0.75 + (status.active ?? 0) * 0.45 + (status.unknown ?? 0) * 0.05)
+  }
   if (intent === 'did_i_finish_this') return clamp01((status.completed ?? 0) + (status.active ?? 0) * 0.35 + (status.planned ?? 0) * 0.25 + (status.unknown ?? 0) * 0.45)
   return clamp01((status.completed ?? 0) + (status.active ?? 0) * 0.5 + (status.planned ?? 0) * 0.4 + (status.unknown ?? 0) * 0.3)
 }
@@ -408,7 +441,7 @@ export function scoreEpisodes(
       sessionGate: gate,
       score,
       confidence,
-      because: buildBecause(episode, evidenceById),
+      because: buildBecause(episode, evidenceById, query.intent),
     }
   }).sort((left, right) => compareCandidates(left, right, query, evidenceById, cfg))
 }
