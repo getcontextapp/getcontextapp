@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { getMciProfilesForSms } from '@/lib/household-links'
 import { logSmsMessage } from '@/lib/sms'
+import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import { sendSMS } from '@/lib/twilio'
 
 const CRON_SECRET = process.env.CRON_SECRET
@@ -18,6 +19,7 @@ export async function GET(request: NextRequest) {
     const hour = Number(new Date().toLocaleString('en-US', { timeZone: profile.timezone, hour: 'numeric', hour12: false }))
     if (hour !== 20 || !profile.phone_e164) continue
     const todayKey = getLocalDateKey(new Date(), profile.timezone)
+    await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
     const { data: items, error: itemError } = await supabase.from('planned_activities').select('*')
       .eq('household_id', profile.household_id).eq('planned_for', todayKey)
       .in('status', ['planned', 'not_now']).order('created_at').limit(8)

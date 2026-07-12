@@ -6,6 +6,7 @@ import { trackEvent } from '@/lib/analytics'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { getMciProfilesForSms } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
+import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
@@ -73,6 +74,7 @@ export async function GET(request: NextRequest) {
     const gapMs = gapMinutes * 60 * 1000
     const checkFrom = new Date(Date.now() - gapMs).toISOString()
     const todayKey = getLocalDateKey(new Date(), profile.timezone)
+    await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
 
     let pendingQuery = supabase
       .from('planned_activities')

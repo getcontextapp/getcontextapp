@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getLocalDateKey, getUtcRangeForLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { canonicalizeContextRankEvidence } from '@/lib/anthropic'
+import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import {
   config,
   defaultSimilarity,
@@ -283,6 +284,7 @@ export async function buildContextRankInput({
   const lookbackMs = config.intentWindowsMs[intent]
   const windowStart = new Date(Math.min(new Date(todayRange.start).getTime(), queryTime - lookbackMs)).toISOString()
   const windowEnd = new Date(Math.max(new Date(todayRange.end).getTime(), queryTime + 60 * 60 * 1000)).toISOString()
+  await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
 
   const [activityResult, taskResult, smsResult, timelineResult, reflectionResult, sessionRow] = await Promise.all([
     supabase

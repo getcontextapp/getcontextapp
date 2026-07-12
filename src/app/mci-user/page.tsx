@@ -4,6 +4,7 @@ import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
 import { getHouseholdMembers } from '@/lib/household-links'
 import { reflectionToClient } from '@/lib/reflections'
+import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import MCIUserClient from './MCIUserClient'
 
 function dashboardSource(value: string | string[] | undefined) {
@@ -34,6 +35,8 @@ export default async function MCIUserPage({
 
   // Fetch today's activities
   const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
+  const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
 
   const { data: activities } = await supabase
     .from('activity_logs')
@@ -48,7 +51,7 @@ export default async function MCIUserPage({
     .from('planned_activities')
     .select('*')
     .eq('household_id', profile.household_id)
-    .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+    .eq('planned_for', todayKey)
     .order('created_at', { ascending: true })
 
   const { data: timelineEvents } = await supabase
@@ -64,7 +67,7 @@ export default async function MCIUserPage({
     .from('reflections')
     .select('*')
     .eq('user_id', profile.user_id)
-    .eq('reflection_date', getLocalDateKey(new Date(), profile.timezone))
+    .eq('reflection_date', todayKey)
     .maybeSingle()
 
   // Fetch household join code

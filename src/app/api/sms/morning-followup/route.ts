@@ -6,6 +6,7 @@ import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { getCarePartnersForHousehold, getMciProfilesForSms } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 import { shouldSendCarePartnerAlert, shouldSendMorningFollowup } from '@/lib/sms-followup'
+import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import type { SmsReadyProfile } from '@/lib/household-links'
 import type { Profile } from '@/types'
 
@@ -25,6 +26,7 @@ async function hasMorningEngagement(
 ) {
   const range = getUtcRangeForLocalDay(new Date(), profile.timezone)
   const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
   const [inboundResult, planResult, activityResult] = await Promise.all([
     supabase
       .from('sms_messages')

@@ -7,6 +7,7 @@ import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
+import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import { runWeeklySummaryNotifications } from '@/lib/weekly-summary-notifications'
 
 const CRON_SECRET = process.env.CRON_SECRET
@@ -111,6 +112,8 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
   const supabase = createServiceClient()
 
   const mciProfile = await getLinkedMciProfile(profileSupabase, householdId, careProfile.id)
+  const todayKey = getLocalDateKey(new Date(), careProfile.timezone)
+  await ensureRepeatOccurrencesForDate(supabase, householdId, todayKey)
 
   // Get today's activities
   const todayRange = getUtcRangeForLocalDay(new Date(), careProfile.timezone)
@@ -132,7 +135,7 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
     .from('planned_activities')
     .select('id')
     .eq('household_id', householdId)
-    .eq('planned_for', getLocalDateKey(new Date(), careProfile.timezone))
+    .eq('planned_for', todayKey)
     .in('status', ['planned', 'not_now'])
 
   const dateStr = new Date().toLocaleDateString('en-US', {

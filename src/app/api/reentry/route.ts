@@ -4,6 +4,7 @@ import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { generateRecallAnswersBatch } from '@/lib/anthropic'
 import type { RecallAnswerInput, RecallAnswer } from '@/lib/anthropic'
 import { trackEvent } from '@/lib/analytics'
+import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import type { PlannedActivity, TimelineEvent } from '@/types'
 
 type RecallInput = RecallAnswerInput
@@ -396,6 +397,8 @@ export async function POST() {
       return NextResponse.json({ ...answer, moments: [answer] })
     }
   }
+
+  await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
 
   const [timelineResult, smsResult, activityResult, planResult, reflectionResult] = await Promise.all([
     supabase

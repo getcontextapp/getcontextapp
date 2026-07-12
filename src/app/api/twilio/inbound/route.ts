@@ -6,7 +6,7 @@ import { buildPlanSavedReply, dashboardLink, logSmsMessage, normalizePhone, twim
 import { getSmsProfileMatch } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 import { addDaysToKey } from '@/lib/task-scheduling'
-import { ensureNextOccurrence } from '@/lib/task-scheduling-server'
+import { ensureNextOccurrence, ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import { saveReflectionInput } from '@/lib/reflections'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity } from '@/types'
 
@@ -778,6 +778,12 @@ export async function POST(request: NextRequest) {
     })
     return xmlResponse(CARE_PARTNER_LIMIT_REPLY)
   }
+
+  await ensureRepeatOccurrencesForDate(
+    supabase,
+    profile.household_id,
+    getLocalDateKey(new Date(), profile.timezone),
+  )
 
   const sendActionReply = async (
     reply: string,

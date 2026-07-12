@@ -44,3 +44,21 @@ export function nextOccurrenceDate(dateKey: string, repeatRule: RepeatRule) {
   }
   return next
 }
+
+function daysBetween(startKey: string, endKey: string) {
+  const start = new Date(`${startKey}T12:00:00Z`).getTime()
+  const end = new Date(`${endKey}T12:00:00Z`).getTime()
+  return Math.round((end - start) / 86_400_000)
+}
+
+export function repeatRuleIncludesDate(anchorDateKey: string, targetDateKey: string, repeatRule: RepeatRule) {
+  if (repeatRule === 'none') return anchorDateKey === targetDateKey
+
+  const diff = daysBetween(anchorDateKey, targetDateKey)
+  if (diff < 0) return false
+  if (repeatRule === 'daily') return true
+  if (repeatRule === 'weekly') return diff % 7 === 0
+
+  const day = new Date(`${targetDateKey}T12:00:00Z`).getUTCDay()
+  return day >= 1 && day <= 5
+}

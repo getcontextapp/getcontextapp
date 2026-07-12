@@ -3,6 +3,7 @@ import { createServerClient } from '@/lib/supabase-server'
 import { generateLiveContextCard } from '@/lib/anthropic'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
+import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -24,6 +25,8 @@ export async function POST(request: NextRequest) {
 
   // Fetch recent activities for context
   const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
+  const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
   const { data: recentActivities } = await supabase
     .from('activity_logs')
     .select('*')
@@ -37,7 +40,7 @@ export async function POST(request: NextRequest) {
     .from('planned_activities')
     .select('*')
     .eq('household_id', profile.household_id)
-    .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+    .eq('planned_for', todayKey)
     .in('status', ['planned', 'not_now'])
     .order('created_at', { ascending: true })
     .limit(10)

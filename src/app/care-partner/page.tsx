@@ -3,6 +3,7 @@ import { createServerClient } from '@/lib/supabase-server'
 import { getLocalDateKey } from '@/lib/dates'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
+import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import CarePartnerClient from './CarePartnerClient'
 
 function dashboardSource(value: string | string[] | undefined) {
@@ -32,6 +33,8 @@ export default async function CarePartnerPage({
   await linkSavedPhoneToAuth(user.id, user.phone, profile.phone_e164)
 
   const linkedProfile = await getLinkedMciProfile(supabase, profile.household_id, profile.id)
+  const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
 
   // Fetch last 7 days of activities
   const sevenDaysAgo = new Date()
@@ -49,7 +52,7 @@ export default async function CarePartnerPage({
     .from('planned_activities')
     .select('*')
     .eq('household_id', profile.household_id)
-    .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+    .eq('planned_for', todayKey)
     .order('created_at', { ascending: true })
 
   return (
