@@ -6,7 +6,7 @@ import { buildPlanSavedReply, dashboardLink, logSmsMessage, normalizePhone, twim
 import { getSmsProfileMatch } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 import { addDaysToKey } from '@/lib/task-scheduling'
-import { ensureNextOccurrence, ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
+import { ensureNextOccurrence, ensureRepeatOccurrencesForDate, findMatchingRepeatFamily, findMatchingRepeatOccurrence } from '@/lib/task-scheduling-server'
 import { saveReflectionInput } from '@/lib/reflections'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity } from '@/types'
 
@@ -455,10 +455,20 @@ async function deletePlannedItems(
   items: any[],
 ) {
   const labels = items.map(pendingItemLabel)
-  const plannedIds = items.map(item => item.id).filter(Boolean)
-  const linkedActivityIds = items
+  const familyRows: PlannedActivity[] = []
+  for (const item of items) {
+    const itemFamily = item.repeat_rule && item.repeat_rule !== 'none'
+      ? await findMatchingRepeatFamily(supabase, item as PlannedActivity)
+      : [item as PlannedActivity]
+    familyRows.push(...itemFamily.filter(row =>
+      row.id === item.id || ['planned', 'not_now', 'skipped', 'abandoned'].includes(row.status),
+    ))
+  }
+  const uniqueRows = Array.from(new Map(familyRows.map(item => [item.id, item])).values())
+  const plannedIds = uniqueRows.map(item => item.id).filter(Boolean)
+  const linkedActivityIds = uniqueRows
     .map(item => item.confirmed_activity_log_id)
-    .filter(Boolean)
+    .filter((id): id is string => Boolean(id))
 
   if (plannedIds.length > 0) {
     await supabase
@@ -1208,17 +1218,31 @@ export async function POST(request: NextRequest) {
     source: 'sms_ai',
   }))
 
-  const { data: plannedItems, error } = await supabase
-    .from('planned_activities')
-    .insert(rows)
-    .select()
+  const plannedItems: PlannedActivity[] = []
+  for (const row of rows) {
+    if (row.repeat_rule !== 'none') {
+      const existingRepeat = await findMatchingRepeatOccurrence(supabase, row as PlannedActivity, todayKey)
+      if (existingRepeat) {
+        plannedItems.push(existingRepeat as PlannedActivity)
+        continue
+      }
+    }
 
-  if (error) {
-    console.error('[SMS] Planned insert failed:', error.message)
-    return xmlResponse(`I had trouble saving that. Please open Context here: ${dashboardLink('/mci-user')}`)
+    const { data: created, error } = await supabase
+      .from('planned_activities')
+      .insert(row)
+      .select()
+      .single()
+
+    if (error || !created) {
+      console.error('[SMS] Planned insert failed:', error?.message)
+      return xmlResponse(`I had trouble saving that. Please open Context here: ${dashboardLink('/mci-user')}`)
+    }
+    plannedItems.push(created as PlannedActivity)
   }
 
   for (const item of (plannedItems ?? []).filter(item => item.repeat_rule !== 'none')) {
+    if (item.series_id) continue
     const { data: source, error: seriesError } = await supabase.from('planned_activities')
       .update({ series_id: item.id }).eq('id', item.id).select().single()
     if (seriesError || !source) {

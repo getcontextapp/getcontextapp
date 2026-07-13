@@ -379,17 +379,21 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       plannedActivity: PlannedActivity | null
       activity: ActivityLog | null
       deleted_planned_activity_id?: string | null
+      deleted_planned_activity_ids?: string[] | null
       deleted_activity_id?: string | null
+      deleted_activity_ids?: string[] | null
     } = await res.json()
 
-    if (result.deleted_planned_activity_id) {
-      setPlannedActivities(prev => prev.filter(item => item.id !== result.deleted_planned_activity_id))
+    const deletedPlanIds = result.deleted_planned_activity_ids ?? (result.deleted_planned_activity_id ? [result.deleted_planned_activity_id] : [])
+    if (deletedPlanIds.length > 0) {
+      setPlannedActivities(prev => prev.filter(item => !deletedPlanIds.includes(item.id)))
     } else if (result.plannedActivity) {
       setPlannedActivities(prev => prev.map(item => item.id === result.plannedActivity!.id ? result.plannedActivity! : item))
     }
 
-    if (result.deleted_activity_id) {
-      setActivities(prev => prev.filter(activity => activity.id !== result.deleted_activity_id))
+    const deletedActivityIds = result.deleted_activity_ids ?? (result.deleted_activity_id ? [result.deleted_activity_id] : [])
+    if (deletedActivityIds.length > 0) {
+      setActivities(prev => prev.filter(activity => !deletedActivityIds.includes(activity.id)))
     }
 
     if (!result.activity) {

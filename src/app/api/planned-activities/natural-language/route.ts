@@ -4,7 +4,7 @@ import { parseSmsPlanReply } from '@/lib/anthropic'
 import { trackEvent } from '@/lib/analytics'
 import { ACTIVITY_TILES } from '@/types'
 import { addDaysToKey, periodForTime } from '@/lib/task-scheduling'
-import { ensureNextOccurrence } from '@/lib/task-scheduling-server'
+import { ensureNextOccurrence, findMatchingRepeatOccurrence } from '@/lib/task-scheduling-server'
 import { getLocalDateKey } from '@/lib/dates'
 import { isRecallRequest } from '@/lib/recall-intent'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
@@ -324,16 +324,30 @@ export async function POST(request: NextRequest) {
       source: 'manual',
     }))
 
-    const { data: plannedItems, error } = await supabase
-      .from('planned_activities')
-      .insert(rows)
-      .select()
+    const plannedItems: PlannedActivity[] = []
+    for (const row of rows) {
+      if (row.repeat_rule !== 'none') {
+        const existingRepeat = await findMatchingRepeatOccurrence(supabase, row as PlannedActivity, body.planned_for)
+        if (existingRepeat) {
+          plannedItems.push(existingRepeat as PlannedActivity)
+          continue
+        }
+      }
 
-    if (error || !plannedItems) {
-      return NextResponse.json({ error: error?.message ?? 'Could not save these plans.' }, { status: 500 })
+      const { data: created, error } = await supabase
+        .from('planned_activities')
+        .insert(row)
+        .select()
+        .single()
+
+      if (error || !created) {
+        return NextResponse.json({ error: error?.message ?? 'Could not save these plans.' }, { status: 500 })
+      }
+      plannedItems.push(created as PlannedActivity)
     }
 
     for (const item of plannedItems.filter(item => item.repeat_rule !== 'none')) {
+      if (item.series_id) continue
       const { data: source, error: seriesError } = await supabase.from('planned_activities')
         .update({ series_id: item.id }).eq('id', item.id).select().single()
       if (seriesError || !source) {

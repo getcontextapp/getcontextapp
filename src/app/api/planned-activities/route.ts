@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { trackEvent } from '@/lib/analytics'
 import { periodForTime } from '@/lib/task-scheduling'
-import { ensureNextOccurrence } from '@/lib/task-scheduling-server'
+import { ensureNextOccurrence, findMatchingRepeatFamily, findMatchingRepeatOccurrence } from '@/lib/task-scheduling-server'
 import type { CreatePlannedActivityPayload, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
 const REPEAT_RULES = new Set<RepeatRule>(['none', 'daily', 'weekdays', 'weekly'])
@@ -28,25 +28,34 @@ export async function POST(request: NextRequest) {
   if (!profile?.household_id) return NextResponse.json({ error: 'No household linked' }, { status: 400 })
 
   const body: CreatePlannedActivityPayload = await request.json()
+  if (!body.planned_for) {
+    return NextResponse.json({ error: 'Choose a day for this plan.' }, { status: 400 })
+  }
   const repeatRule = REPEAT_RULES.has(body.repeat_rule as RepeatRule) ? body.repeat_rule as RepeatRule : 'none'
   const expectedTime = /^\d{2}:\d{2}$/.test(body.expected_time ?? '') ? body.expected_time! : null
   const expectedPeriod = expectedTime ? periodForTime(expectedTime) : body.expected_period
+  const candidate = {
+    household_id: profile.household_id,
+    created_by: profile.id,
+    assigned_to: profile.id,
+    category: body.category,
+    label: body.label,
+    note: body.note?.trim() || null,
+    expected_period: expectedPeriod,
+    expected_time: expectedTime,
+    planned_for: body.planned_for,
+    repeat_rule: repeatRule,
+    source: 'manual',
+  } as PlannedActivity
+
+  if (repeatRule !== 'none') {
+    const existingRepeat = await findMatchingRepeatOccurrence(supabase, candidate, body.planned_for)
+    if (existingRepeat) return NextResponse.json(existingRepeat)
+  }
 
   const { data: plannedActivity, error } = await supabase
     .from('planned_activities')
-    .insert({
-      household_id: profile.household_id,
-      created_by: profile.id,
-      assigned_to: profile.id,
-      category: body.category,
-      label: body.label,
-      note: body.note?.trim() || null,
-      expected_period: expectedPeriod,
-      expected_time: expectedTime,
-      planned_for: body.planned_for,
-      repeat_rule: repeatRule,
-      source: 'manual',
-    })
+    .insert(candidate)
     .select()
     .single()
 
@@ -114,23 +123,33 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (body.action === 'delete') {
-    const confirmedActivityLogId = plannedActivity.confirmed_activity_log_id
+    const family = plannedActivity.repeat_rule !== 'none'
+      ? await findMatchingRepeatFamily(supabase, plannedActivity as PlannedActivity)
+      : [plannedActivity as PlannedActivity]
+    const deletableRows = family.filter(item =>
+      item.id === plannedActivity.id || ['planned', 'not_now', 'skipped', 'abandoned'].includes(item.status),
+    )
+    const plannedIds = deletableRows.map(item => item.id)
+    const confirmedActivityLogIds = deletableRows
+      .map(item => item.confirmed_activity_log_id)
+      .filter((id): id is string => Boolean(id))
+
     const { error } = await supabase
       .from('planned_activities')
       .delete()
-      .eq('id', plannedActivity.id)
       .eq('household_id', profile.household_id)
+      .in('id', plannedIds)
 
     if (error) {
       return NextResponse.json({ error: error.message ?? 'Delete failed' }, { status: 500 })
     }
 
-    if (confirmedActivityLogId) {
+    if (confirmedActivityLogIds.length > 0) {
       await supabase
         .from('activity_logs')
         .delete()
-        .eq('id', confirmedActivityLogId)
         .eq('household_id', profile.household_id)
+        .in('id', confirmedActivityLogIds)
     }
 
     await trackEvent(supabase, {
@@ -139,9 +158,11 @@ export async function PATCH(request: NextRequest) {
       userId: user.id,
       properties: {
         planned_activity_id: plannedActivity.id,
-        deleted_activity_id: confirmedActivityLogId,
+        deleted_planned_activity_ids: plannedIds,
+        deleted_activity_ids: confirmedActivityLogIds,
         category: plannedActivity.category,
         previous_status: plannedActivity.status,
+        repeat_family_deleted: plannedActivity.repeat_rule !== 'none',
       },
     })
 
@@ -149,7 +170,9 @@ export async function PATCH(request: NextRequest) {
       plannedActivity: null,
       activity: null,
       deleted_planned_activity_id: plannedActivity.id,
-      deleted_activity_id: confirmedActivityLogId,
+      deleted_planned_activity_ids: plannedIds,
+      deleted_activity_id: plannedActivity.confirmed_activity_log_id,
+      deleted_activity_ids: confirmedActivityLogIds,
     })
   }
 
