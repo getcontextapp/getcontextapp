@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { trackEvent } from '@/lib/analytics'
 import { periodForTime } from '@/lib/task-scheduling'
-import { ensureNextOccurrence, findMatchingRepeatFamily, findMatchingRepeatOccurrence } from '@/lib/task-scheduling-server'
+import { ensureNextOccurrence, findMatchingRepeatFamily, findMatchingRepeatOccurrence, retireRepeatFamily } from '@/lib/task-scheduling-server'
 import type { CreatePlannedActivityPayload, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
 const REPEAT_RULES = new Set<RepeatRule>(['none', 'daily', 'weekdays', 'weekly'])
@@ -123,26 +123,49 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (body.action === 'delete') {
-    const family = plannedActivity.repeat_rule !== 'none'
-      ? await findMatchingRepeatFamily(supabase, plannedActivity as PlannedActivity)
-      : [plannedActivity as PlannedActivity]
-    const deletableRows = family.filter(item =>
-      item.id === plannedActivity.id || ['planned', 'not_now', 'skipped', 'abandoned'].includes(item.status),
-    )
-    const plannedIds = deletableRows.map(item => item.id)
-    const confirmedActivityLogIds = deletableRows
-      .map(item => item.confirmed_activity_log_id)
-      .filter((id): id is string => Boolean(id))
+    let plannedIds: string[] = []
+    let confirmedActivityLogIds: string[] = []
+
+    if (plannedActivity.repeat_rule !== 'none') {
+      const { family, hiddenIds, retiredIds } = await retireRepeatFamily(supabase, plannedActivity as PlannedActivity)
+      plannedIds = hiddenIds
+      confirmedActivityLogIds = []
+
+      await trackEvent(supabase, {
+        eventName: 'planned_activity_deleted',
+        profile,
+        userId: user.id,
+        properties: {
+          planned_activity_id: plannedActivity.id,
+          deleted_planned_activity_ids: plannedIds,
+          retired_planned_activity_ids: retiredIds,
+          category: plannedActivity.category,
+          previous_status: plannedActivity.status,
+          repeat_family_deleted: true,
+          repeat_family_size: family.length,
+        },
+      })
+
+      return NextResponse.json({
+        plannedActivity: null,
+        activity: null,
+        deleted_planned_activity_id: plannedActivity.id,
+        deleted_planned_activity_ids: plannedIds.includes(plannedActivity.id) ? plannedIds : [plannedActivity.id, ...plannedIds],
+        deleted_activity_id: null,
+        deleted_activity_ids: [],
+      })
+    }
+
+    plannedIds = [plannedActivity.id]
+    confirmedActivityLogIds = plannedActivity.confirmed_activity_log_id ? [plannedActivity.confirmed_activity_log_id] : []
 
     const { error } = await supabase
       .from('planned_activities')
       .delete()
       .eq('household_id', profile.household_id)
-      .in('id', plannedIds)
+      .eq('id', plannedActivity.id)
 
-    if (error) {
-      return NextResponse.json({ error: error.message ?? 'Delete failed' }, { status: 500 })
-    }
+    if (error) return NextResponse.json({ error: error.message ?? 'Delete failed' }, { status: 500 })
 
     if (confirmedActivityLogIds.length > 0) {
       await supabase
@@ -247,13 +270,13 @@ export async function PATCH(request: NextRequest) {
       const familyIds = family.map(item => item.id)
       const otherFamilyIds = familyIds.filter(id => id !== plannedActivity.id)
 
-      if (repeatRule === 'none' && otherFamilyIds.length > 0) {
-        const { error: skipError } = await supabase
-          .from('planned_activities')
-          .update({ status: 'skipped', updated_at: new Date().toISOString() })
-          .eq('household_id', profile.household_id)
-          .in('id', otherFamilyIds)
-        if (skipError) return NextResponse.json({ error: skipError.message ?? 'Update failed' }, { status: 500 })
+      if (repeatRule === 'none') {
+        const { hiddenIds } = await retireRepeatFamily(supabase, plannedActivity as PlannedActivity)
+        return NextResponse.json({
+          plannedActivity: { ...plannedActivity, ...updateValues, status: 'skipped' },
+          activity: null,
+          deleted_planned_activity_ids: hiddenIds.includes(plannedActivity.id) ? hiddenIds : [plannedActivity.id, ...hiddenIds],
+        })
       }
 
       const { data: updated, error } = await supabase

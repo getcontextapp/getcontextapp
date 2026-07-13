@@ -106,21 +106,54 @@ export async function findMatchingRepeatOccurrence(
 export async function findMatchingRepeatFamily(
   supabase: SupabaseClient,
   activity: PlannedActivity,
-  fromDateKey = activity.planned_for,
+  fromDateKey: string | null = activity.planned_for,
+  options: { includeConfirmed?: boolean } = {},
 ) {
   if (!activity.repeat_rule || activity.repeat_rule === 'none') return [activity]
 
-  const { data: rows, error } = await supabase
+  let query = supabase
     .from('planned_activities')
     .select('*')
     .eq('household_id', activity.household_id)
     .eq('repeat_rule', activity.repeat_rule)
-    .gte('planned_for', fromDateKey)
-    .neq('status', 'confirmed')
+  if (fromDateKey) query = query.gte('planned_for', fromDateKey)
+  if (!options.includeConfirmed) query = query.neq('status', 'confirmed')
 
+  const { data: rows, error } = await query
   if (error) throw error
   const key = repeatTaskKey(activity)
   return ((rows ?? []) as PlannedActivity[]).filter(row => repeatTaskKey(row) === key)
+}
+
+export async function retireRepeatFamily(
+  supabase: SupabaseClient,
+  activity: PlannedActivity,
+) {
+  const family = await findMatchingRepeatFamily(supabase, activity, null, { includeConfirmed: true })
+  const familyIds = family.map(item => item.id)
+  if (familyIds.length === 0) return { family, retiredIds: [], hiddenIds: [] }
+
+  const now = new Date().toISOString()
+  const { error: retireError } = await supabase
+    .from('planned_activities')
+    .update({ repeat_rule: 'none', series_id: null, updated_at: now })
+    .eq('household_id', activity.household_id)
+    .in('id', familyIds)
+  if (retireError) throw retireError
+
+  const hiddenIds = family
+    .filter(item => item.status !== 'confirmed')
+    .map(item => item.id)
+  if (hiddenIds.length > 0) {
+    const { error: hideError } = await supabase
+      .from('planned_activities')
+      .update({ status: 'skipped', updated_at: now })
+      .eq('household_id', activity.household_id)
+      .in('id', hiddenIds)
+    if (hideError) throw hideError
+  }
+
+  return { family, retiredIds: familyIds, hiddenIds }
 }
 
 export async function ensureNextOccurrence(

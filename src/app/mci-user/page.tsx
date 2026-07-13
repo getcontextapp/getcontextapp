@@ -52,6 +52,7 @@ export default async function MCIUserPage({
     .select('*')
     .eq('household_id', profile.household_id)
     .eq('planned_for', todayKey)
+    .in('status', ['planned', 'not_now', 'confirmed'])
     .order('created_at', { ascending: true })
 
   const { data: timelineEvents } = await supabase

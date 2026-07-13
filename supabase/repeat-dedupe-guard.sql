@@ -98,7 +98,7 @@ begin
     from planned_activities
     where repeat_rule <> 'none'
       and planned_for <= target_date
-      and status not in ('skipped', 'abandoned')
+      and status in ('planned', 'not_now')
       and normalize_repeat_task_text(coalesce(note, label)) <> ''
     group by repeat_task_family_key(planned_activities)
   loop
@@ -108,7 +108,7 @@ begin
     where repeat_task_family_key(planned_activities) = repeat_family.family_key
       and repeat_rule <> 'none'
       and planned_for <= target_date
-      and status not in ('skipped', 'abandoned')
+      and status in ('planned', 'not_now')
     order by planned_for asc, created_at asc
     limit 1;
 
@@ -143,7 +143,7 @@ begin
     where repeat_task_family_key(planned_activities) = repeat_family.family_key
       and repeat_rule <> 'none'
       and planned_for <= target_date
-      and status not in ('skipped', 'abandoned')
+      and status in ('planned', 'not_now')
     order by planned_for desc, created_at desc
     limit 1;
 

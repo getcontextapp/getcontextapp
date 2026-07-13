@@ -4,7 +4,7 @@ import { parseSmsPlanReply } from '@/lib/anthropic'
 import { trackEvent } from '@/lib/analytics'
 import { ACTIVITY_TILES } from '@/types'
 import { addDaysToKey, periodForTime } from '@/lib/task-scheduling'
-import { ensureNextOccurrence, findMatchingRepeatFamily, findMatchingRepeatOccurrence } from '@/lib/task-scheduling-server'
+import { ensureNextOccurrence, findMatchingRepeatOccurrence, retireRepeatFamily } from '@/lib/task-scheduling-server'
 import { getLocalDateKey } from '@/lib/dates'
 import { isRecallRequest } from '@/lib/recall-intent'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
@@ -242,6 +242,21 @@ export async function POST(request: NextRequest) {
       .eq('id', item.id).eq('household_id', profile.household_id)
       .in('status', ['planned', 'not_now']).maybeSingle()
     if (!current) return NextResponse.json({ error: 'That task is no longer waiting.' }, { status: 404 })
+    if (repeatRule === 'none' && current.repeat_rule !== 'none') {
+      const { hiddenIds } = await retireRepeatFamily(supabase, current as PlannedActivity)
+      return NextResponse.json({
+        item: {
+          ...current,
+          note: item.note?.trim().slice(0, 160) || current.note,
+          expected_period: expectedTime ? periodForTime(expectedTime) : item.expected_period ?? current.expected_period,
+          expected_time: expectedTime,
+          repeat_rule: 'none',
+          series_id: null,
+          status: 'skipped',
+        },
+        deleted_planned_activity_ids: hiddenIds.includes(current.id) ? hiddenIds : [current.id, ...hiddenIds],
+      })
+    }
     if (item.planned_for && item.planned_for !== current.planned_for) {
       const { data: existingOccurrence } = current.series_id
         ? await supabase.from('planned_activities').select('*')
@@ -286,18 +301,6 @@ export async function POST(request: NextRequest) {
       updated_at: new Date().toISOString(),
     }).eq('id', item.id).eq('household_id', profile.household_id).in('status', ['planned', 'not_now']).select().single()
     if (error || !updated) return NextResponse.json({ error: error?.message ?? 'Could not change that task.' }, { status: 500 })
-    if (repeatRule === 'none' && current.repeat_rule !== 'none') {
-      const family = await findMatchingRepeatFamily(supabase, current as PlannedActivity)
-      const otherFamilyIds = family.map(row => row.id).filter(id => id !== current.id)
-      if (otherFamilyIds.length > 0) {
-        const { error: skipError } = await supabase
-          .from('planned_activities')
-          .update({ status: 'skipped', updated_at: new Date().toISOString() })
-          .eq('household_id', profile.household_id)
-          .in('id', otherFamilyIds)
-        if (skipError) return NextResponse.json({ error: skipError.message ?? 'Could not stop that repeat.' }, { status: 500 })
-      }
-    }
     if (repeatRule !== 'none') await ensureNextOccurrence(supabase, updated as PlannedActivity)
     return NextResponse.json({ item: updated })
   }

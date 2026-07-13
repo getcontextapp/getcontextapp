@@ -457,7 +457,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   })
 
-  const visiblePlannedActivities = sortedPlannedActivities.filter(item => item.status !== 'confirmed')
+  const visiblePlannedActivities = sortedPlannedActivities.filter(item =>
+    item.status === 'planned' || item.status === 'not_now',
+  )
   const openPlannedCount = sortedPlannedActivities.filter(a => a.status === 'planned' || a.status === 'not_now').length
   const recentTimeline = timelineEvents.find(event => event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply')
   const recentActivity = recentTimeline?.text
@@ -759,7 +761,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                       {openMoreId === item.id && (
                         <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-cream-100 p-2">
                           <button onClick={() => { setEditCandidate(item); setOpenMoreId(null) }} className="min-h-11 rounded-lg bg-white text-sm font-medium text-warm-700">Edit task</button>
-                          <button onClick={() => { setDeleteCandidate(item); setOpenMoreId(null) }} className="min-h-11 rounded-lg bg-white text-sm font-medium text-terracotta-700">Delete task</button>
+                          <button onClick={() => { setDeleteCandidate(item); setOpenMoreId(null) }} className="min-h-11 rounded-lg bg-white text-sm font-medium text-terracotta-700">
+                            {item.repeat_rule !== 'none' ? 'Stop repeating' : 'Delete task'}
+                          </button>
                         </div>
                       )}
                       </>
