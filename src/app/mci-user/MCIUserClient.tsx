@@ -991,9 +991,13 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       {deleteCandidate && (
         <div className="fixed inset-0 z-50 bg-warm-900/35 px-5 flex items-center justify-center">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-float border border-cream-200">
-            <p className="font-serif text-lg font-semibold text-warm-900">Delete this task?</p>
+            <p className="font-serif text-lg font-semibold text-warm-900">
+              {deleteCandidate.repeat_rule !== 'none' ? 'Stop this repeating task?' : 'Delete this task?'}
+            </p>
             <p className="text-sm text-warm-500 mt-2">
-              This removes "{deleteCandidate.note || deleteCandidate.label}" from today's plan.
+              {deleteCandidate.repeat_rule !== 'none'
+                ? `This stops "${deleteCandidate.note || deleteCandidate.label}" from showing again. Past completed notes stay saved.`
+                : `This removes "${deleteCandidate.note || deleteCandidate.label}" from today's plan.`}
             </p>
             <div className="grid grid-cols-2 gap-2 mt-5">
               <button
@@ -1007,7 +1011,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                 disabled={deletingPlanId === deleteCandidate.id}
                 className="rounded-xl bg-terracotta-600 text-cream-50 py-2.5 text-sm font-medium active:scale-[0.98] transition-all disabled:opacity-60"
               >
-                {deletingPlanId === deleteCandidate.id ? 'Deleting...' : 'Delete'}
+                {deletingPlanId === deleteCandidate.id
+                  ? 'Saving...'
+                  : deleteCandidate.repeat_rule !== 'none' ? 'Stop repeating' : 'Delete'}
               </button>
             </div>
           </div>
@@ -1016,8 +1022,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       {editCandidate && (
         <EditTaskSheet task={editCandidate}
           onClose={() => setEditCandidate(null)}
-          onSaved={updated => {
-            setPlannedActivities(current => current.map(item => item.id === updated.id ? updated : item))
+          onSaved={(updated, removedTaskIds = []) => {
+            setPlannedActivities(current => current
+              .filter(item => !removedTaskIds.includes(item.id))
+              .map(item => item.id === updated.id ? updated : item))
             setEditCandidate(null)
             scheduleContextCardRefresh()
           }}

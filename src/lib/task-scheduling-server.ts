@@ -116,6 +116,7 @@ export async function findMatchingRepeatFamily(
     .eq('household_id', activity.household_id)
     .eq('repeat_rule', activity.repeat_rule)
     .gte('planned_for', fromDateKey)
+    .neq('status', 'confirmed')
 
   if (error) throw error
   const key = repeatTaskKey(activity)
@@ -184,6 +185,7 @@ export async function ensureRepeatOccurrencesForDate(
     .select('*')
     .eq('household_id', householdId)
     .neq('repeat_rule', 'none')
+    .not('status', 'in', '(skipped,abandoned)')
     .lte('planned_for', dateKey)
     .order('planned_for', { ascending: true })
 

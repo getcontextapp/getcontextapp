@@ -6,7 +6,7 @@ import type { ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
 export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
   task: PlannedActivity
-  onSaved: (task: PlannedActivity) => void
+  onSaved: (task: PlannedActivity, removedTaskIds?: string[]) => void
   onClose: () => void
   onDelete: () => void
 }) {
@@ -36,7 +36,7 @@ export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
     const result = await response.json()
     setSaving(false)
     if (!response.ok) return setError(result.error ?? 'Could not save changes.')
-    onSaved(result.plannedActivity)
+    onSaved(result.plannedActivity, result.deleted_planned_activity_ids ?? [])
   }
 
   return (
@@ -69,7 +69,9 @@ export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
           {saving ? 'Saving...' : 'Save changes'}
         </button>
         <button onClick={onClose} className="mt-2 min-h-11 w-full text-sm font-medium text-warm-500">Cancel</button>
-        <button onClick={onDelete} className="mt-4 min-h-11 w-full border-t border-cream-200 pt-4 text-sm font-medium text-terracotta-700">Delete task</button>
+        <button onClick={onDelete} className="mt-4 min-h-11 w-full border-t border-cream-200 pt-4 text-sm font-medium text-terracotta-700">
+          {task.repeat_rule !== 'none' ? 'Stop repeating task' : 'Delete task'}
+        </button>
       </div>
     </div>
   )

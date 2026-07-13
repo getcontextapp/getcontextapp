@@ -241,6 +241,47 @@ export async function PATCH(request: NextRequest) {
       series_id: repeatRule === 'none' ? null : plannedActivity.series_id ?? plannedActivity.id,
       updated_at: new Date().toISOString(),
     }
+
+    if (body.series_scope === 'future' && plannedActivity.repeat_rule !== 'none') {
+      const family = await findMatchingRepeatFamily(supabase, plannedActivity as PlannedActivity)
+      const familyIds = family.map(item => item.id)
+      const otherFamilyIds = familyIds.filter(id => id !== plannedActivity.id)
+
+      if (repeatRule === 'none' && otherFamilyIds.length > 0) {
+        const { error: skipError } = await supabase
+          .from('planned_activities')
+          .update({ status: 'skipped', updated_at: new Date().toISOString() })
+          .eq('household_id', profile.household_id)
+          .in('id', otherFamilyIds)
+        if (skipError) return NextResponse.json({ error: skipError.message ?? 'Update failed' }, { status: 500 })
+      }
+
+      const { data: updated, error } = await supabase
+        .from('planned_activities')
+        .update(updateValues)
+        .eq('id', plannedActivity.id)
+        .eq('household_id', profile.household_id)
+        .select()
+        .single()
+      if (error || !updated) return NextResponse.json({ error: error?.message ?? 'Update failed' }, { status: 500 })
+
+      if (repeatRule !== 'none' && otherFamilyIds.length > 0) {
+        const { error: updateFamilyError } = await supabase
+          .from('planned_activities')
+          .update(updateValues)
+          .eq('household_id', profile.household_id)
+          .in('id', otherFamilyIds)
+        if (updateFamilyError) return NextResponse.json({ error: updateFamilyError.message ?? 'Update failed' }, { status: 500 })
+      }
+
+      if (repeatRule !== 'none') await ensureNextOccurrence(supabase, updated as PlannedActivity)
+      return NextResponse.json({
+        plannedActivity: updated,
+        activity: null,
+        deleted_planned_activity_ids: repeatRule === 'none' ? otherFamilyIds : [],
+      })
+    }
+
     let updateQuery = supabase
       .from('planned_activities')
       .update(updateValues)
@@ -252,7 +293,7 @@ export async function PATCH(request: NextRequest) {
       .select()
     const updated = updatedRows?.find(item => item.id === plannedActivity.id) ?? updatedRows?.[0]
     if (error || !updated) return NextResponse.json({ error: error?.message ?? 'Update failed' }, { status: 500 })
-    await ensureNextOccurrence(supabase, updated as PlannedActivity)
+    if (repeatRule !== 'none') await ensureNextOccurrence(supabase, updated as PlannedActivity)
     return NextResponse.json({ plannedActivity: updated, activity: null })
   }
 
