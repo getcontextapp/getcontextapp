@@ -52,6 +52,10 @@ const MORE_RECOVERY_INTENTS: Array<{ intent: RecoveryIntent; label: string }> = 
   { intent: 'what_changed_today', label: 'What changed today?' },
 ]
 
+const VISIBLE_PLAN_STATUSES = new Set(['planned', 'not_now', 'confirmed'])
+type PlanAction = 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'remove_today' | 'stop_repeating'
+type TaskRemovalAction = 'remove_today' | 'stop_repeating' | 'delete'
+
 export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, dashboardSource }: Props) {
   const [supabase] = useState(createClient)
 
@@ -60,7 +64,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>(initialTimelineEvents)
   const [showSettings, setShowSettings] = useState(false)
   const [showHousehold, setShowHousehold] = useState(false)
-  const [deleteCandidate, setDeleteCandidate] = useState<PlannedActivity | null>(null)
+  const [deleteCandidate, setDeleteCandidate] = useState<{ task: PlannedActivity; action: TaskRemovalAction } | null>(null)
   const [editCandidate, setEditCandidate] = useState<PlannedActivity | null>(null)
   const [moveCandidate, setMoveCandidate] = useState<PlannedActivity | null>(null)
   const [moveDate, setMoveDate] = useState('')
@@ -129,6 +133,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         .select('*')
         .eq('household_id', profile.household_id)
         .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+        .in('status', ['planned', 'not_now', 'confirmed'])
         .order('created_at', { ascending: true }),
       supabase
         .from('timeline_events')
@@ -186,6 +191,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       }, payload => {
         const created = payload.new as PlannedActivity
         if (created.planned_for !== getLocalDateKey(new Date(), profile.timezone)) return
+        if (!VISIBLE_PLAN_STATUSES.has(created.status)) return
         setPlannedActivities(prev => prev.some(item => item.id === created.id) ? prev : [...prev, created])
         scheduleContextCardRefresh()
       })
@@ -197,7 +203,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       }, payload => {
         const updated = payload.new as PlannedActivity
         setPlannedActivities(prev => {
-          if (updated.planned_for !== getLocalDateKey(new Date(), profile.timezone)) {
+          if (updated.planned_for !== getLocalDateKey(new Date(), profile.timezone) || !VISIBLE_PLAN_STATUSES.has(updated.status)) {
             return prev.filter(item => item.id !== updated.id)
           }
           return prev.some(item => item.id === updated.id)
@@ -352,7 +358,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     }, 50)
   }
 
-  const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete') => {
+  const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: PlanAction) => {
     if (action === 'confirm') {
       if (confirmingPlanIds.includes(plannedActivity.id)) return
       setConfirmingPlanIds(current => [...current, plannedActivity.id])
@@ -387,8 +393,16 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     const deletedPlanIds = result.deleted_planned_activity_ids ?? (result.deleted_planned_activity_id ? [result.deleted_planned_activity_id] : [])
     if (deletedPlanIds.length > 0) {
       setPlannedActivities(prev => prev.filter(item => !deletedPlanIds.includes(item.id)))
-    } else if (result.plannedActivity) {
-      setPlannedActivities(prev => prev.map(item => item.id === result.plannedActivity!.id ? result.plannedActivity! : item))
+    }
+    if (result.plannedActivity) {
+      setPlannedActivities(prev => {
+        if (!VISIBLE_PLAN_STATUSES.has(result.plannedActivity!.status)) {
+          return prev.filter(item => item.id !== result.plannedActivity!.id)
+        }
+        return prev.some(item => item.id === result.plannedActivity!.id)
+          ? prev.map(item => item.id === result.plannedActivity!.id ? result.plannedActivity! : item)
+          : [...prev, result.plannedActivity!]
+      })
     }
 
     const deletedActivityIds = result.deleted_activity_ids ?? (result.deleted_activity_id ? [result.deleted_activity_id] : [])
@@ -428,9 +442,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   const handleDeleteConfirmed = useCallback(async () => {
     if (!deleteCandidate) return
-    setDeletingPlanId(deleteCandidate.id)
+    setDeletingPlanId(deleteCandidate.task.id)
     try {
-      await handlePlanAction(deleteCandidate, 'delete')
+      await handlePlanAction(deleteCandidate.task, deleteCandidate.action)
       setDeleteCandidate(null)
     } finally {
       setDeletingPlanId(null)
@@ -759,9 +773,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                         </button>
                       </div>
                       {openMoreId === item.id && (
-                        <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-cream-100 p-2">
+                        <div className={`mt-2 grid gap-2 rounded-xl bg-cream-100 p-2 ${item.repeat_rule !== 'none' ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-2'}`}>
                           <button onClick={() => { setEditCandidate(item); setOpenMoreId(null) }} className="min-h-11 rounded-lg bg-white text-sm font-medium text-warm-700">Edit task</button>
-                          <button onClick={() => { setDeleteCandidate(item); setOpenMoreId(null) }} className="min-h-11 rounded-lg bg-white text-sm font-medium text-terracotta-700">
+                          {item.repeat_rule !== 'none' && (
+                            <button onClick={() => { setDeleteCandidate({ task: item, action: 'remove_today' }); setOpenMoreId(null) }} className="min-h-11 rounded-lg bg-white text-sm font-medium text-warm-700">
+                              Remove today
+                            </button>
+                          )}
+                          <button onClick={() => { setDeleteCandidate({ task: item, action: item.repeat_rule !== 'none' ? 'stop_repeating' : 'delete' }); setOpenMoreId(null) }} className="min-h-11 rounded-lg bg-white text-sm font-medium text-terracotta-700">
                             {item.repeat_rule !== 'none' ? 'Stop repeating' : 'Delete task'}
                           </button>
                         </div>
@@ -770,7 +789,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                     ) : (
                       <div className="mt-3">
                         <button
-                          onClick={() => setDeleteCandidate(item)}
+                          onClick={() => setDeleteCandidate({ task: item, action: 'delete' })}
                           className="w-full rounded-xl border border-terracotta-200 text-terracotta-700 py-2 text-sm font-medium active:scale-[0.98] transition-all"
                         >
                           Delete
@@ -826,10 +845,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                             Undo
                           </button>
                           <button
-                            onClick={() => setDeleteCandidate(item)}
+                            onClick={() => setDeleteCandidate({ task: item, action: item.repeat_rule !== 'none' ? 'stop_repeating' : 'delete' })}
                             className="min-h-10 px-2 text-sm font-medium text-terracotta-700 underline decoration-terracotta-200 underline-offset-4"
                           >
-                            Delete
+                            {item.repeat_rule !== 'none' ? 'Stop future repeats' : 'Delete'}
                           </button>
                         </div>
                       </div>
@@ -996,12 +1015,18 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         <div className="fixed inset-0 z-50 bg-warm-900/35 px-5 flex items-center justify-center">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-float border border-cream-200">
             <p className="font-serif text-lg font-semibold text-warm-900">
-              {deleteCandidate.repeat_rule !== 'none' ? 'Stop this repeating task?' : 'Delete this task?'}
+              {deleteCandidate.action === 'stop_repeating'
+                ? 'Stop this repeating task?'
+                : deleteCandidate.action === 'remove_today'
+                ? 'Remove this from today?'
+                : 'Delete this task?'}
             </p>
             <p className="text-sm text-warm-500 mt-2">
-              {deleteCandidate.repeat_rule !== 'none'
-                ? `This stops "${deleteCandidate.note || deleteCandidate.label}" from showing again. Past completed notes stay saved.`
-                : `This removes "${deleteCandidate.note || deleteCandidate.label}" from today's plan.`}
+              {deleteCandidate.action === 'stop_repeating'
+                ? `This stops "${deleteCandidate.task.note || deleteCandidate.task.label}" from showing on future days. Past completed notes stay saved.`
+                : deleteCandidate.action === 'remove_today'
+                ? `This removes "${deleteCandidate.task.note || deleteCandidate.task.label}" from today only. It can still appear on the next repeat day.`
+                : `This deletes "${deleteCandidate.task.note || deleteCandidate.task.label}" from Context.`}
             </p>
             <div className="grid grid-cols-2 gap-2 mt-5">
               <button
@@ -1012,12 +1037,16 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               </button>
               <button
                 onClick={handleDeleteConfirmed}
-                disabled={deletingPlanId === deleteCandidate.id}
+                disabled={deletingPlanId === deleteCandidate.task.id}
                 className="rounded-xl bg-terracotta-600 text-cream-50 py-2.5 text-sm font-medium active:scale-[0.98] transition-all disabled:opacity-60"
               >
-                {deletingPlanId === deleteCandidate.id
+                {deletingPlanId === deleteCandidate.task.id
                   ? 'Saving...'
-                  : deleteCandidate.repeat_rule !== 'none' ? 'Stop repeating' : 'Delete'}
+                  : deleteCandidate.action === 'stop_repeating'
+                  ? 'Stop repeating'
+                  : deleteCandidate.action === 'remove_today'
+                  ? 'Remove today'
+                  : 'Delete'}
               </button>
             </div>
           </div>
@@ -1033,7 +1062,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             setEditCandidate(null)
             scheduleContextCardRefresh()
           }}
-          onDelete={() => { setDeleteCandidate(editCandidate); setEditCandidate(null) }} />
+          onDelete={(action = editCandidate.repeat_rule !== 'none' ? 'stop_repeating' : 'delete') => {
+            setDeleteCandidate({ task: editCandidate, action })
+            setEditCandidate(null)
+          }} />
       )}
       {moveCandidate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-warm-900/35 px-5" role="dialog" aria-modal="true" aria-labelledby="move-task-title">

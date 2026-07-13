@@ -8,7 +8,7 @@ export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
   task: PlannedActivity
   onSaved: (task: PlannedActivity, removedTaskIds?: string[]) => void
   onClose: () => void
-  onDelete: () => void
+  onDelete: (action?: 'delete' | 'remove_today' | 'stop_repeating') => void
 }) {
   const [note, setNote] = useState(task.note || task.label)
   const [period, setPeriod] = useState<ExpectedPeriod>(task.expected_period)
@@ -17,6 +17,7 @@ export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
   const [seriesScope, setSeriesScope] = useState<'one' | 'future'>('one')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const isRepeatingTask = task.repeat_rule !== 'none'
 
   async function save() {
     setSaving(true); setError(null)
@@ -48,7 +49,7 @@ export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
         <input id="edit-task-name" value={note} onChange={event => setNote(event.target.value)} maxLength={160}
           className="mb-5 mt-2 min-h-12 w-full rounded-xl border border-cream-300 bg-white px-4 text-base text-warm-800" />
         <TaskScheduleFields period={period} time={time} repeat={repeat} onPeriod={setPeriod} onTime={setTime} onRepeat={setRepeat} />
-        {task.series_id && (
+        {isRepeatingTask && (
           <fieldset className="mt-5">
             <legend className="text-sm font-medium text-warm-600">Apply changes to</legend>
             <div className="mt-2 grid grid-cols-2 gap-2">
@@ -69,9 +70,20 @@ export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
           {saving ? 'Saving...' : 'Save changes'}
         </button>
         <button onClick={onClose} className="mt-2 min-h-11 w-full text-sm font-medium text-warm-500">Cancel</button>
-        <button onClick={onDelete} className="mt-4 min-h-11 w-full border-t border-cream-200 pt-4 text-sm font-medium text-terracotta-700">
-          {task.repeat_rule !== 'none' ? 'Stop repeating task' : 'Delete task'}
-        </button>
+        {isRepeatingTask ? (
+          <div className="mt-4 grid grid-cols-1 gap-2 border-t border-cream-200 pt-4">
+            <button onClick={() => onDelete('remove_today')} className="min-h-11 w-full rounded-xl border border-cream-300 bg-white text-sm font-medium text-warm-700">
+              Remove from today
+            </button>
+            <button onClick={() => onDelete('stop_repeating')} className="min-h-11 w-full text-sm font-medium text-terracotta-700">
+              Stop repeating
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => onDelete('delete')} className="mt-4 min-h-11 w-full border-t border-cream-200 pt-4 text-sm font-medium text-terracotta-700">
+            Delete task
+          </button>
+        )}
       </div>
     </div>
   )

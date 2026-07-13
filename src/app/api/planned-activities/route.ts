@@ -99,7 +99,7 @@ export async function PATCH(request: NextRequest) {
 
   const body: {
     id?: string
-    action?: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'move' | 'update'
+    action?: 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'remove_today' | 'stop_repeating' | 'move' | 'update'
     planned_for?: string
     note?: string
     expected_period?: ExpectedPeriod
@@ -122,39 +122,79 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: fetchError?.message ?? 'Planned activity not found' }, { status: 404 })
   }
 
+  if (body.action === 'remove_today') {
+    const { data: removed, error } = await supabase
+      .from('planned_activities')
+      .update({
+        status: 'skipped',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', plannedActivity.id)
+      .eq('household_id', profile.household_id)
+      .neq('status', 'confirmed')
+      .select()
+      .single()
+
+    if (error || !removed) {
+      return NextResponse.json({ error: error?.message ?? 'Could not remove this task from today.' }, { status: 500 })
+    }
+
+    await trackEvent(supabase, {
+      eventName: 'planned_activity_removed_today',
+      profile,
+      userId: user.id,
+      properties: {
+        planned_activity_id: plannedActivity.id,
+        category: plannedActivity.category,
+        repeat_rule: plannedActivity.repeat_rule,
+      },
+    })
+
+    return NextResponse.json({
+      plannedActivity: null,
+      activity: null,
+      deleted_planned_activity_id: plannedActivity.id,
+      deleted_planned_activity_ids: [plannedActivity.id],
+      deleted_activity_id: null,
+      deleted_activity_ids: [],
+    })
+  }
+
+  if (body.action === 'stop_repeating' || (body.action === 'delete' && plannedActivity.repeat_rule !== 'none')) {
+    const { family, hiddenIds, retiredIds } = await retireRepeatFamily(supabase, plannedActivity as PlannedActivity)
+    const hiddenIdSet = new Set(hiddenIds)
+    const visibleCurrent = family.find(item => item.id === plannedActivity.id && !hiddenIdSet.has(item.id))
+    const currentAfterStop = visibleCurrent
+      ? { ...visibleCurrent, repeat_rule: 'none' as RepeatRule, series_id: null, updated_at: new Date().toISOString() }
+      : null
+
+    await trackEvent(supabase, {
+      eventName: 'planned_activity_repeat_stopped',
+      profile,
+      userId: user.id,
+      properties: {
+        planned_activity_id: plannedActivity.id,
+        hidden_planned_activity_ids: hiddenIds,
+        retired_planned_activity_ids: retiredIds,
+        category: plannedActivity.category,
+        previous_status: plannedActivity.status,
+        repeat_family_size: family.length,
+      },
+    })
+
+    return NextResponse.json({
+      plannedActivity: currentAfterStop,
+      activity: null,
+      deleted_planned_activity_id: hiddenIds.includes(plannedActivity.id) ? plannedActivity.id : null,
+      deleted_planned_activity_ids: hiddenIds,
+      deleted_activity_id: null,
+      deleted_activity_ids: [],
+    })
+  }
+
   if (body.action === 'delete') {
     let plannedIds: string[] = []
     let confirmedActivityLogIds: string[] = []
-
-    if (plannedActivity.repeat_rule !== 'none') {
-      const { family, hiddenIds, retiredIds } = await retireRepeatFamily(supabase, plannedActivity as PlannedActivity)
-      plannedIds = hiddenIds
-      confirmedActivityLogIds = []
-
-      await trackEvent(supabase, {
-        eventName: 'planned_activity_deleted',
-        profile,
-        userId: user.id,
-        properties: {
-          planned_activity_id: plannedActivity.id,
-          deleted_planned_activity_ids: plannedIds,
-          retired_planned_activity_ids: retiredIds,
-          category: plannedActivity.category,
-          previous_status: plannedActivity.status,
-          repeat_family_deleted: true,
-          repeat_family_size: family.length,
-        },
-      })
-
-      return NextResponse.json({
-        plannedActivity: null,
-        activity: null,
-        deleted_planned_activity_id: plannedActivity.id,
-        deleted_planned_activity_ids: plannedIds.includes(plannedActivity.id) ? plannedIds : [plannedActivity.id, ...plannedIds],
-        deleted_activity_id: null,
-        deleted_activity_ids: [],
-      })
-    }
 
     plannedIds = [plannedActivity.id]
     confirmedActivityLogIds = plannedActivity.confirmed_activity_log_id ? [plannedActivity.confirmed_activity_log_id] : []
