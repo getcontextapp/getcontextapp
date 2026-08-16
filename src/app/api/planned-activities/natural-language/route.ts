@@ -7,6 +7,7 @@ import { addDaysToKey, periodForTime } from '@/lib/task-scheduling'
 import { ensureNextOccurrence, findMatchingRepeatOccurrence, retireRepeatFamily } from '@/lib/task-scheduling-server'
 import { getLocalDateKey } from '@/lib/dates'
 import { isRecallRequest } from '@/lib/recall-intent'
+import { findPlanUpdateIntent, isPlanTimeUpdateMessage } from '@/lib/plan-update-intent'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
 const VALID_CATEGORIES = new Set(ACTIVITY_TILES.map(tile => tile.category))
@@ -171,11 +172,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ recall_request: true })
     }
 
-    if (/\b(change|move|rename|edit|repeat|stop repeating)\b/i.test(message)) {
+    if (isPlanTimeUpdateMessage(message) || /\b(change|move|rename|edit|repeat|stop repeating)\b/i.test(message)) {
       const todayKey = getLocalDateKey(new Date(), profile.timezone)
       const { data: waiting } = await supabase.from('planned_activities').select('*')
         .eq('household_id', profile.household_id).eq('planned_for', todayKey)
         .in('status', ['planned', 'not_now'])
+      const planUpdate = findPlanUpdateIntent(message, (waiting ?? []) as PlannedActivity[])
+      if (planUpdate) {
+        return NextResponse.json({
+          modification: {
+            id: planUpdate.activity.id,
+            current_note: planUpdate.activity.note || planUpdate.activity.label,
+            note: planUpdate.note,
+            expected_period: planUpdate.expected_period,
+            expected_time: planUpdate.expected_time,
+            repeat_rule: planUpdate.repeat_rule,
+            planned_for: planUpdate.activity.planned_for,
+          },
+        })
+      }
+      if (isPlanTimeUpdateMessage(message)) {
+        return NextResponse.json({ error: 'I could not find that waiting task today.' }, { status: 422 })
+      }
       const matches = (waiting ?? []).filter(item => {
         const words = String(item.note || item.label).toLowerCase().split(/\s+/).filter((word: string) => word.length > 3)
         return words.some((word: string) => message.toLowerCase().includes(word))

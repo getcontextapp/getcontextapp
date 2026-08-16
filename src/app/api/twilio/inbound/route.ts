@@ -8,6 +8,7 @@ import { trackEvent } from '@/lib/analytics'
 import { addDaysToKey } from '@/lib/task-scheduling'
 import { ensureNextOccurrence, ensureRepeatOccurrencesForDate, findMatchingRepeatFamily, findMatchingRepeatOccurrence } from '@/lib/task-scheduling-server'
 import { saveReflectionInput } from '@/lib/reflections'
+import { findPlanUpdateIntent, formatPlanUpdateReply } from '@/lib/plan-update-intent'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity } from '@/types'
 
 function xmlResponse(message: string) {
@@ -1003,6 +1004,55 @@ export async function POST(request: NextRequest) {
     getTodaysPlannedItems(supabase, profile),
     getRecentConversation(supabase, profile),
   ])
+
+  const planUpdate = findPlanUpdateIntent(body, (pendingItems ?? []) as PlannedActivity[])
+  if (planUpdate) {
+    const { data: updated, error } = await supabase
+      .from('planned_activities')
+      .update({
+        expected_period: planUpdate.expected_period,
+        expected_time: planUpdate.expected_time,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', planUpdate.activity.id)
+      .eq('household_id', profile.household_id)
+      .in('status', ['planned', 'not_now'])
+      .select()
+      .single()
+
+    if (error || !updated) {
+      console.error('[SMS] Plan update failed:', error?.message)
+      return xmlResponse(`I had trouble changing that task. Please open Context here: ${dashboardLink('/mci-user')}`)
+    }
+
+    await trackEvent(supabase, {
+      eventName: 'sms_plan_time_updated',
+      profile,
+      userId: profile.user_id,
+      properties: {
+        raw_length: body.length,
+        planned_activity_id: updated.id,
+        expected_time: updated.expected_time,
+      },
+    })
+
+    const reply = formatPlanUpdateReply({ ...planUpdate, activity: updated as PlannedActivity })
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'inbound_confirmation',
+      phoneE164: from,
+      body: reply,
+      status: 'twiml_reply',
+      metadata: {
+        update_time: true,
+        planned_activity_id: updated.id,
+        expected_time: updated.expected_time,
+      },
+    })
+    return xmlResponse(reply)
+  }
 
   const parsed = await parseSmsPlanReply(body, profile.display_name, profile.timezone, {
     pendingItems: (pendingItems ?? []).map(item => ({
