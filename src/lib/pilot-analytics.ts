@@ -6,6 +6,12 @@ export interface AnalyticsFilters {
   role: string
 }
 
+const NEUTRAL_LABELS = [
+  'Cedar', 'Harbor', 'Juniper', 'Quarry', 'Lantern', 'Meadow', 'Copper', 'Bramble',
+  'Solstice', 'Kettle', 'Marlow', 'Thicket', 'Almond', 'Beacon', 'Rowan', 'Pebble',
+  'Ledger', 'Fennel', 'Willow', 'Maple', 'Cypress', 'Granite', 'Elm', 'Birch',
+]
+
 type ProfileRow = {
   id: string
   user_id: string
@@ -219,6 +225,23 @@ function median(values: number[]) {
   return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2)
 }
 
+function medianDisplay(values: number[]) {
+  const value = median(values)
+  return value === null ? 'Not instrumented' : value
+}
+
+function cohortForHousehold(household: HouseholdRow) {
+  const name = household.name.toLowerCase()
+  if (name.includes('test') || name.includes('demo') || name.includes('internal')) {
+    return { cohort: 'test', prefix: 'D' }
+  }
+  return { cohort: 'pilot-1', prefix: 'P' }
+}
+
+function week2Value<T>(currentStudyDay: number, value: T) {
+  return currentStudyDay > 7 ? value : null
+}
+
 function profileRoleLabel(role: string) {
   return role === 'mci_user' ? 'MCI' : role === 'care_partner' ? 'CP' : role
 }
@@ -379,7 +402,11 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     ...recoveryMoments.filter(moment => moment.profile_id === profile.id).map(moment => moment.created_at),
   ]
 
+  const cohortSequences = new Map<string, number>()
   const dyads = includedHouseholds.map((household, index) => {
+    const cohortInfo = cohortForHousehold(household)
+    const nextSequence = (cohortSequences.get(cohortInfo.cohort) ?? 0) + 1
+    cohortSequences.set(cohortInfo.cohort, nextSequence)
     const members = profilesByHousehold.get(household.id) ?? []
     const mci = members.find(member => member.role === 'mci_user') ?? null
     const cp = members.find(member => member.role === 'care_partner') ?? null
@@ -410,7 +437,10 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const silentHours = hoursSince(lastActive ?? onboardingAt, now) ?? days * 24
     return {
       id: household.id,
-      code: `D${String(index + 1).padStart(2, '0')}`,
+      cohort: cohortInfo.cohort,
+      code: `${cohortInfo.prefix}${String(nextSequence).padStart(2, '0')}`,
+      label: NEUTRAL_LABELS[index % NEUTRAL_LABELS.length],
+      displayLabel: `${cohortInfo.prefix}${String(nextSequence).padStart(2, '0')} · ${NEUTRAL_LABELS[index % NEUTRAL_LABELS.length]}`,
       name: household.name,
       timezone: mci?.timezone ?? cp?.timezone ?? 'America/New_York',
       onboardingAt,
@@ -642,7 +672,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     }
   }).sort((a, b) => (b.lastActive ?? '').localeCompare(a.lastActive ?? ''))
 
-  const perDyad = dyads.map(dyad => {
+  const basePerDyad = dyads.map(dyad => {
     const dyadPlans = filteredPlans.filter(plan => plan.household_id === dyad.id)
     const dyadEvents = filteredEvents.filter(event => event.household_id === dyad.id)
     const dyadSms = filteredSms.filter(message => message.household_id === dyad.id)
@@ -671,16 +701,28 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       reflectionsSaved: dyadReflections.length,
       reflectionUsed: dyadEpisodes.filter(episode => episode.selectedSource === 'reflection').length,
       week1CpOpensPerDay: w1Cp / week1Days,
-      week2CpOpensPerDay: w2Cp / week2Days,
+      week2CpOpensPerDay: week2Value(dyad.currentStudyDay, w2Cp / week2Days),
       useDaysWeek1: [...daySet].filter(day => day <= 7).length,
-      useDaysWeek2: [...daySet].filter(day => day > 7).length,
+      useDaysWeek2: week2Value(dyad.currentStudyDay, [...daySet].filter(day => day > 7).length),
       capturesWeek1: dyadPlans.filter(plan => studyDay(dyad.onboardingAt, plan.created_at) <= 7).length,
-      capturesWeek2: dyadPlans.filter(plan => studyDay(dyad.onboardingAt, plan.created_at) > 7).length,
+      capturesWeek2: week2Value(dyad.currentStudyDay, dyadPlans.filter(plan => studyDay(dyad.onboardingAt, plan.created_at) > 7).length),
       attemptsWeek1: dyadEpisodes.filter(episode => episode.day <= 7).length,
-      attemptsWeek2: dyadEpisodes.filter(episode => episode.day > 7).length,
+      attemptsWeek2: week2Value(dyad.currentStudyDay, dyadEpisodes.filter(episode => episode.day > 7).length),
       reflectionsWeek1: dyadReflections.filter(reflection => studyDay(dyad.onboardingAt, reflection.created_at) <= 7).length,
-      reflectionsWeek2: dyadReflections.filter(reflection => studyDay(dyad.onboardingAt, reflection.created_at) > 7).length,
+      reflectionsWeek2: week2Value(dyad.currentStudyDay, dyadReflections.filter(reflection => studyDay(dyad.onboardingAt, reflection.created_at) > 7).length),
       cleanWindowAttempts: dyadEpisodes.filter(episode => episode.day >= 12 && episode.day <= 13).length,
+      daysDark: Math.max(0, dyad.currentStudyDay - Math.max(0, ...[...daySet])),
+      useTrend: Array.from({ length: Math.min(14, Math.max(1, dyad.currentStudyDay)) }, (_, index) => {
+        const day = index + 1
+        return dyadPlans.filter(plan => studyDay(dyad.onboardingAt, plan.created_at) === day).length +
+          dyadEvents.filter(event => SUBSTANTIVE_EVENTS.has(event.event_name) && studyDay(dyad.onboardingAt, event.created_at) === day).length +
+          dyadEpisodes.filter(episode => episode.day === day).length +
+          dyadReflections.filter(reflection => studyDay(dyad.onboardingAt, reflection.created_at) === day).length
+      }),
+      cpOpenTrend: Array.from({ length: Math.min(14, Math.max(1, dyad.currentStudyDay)) }, (_, index) => {
+        const day = index + 1
+        return dyadEvents.filter(event => event.event_name === 'care_partner_dashboard_viewed' && studyDay(dyad.onboardingAt, event.created_at) === day).length
+      }),
       smsSent: dyadSms.filter(message => message.direction === 'outbound').length,
       smsDelivered: dyadSms.filter(message => message.direction === 'outbound' && ['delivered', 'sent'].includes(message.status)).length,
       smsReplied: dyadSms.filter(message => message.direction === 'inbound').length,
@@ -694,9 +736,86 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     }
   })
 
+  const perDyad = basePerDyad.map(dyad => {
+    const dyadEpisodes = allRecoveryEpisodes.filter(episode => episode.householdId === dyad.id)
+    const noContext = dyadEpisodes.filter(episode => episode.outcome === 'no_context')
+    const rankFailures = dyadEpisodes.filter(episode => episode.outcome === 'rank_failure')
+    const unresolved = dyadEpisodes.filter(episode => episode.outcome === 'unresolved_after_result')
+    const undelivered = dyad.smsSent - dyad.smsDelivered
+    const flags: Array<{ question: string; evidence: string; source: string }> = []
+    if (noContext.length >= 2) flags.push({
+      question: 'What were you looking for that Context did not have?',
+      evidence: `${noContext.length} queries returned nothing. Most recent: "${noContext[0]?.query ?? 'Need help remembering?'}"`,
+      source: 'Query log',
+    })
+    if (rankFailures.length >= 2) flags.push({
+      question: 'When it showed you a list, did you see what you needed?',
+      evidence: `${rankFailures.length} queries where relevant context was returned but not selected.`,
+      source: 'Context Rank',
+    })
+    if (unresolved.length >= 3) flags.push({
+      question: 'You looked something up and nothing happened. Walk me through one.',
+      evidence: `${unresolved.length} retrievals with a result and no resumption in the window.`,
+      source: 'Recovery',
+    })
+    if (dyad.smsDelivered > 0 && dyad.smsReplied / dyad.smsDelivered < 0.3) flags.push({
+      question: 'Tell me about the morning texts.',
+      evidence: `${dyad.smsReplied} replies to ${dyad.smsDelivered} delivered messages.`,
+      source: 'SMS',
+    })
+    if (undelivered > 0) flags.push({
+      question: 'Are the texts arriving at all?',
+      evidence: `${undelivered} messages sent but not marked delivered.`,
+      source: 'SMS · technical',
+    })
+    if (dyad.reflectionsSaved >= 3 && dyad.reflectionUsed === 0) flags.push({
+      question: 'Did any of what you wrote come back to you later?',
+      evidence: `${dyad.reflectionsSaved} reflections saved, none selected during a recovery break.`,
+      source: 'Modality',
+    })
+    if (dyad.unresolved >= 6 && dyad.attempts <= 3) flags.push({
+      question: 'A lot gets started and left open. What happens?',
+      evidence: `${dyad.unresolved} unresolved threads, ${dyad.attempts} recovery attempts.`,
+      source: 'Threads',
+    })
+    if (dyad.daysDark >= 2 && !dyad.withdrawn) flags.push({
+      question: 'Check in. Is anything broken?',
+      evidence: `No meaningful use for ${dyad.daysDark} days.`,
+      source: 'Persistence · technical',
+    })
+    if (dyad.attempts === 0 && dyad.currentStudyDay >= 4) flags.push({
+      question: 'Did you know the Need Help Remembering button was there?',
+      evidence: `No recovery attempts by day ${dyad.currentStudyDay}.`,
+      source: 'Recovery',
+    })
+    return { ...dyad, flags, flagCount: flags.length }
+  })
+
   const eventCounts = new Map<string, number>()
   for (const event of filteredEvents.filter(event => isStudyEvent(event.event_name))) eventCounts.set(event.event_name, (eventCounts.get(event.event_name) ?? 0) + 1)
   const features = [...eventCounts.entries()].map(([name, count]) => ({ name, label: eventLabel(name), count })).sort((a, b) => b.count - a.count).slice(0, 12)
+  const pilotDyads = perDyad.filter(dyad => dyad.cohort === 'pilot-1')
+  const activePilotDyads = pilotDyads.filter(dyad => dyad.active)
+  const week2CpValues = perDyad.map(dyad => dyad.week2CpOpensPerDay).filter((value): value is number => typeof value === 'number')
+  const week2UseValues = perDyad.map(dyad => dyad.useDaysWeek2).filter((value): value is number => typeof value === 'number')
+  const exportDyads = perDyad.map(({ id, code, cohort, active, currentStudyDay, daysDark, flagCount, attempts, resumed, nothingHeld, captured, completed, unresolved, smsSent, smsDelivered, smsReplied }) => ({
+    id,
+    code,
+    cohort,
+    active,
+    currentStudyDay,
+    daysDark,
+    flagCount,
+    attempts,
+    resumed,
+    nothingHeld,
+    captured,
+    completed,
+    unresolved,
+    smsSent,
+    smsDelivered,
+    smsReplied,
+  }))
 
   return {
     filters,
@@ -707,10 +826,18 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       cronWarning: lastCronHours === null || lastCronHours > 26,
     },
     households: includedHouseholds.map(household => ({ id: household.id, name: household.name })),
+    cohorts: [
+      { id: 'pilot-1', label: 'Pilot cohort', prefix: 'P', active: true, count: pilotDyads.length },
+      { id: 'test', label: 'Internal testers', prefix: 'D', active: false, count: perDyad.filter(dyad => dyad.cohort === 'test').length },
+    ],
     dyads,
     perDyad,
     silentDyads: perDyad.filter(dyad => dyad.silentHours > 48).sort((a, b) => b.silentHours - a.silentHours),
     recovery: {
+      medianAttempts: medianDisplay(activePilotDyads.map(dyad => dyad.attempts)),
+      medianResumed: medianDisplay(activePilotDyads.map(dyad => dyad.resumed)),
+      medianCaptures: medianDisplay(activePilotDyads.map(dyad => dyad.captured)),
+      flaggedDyads: activePilotDyads.filter(dyad => dyad.flagCount > 0).length,
       attempts: allRecoveryEpisodes.length,
       resumed: resolvedEpisodes.length,
       resumedDyads: new Set(resolvedEpisodes.map(episode => episode.householdId)).size,
@@ -751,8 +878,14 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     },
     partner: {
       week1OpensPerDay: perDyad.length ? perDyad.reduce((sum, dyad) => sum + dyad.week1CpOpensPerDay, 0) / perDyad.length : 0,
-      week2OpensPerDay: perDyad.length ? perDyad.reduce((sum, dyad) => sum + dyad.week2CpOpensPerDay, 0) / perDyad.length : 0,
-      daysViewed: perDyad.reduce((sum, dyad) => sum + (dyad.week1CpOpensPerDay > 0 ? 1 : 0) + (dyad.week2CpOpensPerDay > 0 ? 1 : 0), 0),
+      week2OpensPerDay: week2CpValues.length ? week2CpValues.reduce((sum, value) => sum + value, 0) / week2CpValues.length : null,
+      daysViewed: perDyad.reduce(
+        (sum, dyad) =>
+          sum +
+          (dyad.week1CpOpensPerDay > 0 ? 1 : 0) +
+          (typeof dyad.week2CpOpensPerDay === 'number' && dyad.week2CpOpensPerDay > 0 ? 1 : 0),
+        0,
+      ),
       reportedLessReminding: 'pending',
     },
     sms: {
@@ -765,9 +898,9 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     },
     persistence: {
       useDaysWeek1: perDyad.reduce((sum, dyad) => sum + dyad.useDaysWeek1, 0),
-      useDaysWeek2: perDyad.reduce((sum, dyad) => sum + dyad.useDaysWeek2, 0),
+      useDaysWeek2: week2UseValues.length ? week2UseValues.reduce((sum, value) => sum + value, 0) : null,
       cleanWindowAttempts: allRecoveryEpisodes.filter(episode => episode.day >= 12 && episode.day <= 13).length,
-      activeWeek2Dyads: perDyad.filter(dyad => dyad.useDaysWeek2 > 0).length,
+      activeWeek2Dyads: perDyad.filter(dyad => typeof dyad.useDaysWeek2 === 'number' && dyad.useDaysWeek2 > 0).length,
     },
     disconfirmation: {
       corroboratedDyads: new Set(allRecoveryEpisodes.filter(episode => episode.reported === 'got going again').map(episode => episode.householdId)).size,
@@ -803,7 +936,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     householdRows,
     journeys,
     exports: {
-      dyads: perDyad,
+      dyads: exportDyads,
       recovery_episodes: allRecoveryEpisodes,
       queries: allRecoveryEpisodes,
       households: householdRows,
