@@ -65,14 +65,25 @@ function displayCalendarEvents(events: CalendarEvent[], timeZone?: string | null
   const visible = events
     .filter(event => !event.hidden_at)
     .slice()
-    .sort((left, right) => Date.parse(left.starts_at) - Date.parse(right.starts_at))
+    .sort((left, right) => {
+      if (left.all_day !== right.all_day) return left.all_day ? 1 : -1
+      return Date.parse(left.starts_at) - Date.parse(right.starts_at)
+    })
 
-  const upcomingToday = visible
+  const timedUpcomingToday = visible
     .filter(event => localDateKey(new Date(event.starts_at), timeZone) === todayKey && eventEndTime(event) >= now)
+    .filter(event => !event.all_day)
     .slice(0, 2)
     .map(event => ({ ...event, displayContext: 'upcoming' as const }))
 
-  if (upcomingToday.length > 0) return upcomingToday
+  if (timedUpcomingToday.length > 0) return timedUpcomingToday
+
+  const allDayToday = visible
+    .filter(event => localDateKey(new Date(event.starts_at), timeZone) === todayKey && event.all_day && eventEndTime(event) >= now)
+    .slice(0, 2)
+    .map(event => ({ ...event, displayContext: 'upcoming' as const }))
+
+  if (allDayToday.length > 0) return allDayToday
 
   const tomorrow = visible
     .filter(event => localDateKey(new Date(event.starts_at), timeZone) === tomorrowKey)

@@ -25,7 +25,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Calendar owner was not found.' }, { status: 403 })
   }
 
-  const { data: connection, error: connectionError } = await supabase
+  const service = createServiceClient()
+  const { data: connection, error: connectionError } = await service
     .from('calendar_connections')
     .update({ status: 'revoked', updated_at: new Date().toISOString() })
     .eq('owner_profile_id', ownerProfile.id)
@@ -39,7 +40,6 @@ export async function POST(request: NextRequest) {
   }
 
   if (connection?.id) {
-    const service = createServiceClient()
     await service
       .from('calendar_connection_tokens')
       .update({

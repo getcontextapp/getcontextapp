@@ -60,6 +60,7 @@ type GoogleCalendarListEntry = {
   hidden?: boolean
   deleted?: boolean
   summary?: string
+  summaryOverride?: string
 }
 
 type GoogleCalendarListResponse = {
@@ -83,6 +84,7 @@ type GoogleTask = {
   notes?: string
   status?: string
   due?: string
+  updated?: string
   deleted?: boolean
   hidden?: boolean
   webViewLink?: string
@@ -358,15 +360,20 @@ export async function saveGoogleCalendarConnection({
   return connection as CalendarConnectionSummary
 }
 
-function parseGoogleDate(value: { dateTime?: string; date?: string } | undefined, allDay: boolean) {
+function parseGoogleDate(value: { dateTime?: string; date?: string } | undefined, allDay: boolean, timeZone?: string | null) {
   if (!value) return null
   if (value.dateTime) return value.dateTime
-  if (value.date && allDay) return `${value.date}T00:00:00.000Z`
+  if (value.date && allDay) return getUtcRangeForLocalDateKey(value.date, timeZone ?? 'UTC').start
   return null
 }
 
 function providerEventId(source: 'calendar' | 'task', containerId: string, itemId: string) {
   return `${source}:${base64url(containerId)}:${itemId}`
+}
+
+function isBirthdayCalendar(calendar: GoogleCalendarListEntry) {
+  const label = `${calendar.summary ?? ''} ${calendar.summaryOverride ?? ''} ${calendar.id ?? ''}`.toLowerCase()
+  return label.includes('birthday') || label.includes('#contacts@group.v.calendar.google.com')
 }
 
 async function googleCalendarList(accessToken: string) {
@@ -378,7 +385,7 @@ async function googleCalendarList(accessToken: string) {
   const result = await response.json() as GoogleCalendarListResponse
   if (!response.ok || result.error) throw new Error(result.error?.message || 'Google calendar list sync failed.')
   const calendars = (result.items ?? [])
-    .filter(calendar => calendar.id && !calendar.deleted && !calendar.hidden && (calendar.primary || calendar.selected))
+    .filter(calendar => calendar.id && !calendar.deleted && !calendar.hidden && (calendar.primary || calendar.selected || isBirthdayCalendar(calendar)))
   if (calendars.length === 0) return [{ id: 'primary', primary: true }]
   return calendars
 }
@@ -423,6 +430,27 @@ async function googleTasksForList(accessToken: string, taskListId: string, windo
   const result = await response.json() as GoogleTasksResponse
   if (!response.ok || result.error) throw new Error(result.error?.message || 'Google tasks sync failed.')
   return result.items ?? []
+}
+
+function parseGoogleTaskDue(task: GoogleTask, ownerProfile: Profile) {
+  if (!task.due) return null
+  const due = new Date(task.due)
+  if (Number.isNaN(due.getTime())) return null
+  const dateKey = task.due.slice(0, 10)
+  const todayKey = getLocalDateKey(new Date(), ownerProfile.timezone)
+
+  // Google Tasks only exposes the due date through the public API, even when
+  // the Calendar app displays a reminder time. Keep tasks as all-day evidence
+  // so Context does not invent a time Google did not provide.
+  if (dateKey === todayKey) return {
+    startsAt: getUtcRangeForLocalDateKey(todayKey, ownerProfile.timezone).start,
+    allDay: true,
+  }
+
+  return {
+    startsAt: `${dateKey}T00:00:00.000Z`,
+    allDay: true,
+  }
 }
 
 async function markMissingCalendarEventsCancelled({
@@ -472,7 +500,7 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
   const service = createServiceClient()
   const token = await usableGoogleToken(service, connection.id)
   const window = dayWindowForProfile(ownerProfile)
-  const rows = []
+  const rows: Array<Record<string, string | boolean | null>> = []
   const activeProviderIds = new Set<string>()
 
   const calendars = await googleCalendarList(token.accessToken)
@@ -481,7 +509,7 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
     for (const item of items) {
       if (!item.id || item.status === 'cancelled') continue
       const allDay = Boolean(item.start?.date)
-      const startsAt = parseGoogleDate(item.start, allDay)
+      const startsAt = parseGoogleDate(item.start, allDay, ownerProfile.timezone)
       if (!startsAt) continue
       const id = providerEventId('calendar', calendar.id, item.id)
       activeProviderIds.add(id)
@@ -495,7 +523,7 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
         description: item.description ?? null,
         location: item.location ?? null,
         starts_at: startsAt,
-        ends_at: parseGoogleDate(item.end, allDay),
+        ends_at: parseGoogleDate(item.end, allDay, ownerProfile.timezone),
         all_day: allDay,
         status: 'confirmed',
         html_link: item.htmlLink ?? null,
@@ -512,6 +540,8 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
         const tasks = await googleTasksForList(token.accessToken, taskList.id, window)
         for (const task of tasks) {
           if (!task.id || !task.due || task.deleted || task.hidden || task.status === 'completed') continue
+          const parsedDue = parseGoogleTaskDue(task, ownerProfile)
+          if (!parsedDue) continue
           const id = providerEventId('task', taskList.id, task.id)
           activeProviderIds.add(id)
           rows.push({
@@ -523,9 +553,9 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
             title: (task.title || 'Google task').slice(0, 160),
             description: task.notes ?? null,
             location: null,
-            starts_at: task.due,
+            starts_at: parsedDue.startsAt,
             ends_at: null,
-            all_day: /T00:00:00(?:\.000)?Z$/.test(task.due),
+            all_day: parsedDue.allDay,
             status: 'confirmed',
             html_link: task.webViewLink ?? null,
             synced_at: new Date().toISOString(),
