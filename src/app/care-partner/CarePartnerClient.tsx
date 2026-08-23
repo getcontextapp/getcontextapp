@@ -6,14 +6,17 @@ import { getLocalDateKey } from '@/lib/dates'
 import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import { formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
+import CalendarCard from '@/components/calendar/CalendarCard'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, PlannedActivity } from '@/types'
+import type { CalendarDashboardData } from '@/lib/calendar-sync'
 
 interface Props {
   careProfile: Profile
   mciProfile: Profile | null
   initialActivities: ActivityLog[]
   initialPlannedActivities: PlannedActivity[]
+  calendar: CalendarDashboardData
   dashboardSource: 'sms_link' | 'direct' | 'home_screen'
 }
 
@@ -89,10 +92,12 @@ const PERIOD_ORDER: Record<string, number> = {
 
 const SHOW_SMS_TEST_TOOLS = process.env.NEXT_PUBLIC_SHOW_SMS_TEST_TOOLS === 'true'
 
-export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities, dashboardSource }: Props) {
+export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities, calendar, dashboardSource }: Props) {
   const supabase = createClient()
   const [activities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
+  const [calendarConnection, setCalendarConnection] = useState(calendar.connection)
+  const [calendarEvents, setCalendarEvents] = useState(calendar.events)
   const [skippedActivitiesOpen, setSkippedActivitiesOpen] = useState(false)
   const [testSending, setTestSending] = useState(false)
   const [testSent, setTestSent] = useState(false)
@@ -270,6 +275,22 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
               The care partner account is signed in, but the linked MCI member is not showing in this household.
             </p>
           </div>
+        )}
+
+        {mciProfile && (
+          <CalendarCard
+            role="care_partner"
+            ownerProfileId={mciProfile.id}
+            ownerName={mciProfile.display_name}
+            enabled={calendar.enabled}
+            connection={calendarConnection}
+            events={calendarEvents}
+            timeZone={mciProfile.timezone}
+            onCalendarUpdated={nextCalendar => {
+              setCalendarConnection(nextCalendar.connection)
+              setCalendarEvents(nextCalendar.events)
+            }}
+          />
         )}
 
         {/* Planned today */}

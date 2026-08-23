@@ -11,9 +11,11 @@ import ReminderSettings from '@/components/mci/ReminderSettings'
 import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanComposer'
 import EditTaskSheet from '@/components/mci/EditTaskSheet'
 import DailyReflection from '@/components/mci/DailyReflection'
+import CalendarCard from '@/components/calendar/CalendarCard'
 import { addDaysToKey, formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 import { buildRecoveryAnswerText } from '@/lib/recovery-copy'
 import type { ContinuityCard, RecoveryIntent, RecoverySession, ScoredCandidate } from '@/lib/context-rank'
+import type { CalendarDashboardData } from '@/lib/calendar-sync'
 
 interface Props {
   profile: Profile
@@ -23,6 +25,7 @@ interface Props {
   initialReflection: Reflection | null
   carePartner: Profile | null
   household: { join_code: string; name: string } | null
+  calendar: CalendarDashboardData
   dashboardSource: 'sms_link' | 'direct' | 'home_screen'
 }
 
@@ -56,12 +59,14 @@ const VISIBLE_PLAN_STATUSES = new Set(['planned', 'not_now', 'confirmed'])
 type PlanAction = 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'remove_today' | 'stop_repeating'
 type TaskRemovalAction = 'remove_today' | 'stop_repeating' | 'delete'
 
-export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, dashboardSource }: Props) {
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource }: Props) {
   const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>(initialTimelineEvents)
+  const [calendarConnection, setCalendarConnection] = useState(calendar.connection)
+  const [calendarEvents, setCalendarEvents] = useState(calendar.events)
   const [showSettings, setShowSettings] = useState(false)
   const [showHousehold, setShowHousehold] = useState(false)
   const [deleteCandidate, setDeleteCandidate] = useState<{ task: PlannedActivity; action: TaskRemovalAction } | null>(null)
@@ -676,6 +681,20 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             {nextPlanTime && <span className="text-sm font-semibold text-warm-400">{nextPlanTime}</span>}
           </div>
         </div>
+
+        <CalendarCard
+          role="mci_user"
+          ownerProfileId={profile.id}
+          ownerName={profile.display_name}
+          enabled={calendar.enabled}
+          connection={calendarConnection}
+          events={calendarEvents}
+          timeZone={profile.timezone}
+          onCalendarUpdated={nextCalendar => {
+            setCalendarConnection(nextCalendar.connection)
+            setCalendarEvents(nextCalendar.events)
+          }}
+        />
 
         <div className="space-y-3">
           <button

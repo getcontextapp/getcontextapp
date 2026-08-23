@@ -11,7 +11,7 @@ import {
   type RecoveryIntent,
   type RecoverySession,
 } from '@/lib/context-rank'
-import type { ActivityLog, PlannedActivity, Profile, Reflection, SmsMessage, TimelineEvent } from '@/types'
+import type { ActivityLog, CalendarEvent, PlannedActivity, Profile, Reflection, SmsMessage, TimelineEvent } from '@/types'
 
 type RecoveryMomentRow = {
   id: string
@@ -117,6 +117,15 @@ function displayTask(task: PlannedActivity) {
 
 function displayActivity(activity: ActivityLog) {
   return (activity.note?.trim() || activity.label).trim()
+}
+
+function isMissingTableError(error: { code?: string; message?: string } | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? ''
+  return error?.code === '42P01' ||
+    error?.code === 'PGRST205' ||
+    error?.code === 'PGRST204' ||
+    message.includes('does not exist') ||
+    message.includes('could not find the table')
 }
 
 function displayReflection(reflection: Reflection) {
@@ -286,7 +295,7 @@ export async function buildContextRankInput({
   const windowEnd = new Date(Math.max(new Date(todayRange.end).getTime(), queryTime + 60 * 60 * 1000)).toISOString()
   await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
 
-  const [activityResult, taskResult, smsResult, timelineResult, reflectionResult, sessionRow] = await Promise.all([
+  const [activityResult, taskResult, smsResult, timelineResult, reflectionResult, calendarResult, sessionRow] = await Promise.all([
     supabase
       .from('activity_logs')
       .select('*')
@@ -324,11 +333,23 @@ export async function buildContextRankInput({
       .eq('user_id', profile.user_id)
       .eq('reflection_date', todayKey)
       .maybeSingle(),
+    supabase
+      .from('calendar_events')
+      .select('*')
+      .eq('owner_profile_id', profile.id)
+      .eq('status', 'confirmed')
+      .gte('starts_at', windowStart)
+      .lt('starts_at', windowEnd)
+      .order('starts_at', { ascending: true })
+      .limit(30),
     getOrCreateSession(supabase, profile, queryTime, intent, sessionId),
   ])
 
   if (timelineResult.error) {
     console.error('[ContextRank] Timeline evidence unavailable:', timelineResult.error.message)
+  }
+  if (calendarResult.error && !isMissingTableError(calendarResult.error)) {
+    console.error('[ContextRank] Calendar evidence unavailable:', calendarResult.error.message)
   }
 
   const lookupError = activityResult.error || taskResult.error || smsResult.error
@@ -354,6 +375,25 @@ export async function buildContextRankInput({
     .map(item => fallbackCanonicalActivity(item.answer_text || ''))
     .filter(Boolean)
   const completedLabels = new Set<string>()
+
+  const calendarEvents = calendarResult.error ? [] : ((calendarResult.data ?? []) as CalendarEvent[])
+  for (const event of calendarEvents) {
+    const point = Date.parse(event.starts_at)
+    const latest = event.ends_at ? Date.parse(event.ends_at) : point + (event.all_day ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000)
+    evidence.push(makeEvidence({
+      id: `calendar_event:${event.id}`,
+      userId: profile.user_id,
+      content: event.title,
+      source: 'calendar_event',
+      time: {
+        earliest: Number.isFinite(point) ? point : Date.parse(windowStart),
+        latest: Number.isFinite(latest) ? latest : Date.parse(windowEnd),
+        pointEstimate: Number.isFinite(point) ? point : undefined,
+      },
+      provenance: `calendar_events:${event.id}`,
+      occurrenceStrength: event.all_day ? 0.36 : 0.45,
+    }))
+  }
 
   for (const activity of (activityResult.data ?? []) as ActivityLog[]) {
     const point = Date.parse(activity.occurred_at)

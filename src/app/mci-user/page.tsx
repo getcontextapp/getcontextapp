@@ -5,6 +5,7 @@ import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
 import { getHouseholdMembers } from '@/lib/household-links'
 import { reflectionToClient } from '@/lib/reflections'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
+import { getCalendarDashboardData } from '@/lib/calendar-sync'
 import MCIUserClient from './MCIUserClient'
 
 function dashboardSource(value: string | string[] | undefined) {
@@ -80,6 +81,7 @@ export default async function MCIUserPage({
 
   const members = await getHouseholdMembers(supabase, profile.household_id, profile.id)
   const carePartner = members.carePartners.find(member => member.phone_e164) ?? members.carePartners[0] ?? null
+  const calendar = await getCalendarDashboardData(supabase, profile)
 
   return (
     <MCIUserClient
@@ -90,6 +92,7 @@ export default async function MCIUserPage({
       initialReflection={reflection ? reflectionToClient(reflection) : null}
       carePartner={carePartner}
       household={household ?? null}
+      calendar={calendar}
       dashboardSource={dashboardSource(params?.source)}
     />
   )

@@ -107,6 +107,25 @@ test('what_should_i_do_next can show a pending planned task even when it is not 
   assert.ok(result.card.candidates[0].confidence >= config.thresholds.options)
 })
 
+test('what_should_i_do_next can use an upcoming calendar event as a next step', () => {
+  const evidence = [
+    makeEvidence({ id: 'anytime', userId: 'u1', content: 'work on paperwork', source: 'task_planned', time: { earliest: base - 12 * 60 * 60 * 1000, latest: base + 12 * 60 * 60 * 1000 }, provenance: 'planned_activities:anytime' }),
+    makeEvidence({ id: 'calendar', userId: 'u1', content: 'dentist appointment', source: 'calendar_event', time: windowAt(-20), provenance: 'calendar_events:calendar' }),
+  ]
+  const result = runContextRank({ evidence, query: query('what_should_i_do_next'), session: session() })
+  assert.match(result.card.candidates[0].episode.activityLabel, /dentist appointment/i)
+  assert.match(result.card.candidates[0].because.summary, /calendar/i)
+})
+
+test('calendar evidence stays planned instead of completed', () => {
+  const evidence = [
+    makeEvidence({ id: 'calendar', userId: 'u1', content: 'dentist appointment', source: 'calendar_event', time: windowAt(5), provenance: 'calendar_events:calendar' }),
+  ]
+  const result = runContextRank({ evidence, query: query('did_i_finish_this'), session: session() })
+  const status = result.candidates[0]?.episode.statusDistribution
+  assert.ok((status?.planned ?? 0) > (status?.completed ?? 0))
+})
+
 test('what_should_i_do_next can resurface a still pending task after it was shown', () => {
   const evidence = [
     makeEvidence({ id: 'planned', userId: 'u1', content: 'go to the gym', source: 'task_planned', time: windowAt(-30), provenance: 'planned_activities:planned' }),

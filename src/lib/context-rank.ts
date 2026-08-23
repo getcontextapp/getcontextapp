@@ -1,6 +1,7 @@
 export type EvidenceSource =
   | 'user_confirmation' | 'activity_log' | 'task_done' | 'task_planned'
   | 'sms_response' | 'reflection' | 'ai_parse' | 'sms_ignored' | 'task_reopened'
+  | 'calendar_event'
 
 export type EvidenceState =
   | 'raw' | 'parsed' | 'linked' | 'supporting' | 'contradicting'
@@ -142,6 +143,7 @@ export const config: ContextRankConfig = {
     sms_response: { occurrenceStrength: 0.80, reliability: { occ: 0.75, sem: 0.80, time: 0.65 } },
     reflection: { occurrenceStrength: 0.70, reliability: { occ: 0.70, sem: 0.90, time: 0.35 } },
     task_planned: { occurrenceStrength: 0.35, reliability: { occ: 0.35, sem: 0.80, time: 0.60 } },
+    calendar_event: { occurrenceStrength: 0.45, reliability: { occ: 0.45, sem: 0.90, time: 0.95 } },
     ai_parse: { occurrenceStrength: 0.25, reliability: { occ: 0.30, sem: 0.60, time: 0.30 } },
     sms_ignored: { occurrenceStrength: 0.05, reliability: { occ: 0.05, sem: 0.05, time: 0.05 } },
     task_reopened: { occurrenceStrength: 0.80, reliability: { occ: 0.85, sem: 0.85, time: 0.70 } },
@@ -206,7 +208,7 @@ function episodeSummary(evidence: Evidence[]) {
 function seedable(evidence: Evidence, hasBetterEvidence: boolean) {
   if (evidence.source === 'sms_ignored') return false
   if (evidence.source === 'ai_parse') return !hasBetterEvidence
-  return ['activity_log', 'task_done', 'task_planned', 'sms_response', 'reflection', 'user_confirmation', 'task_reopened'].includes(evidence.source)
+  return ['activity_log', 'task_done', 'task_planned', 'calendar_event', 'sms_response', 'reflection', 'user_confirmation', 'task_reopened'].includes(evidence.source)
 }
 
 function episodeIdFor(evidence: Evidence) {
@@ -216,6 +218,7 @@ function episodeIdFor(evidence: Evidence) {
 
 function initialStatus(evidence: Evidence): Partial<Record<EpisodeStatus, number>> {
   if (evidence.source === 'task_planned') return { planned: 0.70, unknown: 0.30 }
+  if (evidence.source === 'calendar_event') return { planned: 0.78, unknown: 0.22 }
   if (evidence.source === 'task_reopened') return { planned: 0.65, unknown: 0.35 }
   if (evidence.source === 'user_confirmation') return { completed: 0.72, unknown: 0.28 }
   if (['activity_log', 'task_done', 'sms_response'].includes(evidence.source)) return { completed: 0.82, unknown: 0.18 }
@@ -285,6 +288,7 @@ function sourceLabel(source: EvidenceSource) {
     activity_log: 'an activity note',
     task_done: 'a task marked done',
     task_planned: "today's plan",
+    calendar_event: 'your calendar',
     sms_response: 'your message',
     reflection: 'your reflection',
     ai_parse: 'a saved Context note',
@@ -605,6 +609,8 @@ export function summarizeEvidence(evidence: Evidence[]) {
     reflection: 0,
     ai_parse: 0,
     sms_ignored: 0,
+    task_reopened: 0,
+    calendar_event: 0,
   } as Record<EvidenceSource, number>)
 }
 

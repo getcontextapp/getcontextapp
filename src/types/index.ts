@@ -158,6 +158,42 @@ export interface SmsMessage {
   created_at: string
 }
 
+export type CalendarProvider = 'google'
+export type CalendarConnectionStatus = 'active' | 'revoked' | 'error'
+
+export interface CalendarConnectionSummary {
+  id: string
+  household_id: string
+  owner_profile_id: string
+  connected_by_profile_id: string | null
+  provider: CalendarProvider
+  provider_account_email: string | null
+  status: CalendarConnectionStatus
+  last_synced_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CalendarEvent {
+  id: string
+  household_id: string
+  owner_profile_id: string
+  connection_id: string
+  provider: CalendarProvider
+  provider_event_id: string
+  title: string
+  description: string | null
+  location: string | null
+  starts_at: string
+  ends_at: string | null
+  all_day: boolean
+  status: 'confirmed' | 'cancelled'
+  html_link: string | null
+  synced_at: string
+  created_at: string
+  updated_at: string
+}
+
 // ─── API Payloads ─────────────────────────────────────────────────────────────
 
 export interface LogActivityPayload {

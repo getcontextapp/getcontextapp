@@ -4,6 +4,7 @@ import { getLocalDateKey } from '@/lib/dates'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
+import { getCalendarDashboardData } from '@/lib/calendar-sync'
 import CarePartnerClient from './CarePartnerClient'
 
 function dashboardSource(value: string | string[] | undefined) {
@@ -55,6 +56,7 @@ export default async function CarePartnerPage({
     .eq('planned_for', todayKey)
     .in('status', ['planned', 'not_now', 'confirmed'])
     .order('created_at', { ascending: true })
+  const calendar = await getCalendarDashboardData(supabase, linkedProfile)
 
   return (
     <CarePartnerClient
@@ -62,6 +64,7 @@ export default async function CarePartnerPage({
       mciProfile={linkedProfile}
       initialActivities={activities ?? []}
       initialPlannedActivities={plannedActivities ?? []}
+      calendar={calendar}
       dashboardSource={dashboardSource(params?.source)}
     />
   )
