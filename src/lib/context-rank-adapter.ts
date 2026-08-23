@@ -376,7 +376,9 @@ export async function buildContextRankInput({
     .filter(Boolean)
   const completedLabels = new Set<string>()
 
-  const calendarEvents = calendarResult.error ? [] : ((calendarResult.data ?? []) as CalendarEvent[])
+  const calendarEvents = calendarResult.error
+    ? []
+    : ((calendarResult.data ?? []) as CalendarEvent[]).filter(event => !event.hidden_at)
   for (const event of calendarEvents) {
     const point = Date.parse(event.starts_at)
     const latest = event.ends_at ? Date.parse(event.ends_at) : point + (event.all_day ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000)

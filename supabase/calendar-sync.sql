@@ -93,12 +93,16 @@ create table if not exists calendar_events (
   ends_at timestamptz,
   all_day boolean not null default false,
   status text not null default 'confirmed' check (status in ('confirmed', 'cancelled')),
+  hidden_at timestamptz,
   html_link text,
   synced_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (connection_id, provider_event_id)
 );
+
+alter table calendar_events
+  add column if not exists hidden_at timestamptz;
 
 create index if not exists calendar_events_owner_window
   on calendar_events (owner_profile_id, starts_at, status);

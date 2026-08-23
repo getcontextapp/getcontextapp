@@ -422,6 +422,6 @@ export async function getCalendarDashboardData(
   return {
     enabled,
     connection: (connection as CalendarConnectionSummary | null) ?? null,
-    events: ((events ?? []) as CalendarEvent[]),
+    events: ((events ?? []) as CalendarEvent[]).filter(event => !event.hidden_at),
   }
 }

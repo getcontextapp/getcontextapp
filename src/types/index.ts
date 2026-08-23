@@ -188,6 +188,7 @@ export interface CalendarEvent {
   ends_at: string | null
   all_day: boolean
   status: 'confirmed' | 'cancelled'
+  hidden_at?: string | null
   html_link: string | null
   synced_at: string
   created_at: string

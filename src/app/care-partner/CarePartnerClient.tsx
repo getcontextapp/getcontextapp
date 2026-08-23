@@ -95,7 +95,7 @@ const SHOW_SMS_TEST_TOOLS = process.env.NEXT_PUBLIC_SHOW_SMS_TEST_TOOLS === 'tru
 export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities, calendar, dashboardSource }: Props) {
   const supabase = createClient()
   const [activities] = useState<ActivityLog[]>(initialActivities)
-  const [plannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
+  const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
   const [calendarConnection, setCalendarConnection] = useState(calendar.connection)
   const [calendarEvents, setCalendarEvents] = useState(calendar.events)
   const [skippedActivitiesOpen, setSkippedActivitiesOpen] = useState(false)
@@ -289,6 +289,9 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             onCalendarUpdated={nextCalendar => {
               setCalendarConnection(nextCalendar.connection)
               setCalendarEvents(nextCalendar.events)
+            }}
+            onPlannedActivityAdded={activity => {
+              setPlannedActivities(current => current.some(item => item.id === activity.id) ? current : [...current, activity])
             }}
           />
         )}

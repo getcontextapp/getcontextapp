@@ -694,6 +694,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             setCalendarConnection(nextCalendar.connection)
             setCalendarEvents(nextCalendar.events)
           }}
+          onPlannedActivityAdded={activity => {
+            setPlannedActivities(current => current.some(item => item.id === activity.id) ? current : [...current, activity])
+          }}
         />
 
         <div className="space-y-3">
