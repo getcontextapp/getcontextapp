@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { getLocalDateKey, getUtcRangeForLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { canonicalizeContextRankEvidence } from '@/lib/anthropic'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
+import { isReflectionCommandNoise } from '@/lib/sms-reflection-guard'
 import {
   config,
   defaultSimilarity,
@@ -492,7 +493,7 @@ export async function buildContextRankInput({
   }
 
   const reflection = reflectionResult.data as Reflection | null
-  if (reflection?.ai_summary) {
+  if (reflection?.ai_summary && !isReflectionCommandNoise(reflection.raw_input)) {
     evidence.push(makeEvidence({
       id: `reflection:${reflection.id}`,
       userId: profile.user_id,

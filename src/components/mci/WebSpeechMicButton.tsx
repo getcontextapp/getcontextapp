@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 type SpeechRecognitionAlternative = { transcript: string }
 type SpeechRecognitionResult = {
@@ -16,13 +16,16 @@ type SpeechRecognitionEvent = {
   resultIndex: number
   results: SpeechRecognitionResultList
 }
+type SpeechRecognitionErrorEvent = {
+  error?: string
+}
 type SpeechRecognitionInstance = {
   continuous: boolean
   interimResults: boolean
   lang: string
   onresult: ((event: SpeechRecognitionEvent) => void) | null
   onend: (() => void) | null
-  onerror: (() => void) | null
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null
   start: () => void
   stop: () => void
 }
@@ -66,14 +69,36 @@ export default function WebSpeechMicButton({
   const baseTextRef = useRef('')
   const finalTranscriptRef = useRef('')
   const shouldKeepListeningRef = useRef(false)
+  const restartTimerRef = useRef<number | null>(null)
+  const latestValueRef = useRef(value)
+
+  useEffect(() => {
+    latestValueRef.current = value
+  }, [value])
+
+  useEffect(() => {
+    return () => {
+      shouldKeepListeningRef.current = false
+      if (restartTimerRef.current !== null) window.clearTimeout(restartTimerRef.current)
+      recognitionRef.current?.stop()
+    }
+  }, [])
+
+  function clearRestartTimer() {
+    if (restartTimerRef.current !== null) {
+      window.clearTimeout(restartTimerRef.current)
+      restartTimerRef.current = null
+    }
+  }
 
   function stopListening() {
     shouldKeepListeningRef.current = false
+    clearRestartTimer()
     recognitionRef.current?.stop()
     setListening(false)
   }
 
-  function startListening() {
+  function startRecognition(baseText: string) {
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition
     if (!Recognition) {
       onNotice?.('Voice not available on this browser. Please type instead.')
@@ -84,7 +109,7 @@ export default function WebSpeechMicButton({
     onNotice?.(null)
     const recognition = new Recognition()
     recognitionRef.current = recognition
-    baseTextRef.current = value
+    baseTextRef.current = baseText
     finalTranscriptRef.current = ''
     shouldKeepListeningRef.current = true
     recognition.continuous = true
@@ -105,19 +130,26 @@ export default function WebSpeechMicButton({
       onChange(joinSpeech(baseTextRef.current, `${finalTranscriptRef.current} ${interim}`))
     }
 
-    recognition.onerror = () => {
-      if (!shouldKeepListeningRef.current) {
+    recognition.onerror = event => {
+      const errorName = event.error ?? ''
+      if (errorName === 'not-allowed' || errorName === 'service-not-allowed') {
+        shouldKeepListeningRef.current = false
+        onNotice?.('Voice permission was blocked. Please type instead.')
+        window.setTimeout(() => onNotice?.(null), 3500)
         setListening(false)
         recognitionRef.current = null
       }
     }
 
     recognition.onend = () => {
-      onChange(joinSpeech(baseTextRef.current, finalTranscriptRef.current))
+      const committedText = joinSpeech(baseTextRef.current, finalTranscriptRef.current)
+      onChange(committedText)
+      latestValueRef.current = committedText
       if (shouldKeepListeningRef.current) {
-        window.setTimeout(() => {
+        restartTimerRef.current = window.setTimeout(() => {
+          restartTimerRef.current = null
           try {
-            recognition.start()
+            startRecognition(latestValueRef.current)
             setListening(true)
           } catch {
             setListening(false)
@@ -139,6 +171,11 @@ export default function WebSpeechMicButton({
       recognitionRef.current = null
       shouldKeepListeningRef.current = false
     }
+  }
+
+  function startListening() {
+    clearRestartTimer()
+    startRecognition(latestValueRef.current)
   }
 
   return (

@@ -9,6 +9,7 @@ import { addDaysToKey } from '@/lib/task-scheduling'
 import { ensureNextOccurrence, ensureRepeatOccurrencesForDate, findMatchingRepeatFamily, findMatchingRepeatOccurrence } from '@/lib/task-scheduling-server'
 import { saveReflectionInput } from '@/lib/reflections'
 import { findPlanUpdateIntent, formatPlanUpdateReply } from '@/lib/plan-update-intent'
+import { shouldSaveSmsAsReflectionReply } from '@/lib/sms-reflection-guard'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity } from '@/types'
 
 function xmlResponse(message: string) {
@@ -962,7 +963,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  if (!isClearNewSmsIntent(body) && await hasRecentReflectionPrompt(supabase, profile)) {
+  if (shouldSaveSmsAsReflectionReply(body) && await hasRecentReflectionPrompt(supabase, profile)) {
     try {
       await saveReflectionInput(supabase, {
         id: profile.id,
