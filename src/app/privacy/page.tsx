@@ -11,7 +11,7 @@ export default function PrivacyPage() {
             Context
           </a>
           <h1 className="font-serif text-3xl font-semibold text-warm-900">Privacy Policy</h1>
-          <p className="text-sm text-warm-400">Last updated: May 24, 2026</p>
+          <p className="text-sm text-warm-400">Last updated: August 24, 2026</p>
         </header>
 
         <section className="card space-y-5 p-6 text-warm-700">
@@ -59,6 +59,23 @@ export default function PrivacyPage() {
           <p>
             If you join a household with a care partner, activity information may be visible to
             that care partner inside Context and may be included in daily summary messages.
+          </p>
+
+          <h2 className="font-serif text-xl font-semibold text-warm-900">Calendar Access</h2>
+          <p>
+            If you connect Google Calendar, Context asks for read-only access so it can show
+            helpful calendar items inside Context. Context can see calendar events and Google Tasks
+            you choose to sync. Context cannot edit or delete anything in your Google Calendar.
+          </p>
+          <p>
+            You can disconnect calendar access in Context settings or in your Google Account.
+          </p>
+
+          <h2 className="font-serif text-xl font-semibold text-warm-900">Pilot Feature Rollout</h2>
+          <p>
+            During the pilot, some new features may be tested first with internal households before
+            participant rollout. This helps us check safety, usability, and reliability before
+            introducing changes to older adults and care partners.
           </p>
 
           <h2 className="font-serif text-xl font-semibold text-warm-900">Data Security</h2>

@@ -1,490 +1,422 @@
 'use client'
 
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { useMemo, useState } from 'react'
 
 type AnalyticsData = Awaited<ReturnType<typeof import('@/lib/pilot-analytics').loadPilotAnalytics>>
 type Dyad = AnalyticsData['perDyad'][number]
-type Episode = AnalyticsData['queryLog'][number]
-type TabKey = 'dyad' | 'roster' | 'queries' | 'threads' | 'modality' | 'partner' | 'sms' | 'persist' | 'disconf'
-type Provenance = 'obs' | 'inf' | 'rep'
+type OutcomeRow = AnalyticsData['outcomeRows'][number]
+type OutcomeScore = OutcomeRow['scores'][number]
+type TabKey = 'health' | 'outcomes' | 'arc' | 'behavior' | 'sms' | 'readiness' | 'exports'
 
 const TABS: Array<{ key: TabKey; label: string }> = [
-  { key: 'dyad', label: 'Dyad' },
-  { key: 'roster', label: 'Roster' },
-  { key: 'queries', label: 'Query log' },
-  { key: 'threads', label: 'Threads' },
-  { key: 'modality', label: 'Modality' },
-  { key: 'partner', label: 'Care partner' },
+  { key: 'health', label: 'Dyad health' },
+  { key: 'outcomes', label: 'Outcomes' },
+  { key: 'arc', label: 'Study arc' },
+  { key: 'behavior', label: 'Behavior' },
   { key: 'sms', label: 'SMS' },
-  { key: 'persist', label: 'Persistence' },
-  { key: 'disconf', label: 'Disconfirmation' },
+  { key: 'readiness', label: 'Pilot readiness' },
+  { key: 'exports', label: 'Exports' },
 ]
 
-function fmtDate(value: string | null | undefined) {
-  if (!value) return 'Not instrumented'
+const EXPORTS = [
+  ['dyads', 'Dyad health'],
+  ['outcome_rows', 'Outcome scores'],
+  ['study_arc', 'Study arc'],
+  ['events', 'Analytics events'],
+  ['sms', 'SMS messages'],
+  ['plans', 'Plans'],
+  ['calendar_connections', 'Calendar connections'],
+  ['calendar_events', 'Calendar events'],
+  ['feature_flags', 'Feature flags'],
+  ['pilot_readiness', 'Pilot readiness'],
+]
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return 'Not yet'
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value))
 }
 
-function pct(numerator: number, denominator: number) {
-  if (denominator === 0) return '0'
-  if (denominator < 5) return `${numerator}/${denominator}`
-  return `${Math.round((numerator / denominator) * 100)}%`
+function phaseLabel(value: string) {
+  const labels: Record<string, string> = { pre: 'Pre', active: 'Active', quiet: 'Quiet', complete: 'Complete' }
+  return labels[value] ?? value
 }
 
-function fmtMaybe(value: number | string | null | undefined, suffix = '') {
-  if (value === null || value === undefined || value === '') return '—'
-  return `${value}${suffix}`
+function flagLabel(value: string) {
+  if (value === 'red') return 'Needs attention'
+  if (value === 'amber') return 'Watch'
+  return 'Quiet'
 }
 
-function dyadName(dyad: Pick<Dyad, 'code' | 'label'>) {
-  return `${dyad.code} · ${dyad.label}`
+function exportHref(dataset: string, data: AnalyticsData) {
+  const params = new URLSearchParams()
+  params.set('dataset', dataset)
+  params.set('days', String(data.filters.days))
+  if (data.filters.householdId) params.set('household', data.filters.householdId)
+  if (data.filters.role) params.set('role', data.filters.role)
+  return `/api/admin/analytics/export?${params.toString()}`
 }
 
-function outcomeLabel(outcome: string) {
-  const labels: Record<string, string> = {
-    resolved: 'resumed after result',
-    unresolved_after_result: 'no resumption after result',
-    rank_failure: 'relevant context ranked low',
-    no_context: 'nothing relevant held',
-    pending: 'window still open',
-  }
-  return labels[outcome] ?? outcome.replaceAll('_', ' ')
-}
-
-function outcomeTag(outcome: string) {
-  if (outcome === 'resolved') return 't-obs'
-  if (outcome === 'pending') return 't-mute'
-  return 't-alert'
-}
-
-function Kpi({ label, value, sub, provenance }: { label: string; value: string | number; sub: string; provenance: Provenance }) {
+function StatCard({ label, value, note }: { label: string; value: string | number; note?: string }) {
   return (
-    <div className="card sm">
-      <div className="k"><span className={`pv p-${provenance}`}>{provenance}</span>{label}</div>
-      <div className="v">{value}</div>
-      <div className="vsub">{sub}</div>
-    </div>
+    <article className="admin-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {note ? <small>{note}</small> : null}
+    </article>
   )
 }
 
-function Bar({ label, value, total, tone }: { label: string; value: number; total: number; tone?: 'g' | 'r' }) {
-  const width = total > 0 ? Math.min(100, Math.round((value / total) * 100)) : 0
+function SilentDyadAlert({ dyads }: { dyads: Dyad[] }) {
+  const silent = dyads.filter(dyad => dyad.silentHours > 48)
+  if (silent.length === 0) return null
   return (
-    <div className="brow">
-      <div>{label}</div>
-      <div className="bar"><span className={tone ?? ''} style={{ width: `${width}%` }} /></div>
-      <div className="n">{value}</div>
-    </div>
-  )
-}
-
-function Ladder({ rows }: { rows: Array<{ title: string; sub: string; value: string | number }> }) {
-  return (
-    <div className="ladder">
-      {rows.map(row => (
-        <div className="r" key={row.title}>
-          <div><b>{row.title}</b><small>{row.sub}</small></div>
-          <div className="n">{row.value}</div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function Spark({ values, tone = 'inf' }: { values: number[]; tone?: 'inf' | 'rep' }) {
-  if (values.length === 0) return <span className="hint">—</span>
-  const width = 76
-  const height = 16
-  const max = Math.max(1, ...values)
-  const points = values.map((value, index) => {
-    const x = values.length === 1 ? 0 : (index / (values.length - 1)) * width
-    const y = height - (value / max) * (height - 2) - 1
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
-  return <svg className="spark" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true"><polyline fill="none" stroke={`var(--${tone})`} strokeWidth="1.2" points={points} /></svg>
-}
-
-function EmptyRow({ colSpan, text = 'Not instrumented' }: { colSpan: number; text?: string }) {
-  return <tr><td colSpan={colSpan} className="hint">{text}</td></tr>
-}
-
-function Track({ dyad, episodes, unresolved }: { dyad: Dyad; episodes: Episode[]; unresolved: AnalyticsData['recovery']['startedUnresolved'] }) {
-  return (
-    <div className="track">
-      <span className="clean" style={{ left: `${(11 / 14) * 100}%`, right: `${(1 / 14) * 100}%` }} />
-      <span className="wk" style={{ left: '50%' }} />
-      <span className="now" style={{ left: `${Math.min(100, (dyad.currentStudyDay / 14) * 100)}%` }} />
-      {episodes.map(episode => {
-        const left = `${Math.min(100, Math.max(0, (episode.t / 14) * 100))}%`
-        const cls = episode.outcome === 'resolved' ? 'res' : episode.outcome === 'no_context' ? 'nores' : episode.outcome === 'pending' ? 'pend' : 'unres'
-        return <i aria-hidden="true" className={`ep ${cls}`} key={episode.id} style={{ left }} title={`Day ${episode.day} · ${episode.query}`} />
-      })}
-      {unresolved.map(thread => (
-        <i aria-hidden="true" className="ep unre" key={thread.id} style={{ left: `${Math.min(100, Math.max(0, (thread.t / 14) * 100))}%` }} title={`Started, unresolved: ${thread.title}`} />
-      ))}
-    </div>
-  )
-}
-
-function ScopeBar({
-  data,
-  cohort,
-  setCohort,
-  selected,
-  setSelected,
-  setCurrentCode,
-  setTab,
-}: {
-  data: AnalyticsData
-  cohort: string
-  setCohort: (value: string) => void
-  selected: Set<string>
-  setSelected: (value: Set<string>) => void
-  setCurrentCode: (value: string) => void
-  setTab: (value: TabKey) => void
-}) {
-  const dyads = data.perDyad.filter(dyad => dyad.cohort === cohort)
-  const selectedCount = dyads.filter(dyad => selected.has(dyad.code)).length
-  const flagCount = dyads.reduce((sum, dyad) => sum + dyad.flagCount, 0)
-  function selectCodes(codes: string[]) {
-    setSelected(new Set(codes))
-    setCurrentCode(codes[0] ?? dyads[0]?.code ?? '')
-    setTab('dyad')
-  }
-  return (
-    <div className="scope">
-      <div className="grp"><label htmlFor="cohort">Cohort</label>
-        <select id="cohort" value={cohort} onChange={event => {
-          const next = event.target.value
-          const nextDyads = data.perDyad.filter(dyad => dyad.cohort === next)
-          setCohort(next)
-          setSelected(new Set(nextDyads.map(dyad => dyad.code)))
-          setCurrentCode(nextDyads[0]?.code ?? '')
-          setTab('dyad')
-        }}>
-          {data.cohorts.map(item => <option value={item.id} key={item.id}>{item.label} · {item.count}</option>)}
-        </select>
-      </div>
-      <div className="grp"><label>Dyads</label>
-        <button className="ctl" type="button" onClick={() => selectCodes(dyads.map(dyad => dyad.code))}>All</button>
-        <button className="ctl" type="button" onClick={() => selectCodes([])}>None</button>
-        <button className="ctl" type="button" aria-pressed={selectedCount > 0 && dyads.filter(dyad => selected.has(dyad.code)).every(dyad => dyad.flagCount > 0)} onClick={() => selectCodes(dyads.filter(dyad => dyad.flagCount > 0).map(dyad => dyad.code))}>Needs attention</button>
-      </div>
-      <div className="chips">
-        {dyads.map(dyad => (
-          <button className="chip" type="button" key={dyad.code} aria-pressed={selected.has(dyad.code)} onClick={() => {
-            const next = new Set(selected)
-            if (next.has(dyad.code)) next.delete(dyad.code)
-            else next.add(dyad.code)
-            setSelected(next)
-            setCurrentCode(dyad.code)
-          }}>{dyadName(dyad)}{dyad.flagCount ? ` ·${dyad.flagCount}` : ''}</button>
+    <section className="silent-alert">
+      <h2>Silent dyad alert</h2>
+      <p>{silent.length} dyad{silent.length === 1 ? '' : 's'} had no activity in the past 48 hours.</p>
+      <div className="alert-list">
+        {silent.map(dyad => (
+          <span key={dyad.id}>{dyad.displayLabel}: {dyad.silentHours} hours</span>
         ))}
       </div>
-      <span className="n">{selectedCount} of {dyads.length} selected · {flagCount} flags in cohort</span>
-    </div>
+    </section>
   )
 }
 
-function DyadPage({ dyad, data }: { dyad: Dyad | undefined; data: AnalyticsData }) {
-  if (!dyad) return <p className="hint">No dyad selected.</p>
-  const episodes = data.queryLog.filter(episode => episode.householdId === dyad.id)
-  const unresolved = data.recovery.startedUnresolved.filter(thread => thread.householdId === dyad.id)
-  const recent = episodes.slice(0, 5)
-  const captureTotal = dyad.captured || 1
-  const retrievalTotal = Math.max(1, dyad.attempts)
+function ScopeBar({ data, selectedCohort, setSelectedCohort, selectedHousehold, setSelectedHousehold }: {
+  data: AnalyticsData
+  selectedCohort: string
+  setSelectedCohort: (value: string) => void
+  selectedHousehold: string
+  setSelectedHousehold: (value: string) => void
+}) {
+  const dyads = data.perDyad.filter(dyad => selectedCohort === 'all' || dyad.cohort === selectedCohort)
   return (
-    <>
-      <div className="dyad-title">
-        <h2 className="sec first">{dyadName(dyad)}</h2>
-        <span className="hint">{dyad.withdrawn ? <span className="tag t-alert">withdrawn</span> : `day ${dyad.currentStudyDay} of 14`} · last meaningful use {dyad.daysDark ? `${dyad.daysDark} days ago` : 'today'} · {dyad.attempts} recovery attempts</span>
+    <section className="scope-card">
+      <div>
+        <label htmlFor="cohort">Cohort</label>
+        <select id="cohort" value={selectedCohort} onChange={event => { setSelectedCohort(event.target.value); setSelectedHousehold('all') }}>
+          <option value="all">All cohorts</option>
+          {data.cohorts.map(cohort => <option key={cohort.id} value={cohort.id}>{cohort.label}</option>)}
+        </select>
       </div>
-      <p className="lede">Everything for one pair on one page. This is the unit of analysis: read it beside the transcript, not against the cohort.</p>
-      <h3 className="sub">Ask about this</h3>
-      <p className="lede">Derived from telemetry. Not findings. Interview prompts, with the evidence attached so you can put the question in your own words.</p>
-      <div className="flags">
-        <div className="fh">{dyad.flagCount} prompt{dyad.flagCount === 1 ? '' : 's'} for the next conversation</div>
-        {dyad.flags.length ? dyad.flags.map(flag => (
-          <div className="f" key={flag.question}>
-            <div><div className="ask">{flag.question}</div><div className="ev">{flag.evidence}</div></div>
-            <div className="src">{flag.source}</div>
-          </div>
-        )) : <div className="none">Nothing flagged. Telemetry looks unremarkable for this dyad, which is itself worth a sentence in the notes.</div>}
+      <div>
+        <label htmlFor="dyad">Dyad</label>
+        <select id="dyad" value={selectedHousehold} onChange={event => setSelectedHousehold(event.target.value)}>
+          <option value="all">All dyads</option>
+          {dyads.map(dyad => <option key={dyad.id} value={dyad.id}>{dyad.displayLabel}</option>)}
+        </select>
       </div>
-      <div className="grid c4 top-grid">
-        <Kpi label="Attempts" value={dyad.attempts} sub="recovery queries" provenance="obs" />
-        <Kpi label="Resumed after" value={dyad.resumed} sub="app-observed sequence" provenance="obs" />
-        <Kpi label="Corroborated" value={episodes.filter(episode => episode.reported === 'got going again').length} sub="participant said so" provenance="rep" />
-        <Kpi label="Nothing held" value={dyad.nothingHeld} sub="query, no candidates" provenance="obs" />
+    </section>
+  )
+}
+
+function DyadHealthPanel({ dyads }: { dyads: Dyad[] }) {
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <p>Dyad health panel</p>
+        <h2>Who needs attention first?</h2>
       </div>
-      <div className="grid c4 top-grid">
-        <Kpi label="Captured" value={dyad.captured} sub={`${dyad.completed} completed`} provenance="obs" />
-        <Kpi label="Started, unresolved" value={dyad.unresolved} sub="no terminal event" provenance="obs" />
-        <Kpi label="Reflections" value={dyad.reflectionsSaved} sub={`${dyad.reflectionUsed} surfaced in a break`} provenance="obs" />
-        <Kpi label="SMS replies" value={dyad.smsReplied} sub={`of ${dyad.smsDelivered} delivered`} provenance="obs" />
+      <div className="dyad-grid">
+        {dyads.map(dyad => (
+          <article className={`dyad-card flag-${dyad.statusFlag}`} key={dyad.id}>
+            <div className="dyad-topline">
+              <div>
+                <span>{dyad.code}</span>
+                <h3>{dyad.name}</h3>
+              </div>
+              <strong>{flagLabel(dyad.statusFlag)}</strong>
+            </div>
+            <dl>
+              <div><dt>MCI</dt><dd>{dyad.mciName}</dd></div>
+              <div><dt>Care partner</dt><dd>{dyad.cpName}</dd></div>
+              <div><dt>Study day</dt><dd>{dyad.currentStudyDay} of 28</dd></div>
+              <div><dt>Phase</dt><dd>{phaseLabel(dyad.studyPhase)}</dd></div>
+              <div><dt>MCI last active</dt><dd>{formatTime(dyad.mciLastActive)}</dd></div>
+              <div><dt>CP last active</dt><dd>{formatTime(dyad.cpLastActive)}</dd></div>
+              <div><dt>MCI SMS response</dt><dd>{dyad.mciSmsResponseRate}%</dd></div>
+              <div><dt>Calendar</dt><dd>{dyad.calendarConnected ? `Connected${dyad.nextCalendarTitle ? `, next: ${dyad.nextCalendarTitle}` : ''}` : 'Not connected'}</dd></div>
+            </dl>
+          </article>
+        ))}
       </div>
-      <h3 className="sub">Fourteen days</h3>
-      <div className="strip-head"><div>Measure</div><div>Day 1 to 14</div><div className="right">Wk1 to Wk2</div></div>
-      <div className="strip-row static"><div className="dyad">Recovery<small>episodes</small></div><Track dyad={dyad} episodes={episodes} unresolved={unresolved} /><div className="tally"><b>{dyad.resumed}</b> resumed · {dyad.attempts} attempts</div></div>
-      <div className="strip-row static"><div className="dyad">Captures<small>per day</small></div><Spark values={dyad.useTrend} /><div className="tally">{dyad.capturesWeek1} to {fmtMaybe(dyad.capturesWeek2)}</div></div>
-      <div className="strip-row static"><div className="dyad">Care partner<small>opens per day</small></div><Spark values={dyad.cpOpenTrend} tone="rep" /><div className="tally">{dyad.week1CpOpensPerDay.toFixed(1)} to {typeof dyad.week2CpOpensPerDay === 'number' ? dyad.week2CpOpensPerDay.toFixed(1) : '—'}</div></div>
-      <Legend />
-      <h3 className="sub">Recent episodes</h3>
-      {recent.length ? recent.map(episode => <EpisodeChain episode={episode} key={episode.id} />) : <p className="hint">No recovery attempts recorded.</p>}
-      <div className="grid c2 top-grid">
-        <div className="card"><div className="k">How they capture</div><div className="bars">
-          <Bar label="captured threads" value={dyad.captured} total={captureTotal} />
-          <Bar label="completed" value={dyad.completed} total={captureTotal} tone="g" />
-          <Bar label="abandoned" value={dyad.abandoned} total={Math.max(captureTotal, dyad.abandoned)} tone="r" />
-        </div></div>
-        <div className="card"><div className="k">How they retrieve when stuck</div><div className="bars">
-          <Bar label="attempts" value={dyad.attempts} total={retrievalTotal} />
-          <Bar label="resumed" value={dyad.resumed} total={retrievalTotal} tone="g" />
-          <Bar label="nothing held" value={dyad.nothingHeld} total={retrievalTotal} tone="r" />
-          <div className="hint space">SMS is not a retrieval path.</div>
-        </div></div>
+    </section>
+  )
+}
+
+function OutcomeScoresPanel({ rows }: { rows: OutcomeRow[] }) {
+  const [saving, setSaving] = useState('')
+  async function saveScore(row: OutcomeRow, score: OutcomeScore, session: 'pre' | 'post', value: string) {
+    const numeric = Number(value)
+    if (!score.profileId || !Number.isInteger(numeric)) return
+    const key = `${row.householdId}:${score.key}:${session}`
+    setSaving(key)
+    await fetch('/api/admin/analytics/outcomes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        householdId: row.householdId,
+        profileId: score.profileId,
+        role: score.role,
+        session,
+        measureKey: score.key,
+        score: numeric,
+      }),
+    })
+    window.location.reload()
+  }
+
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <p>Outcome scores</p>
+        <h2>Manual pre and post measures</h2>
       </div>
-      <h3 className="sub">Care partner, reported</h3>
-      <table><thead><tr><th>Day 7: reminding</th><th>Day 7: extra checking</th><th>Day 14: stopped doing</th><th>Day 14: still did unchanged</th></tr></thead><tbody><tr><td className="hint">pending</td><td className="hint">pending</td><td className="hint">pending exit</td><td className="hint">pending exit</td></tr></tbody></table>
-      <div className="note">Offload is not visible in telemetry. The care partner views in Context and does not act in it, so the reported row carries this claim.</div>
-    </>
-  )
-}
-
-function EpisodeChain({ episode }: { episode: Episode }) {
-  return (
-    <div className="chain">
-      <div className="line"><span className="b">day {episode.day}</span><em>to</em><span className="b">{episode.mode}{episode.switched ? ' after abandoned voice' : ''}</span><em>to</em><span className="q">"{episode.query}"</span></div>
-      <div className="line"><em>to</em><span className="b">{episode.candidateCount ?? 'Not instrumented'} candidates</span><em>to</em><span className="b">{episode.selectedRank ? `selected rank ${episode.selectedRank}, from ${episode.selectedSource}` : 'nothing selected'}</span><em>to</em><span className="b">{episode.resumed ? 'thread resumed' : 'no resumption observed'}</span><span className={`tag ${outcomeTag(episode.outcome)}`}>{outcomeLabel(episode.outcome)}</span></div>
-      {episode.candidates.length > 0 && <div className="rank">Context Rank returned:<ol>{episode.candidates.map(candidate => <li className={candidate === episode.selectedLabel ? 'sel' : ''} key={candidate}>{candidate}{candidate === episode.selectedLabel ? ' selected' : ''}</li>)}</ol></div>}
-      {episode.reported ? <div className="rank"><span className="pv p-rep">Reported</span>participant said: "{episode.reported}"</div> : <div className="rank"><span className="pv p-none">No report</span>event prompt not answered. Independence uncorroborated.</div>}
-    </div>
-  )
-}
-
-function Legend() {
-  return (
-    <div className="legend">
-      <span><i style={{ background: 'var(--obs)' }} />Resumed</span>
-      <span><i className="hollow" />Result, no resumption</span>
-      <span><i style={{ background: 'var(--alert)' }} />Nothing held</span>
-      <span><i style={{ background: 'var(--ink-30)' }} />Window still open</span>
-      <span><i className="sq" />Started, unresolved</span>
-      <span>Vertical grey rule marks that dyad's current day</span>
-    </div>
-  )
-}
-
-function RosterTab({ dyads, data, openDyad }: { dyads: Dyad[]; data: AnalyticsData; openDyad: (code: string) => void }) {
-  const [sortBy, setSortBy] = useState('code')
-  const sorted = useMemo(() => [...dyads].sort((a, b) => {
-    if (sortBy === 'flags') return b.flagCount - a.flagCount
-    if (sortBy === 'attempts') return b.attempts - a.attempts
-    if (sortBy === 'resumed') return b.resumed - a.resumed
-    if (sortBy === 'open') return b.unresolved - a.unresolved
-    if (sortBy === 'last') return b.daysDark - a.daysDark
-    return a.code.localeCompare(b.code)
-  }), [dyads, sortBy])
-  return (
-    <>
-      <div className="grid c4 top-grid">
-        <Kpi label="Median attempts" value={data.recovery.medianAttempts} sub="per dyad in scope" provenance="obs" />
-        <Kpi label="Median resumed" value={data.recovery.medianResumed} sub="app-observed" provenance="obs" />
-        <Kpi label="Median captures" value={data.recovery.medianCaptures} sub="per dyad" provenance="obs" />
-        <Kpi label="Dyads flagged" value={`${dyads.filter(dyad => dyad.flagCount > 0).length} of ${dyads.length}`} sub="have interview prompts" provenance="inf" />
+      <div className="outcome-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Dyad</th>
+              {rows[0]?.scores.map(score => <th key={score.key}>{score.label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.householdId}>
+                <th>{row.householdName}<span>{phaseLabel(row.studyPhase)}</span></th>
+                {row.scores.map(score => (
+                  <td key={`${row.householdId}:${score.key}`}>
+                    <label>Pre
+                      <select value={score.pre ?? ''} disabled={!score.profileId || saving !== ''} onChange={event => saveScore(row, score, 'pre', event.target.value)}>
+                        <option value="">-</option>
+                        {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}
+                      </select>
+                    </label>
+                    <label>Post
+                      <select value={score.post ?? ''} disabled={!score.profileId || saving !== ''} onChange={event => saveScore(row, score, 'post', event.target.value)}>
+                        <option value="">-</option>
+                        {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}
+                      </select>
+                    </label>
+                    <strong>{score.delta === null ? 'Delta -' : `Delta ${score.delta > 0 ? '+' : ''}${score.delta}`}</strong>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <h2 className="sec">Roster</h2>
-      <p className="lede">Medians, not sums. Dyads sit at different study days, so a total across them is not a quantity that means anything. Select a row to open that dyad.</p>
-      <div className="strip-head"><div><button className="srt" onClick={() => setSortBy('code')} type="button">Dyad</button></div><div>Day 1 to 14</div><div className="right"><button className="srt" onClick={() => setSortBy('attempts')} type="button">Tally</button></div></div>
-      {sorted.map(dyad => <button className="strip-row" type="button" key={dyad.code} onClick={() => openDyad(dyad.code)}><div className="dyad">{dyadName(dyad)}<small>{dyad.withdrawn ? 'withdrawn' : `day ${dyad.currentStudyDay}`}{dyad.flagCount ? ` · ${dyad.flagCount} flags` : ''}</small></div><Track dyad={dyad} episodes={data.queryLog.filter(episode => episode.householdId === dyad.id)} unresolved={data.recovery.startedUnresolved.filter(thread => thread.householdId === dyad.id)} /><div className="tally"><b>{dyad.resumed}</b> resumed · {dyad.attempts} attempts · {dyad.unresolved} open</div></button>)}
-      <Legend />
-      <h2 className="sec">Per dyad</h2>
-      <table><thead><tr><th><button className="srt" onClick={() => setSortBy('code')} type="button">Dyad</button></th><th className="num">Day</th><th className="num"><button className="srt" onClick={() => setSortBy('attempts')} type="button">Attempts</button></th><th className="num"><button className="srt" onClick={() => setSortBy('resumed')} type="button">Resumed</button></th><th className="num">Nothing held</th><th className="num">Captured</th><th className="num"><button className="srt" onClick={() => setSortBy('open')} type="button">Open</button></th><th>Use trend</th><th className="num"><button className="srt" onClick={() => setSortBy('last')} type="button">Days dark</button></th><th className="num"><button className="srt" onClick={() => setSortBy('flags')} type="button">Flags</button></th></tr></thead><tbody>
-        {sorted.length === 0 ? <EmptyRow colSpan={10} text="No dyads in scope." /> : sorted.map(dyad => <tr className="click" onClick={() => openDyad(dyad.code)} key={dyad.code}><td>{dyadName(dyad)}</td><td className="num">{dyad.currentStudyDay}</td><td className="num">{dyad.attempts}</td><td className="num">{dyad.resumed}</td><td className="num">{dyad.nothingHeld}</td><td className="num">{dyad.captured}</td><td className="num">{dyad.unresolved}</td><td><Spark values={dyad.useTrend} /></td><td className="num">{dyad.daysDark}</td><td className="num">{dyad.flagCount ? <span className="tag t-alert">{dyad.flagCount}</span> : '—'}</td></tr>)}
-      </tbody></table>
-      <h2 className="sec">Contrast</h2>
-      <div className="cmp"><div><div className="k">Most resumptions in scope</div><div className="v">{sorted.filter(d => d.resumed > 0).sort((a, b) => b.resumed - a.resumed).slice(0, 3).map(d => d.label).join(', ') || '—'}</div><div className="vsub">Read their queries first.</div></div><div><div className="k">No resumption observed</div><div className="v">{sorted.filter(d => d.resumed === 0).slice(0, 4).map(d => d.label).join(', ') || '—'}</div><div className="vsub">Then read theirs. The difference is the finding.</div></div></div>
-    </>
+    </section>
   )
 }
 
-function QueriesTab({ rows, dyads, data, openDyad }: { rows: Episode[]; dyads: Dyad[]; data: AnalyticsData; openDyad: (code: string) => void }) {
-  const [filter, setFilter] = useState('all')
-  const filtered = rows.filter(row => filter === 'all' || row.outcome === filter)
-  const count = (outcome: string) => rows.filter(row => row.outcome === outcome).length
+function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) {
+  const rows = data.studyArc.filter(row => dyads.some(dyad => dyad.id === row.householdId))
   return (
-    <>
-      <h2 className="sec first">Query log</h2>
-      <p className="lede">The highest-value artifact the study produces. Every string a participant typed or spoke, verbatim. Select a row to open that dyad.</p>
-      <div className="filters"><span className="k">Outcome</span><select value={filter} onChange={event => setFilter(event.target.value)}><option value="all">All {rows.length}</option><option value="no_context">Nothing held ({count('no_context')})</option><option value="rank_failure">Ranked low ({count('rank_failure')})</option><option value="unresolved_after_result">No resumption ({count('unresolved_after_result')})</option><option value="resolved">Resumed ({count('resolved')})</option><option value="pending">Window open ({count('pending')})</option></select><a className="export" href={`/api/admin/analytics/export?dataset=queries&days=${data.filters.days}`}>Export CSV</a><span className="k restricted">Restricted column · named in consent</span></div>
-      <table><thead><tr><th>Dyad</th><th className="num">Day</th><th>Query, verbatim</th><th>Mode</th><th className="num">Cand.</th><th>Selected</th><th>Thread</th><th>Report</th><th>Outcome</th></tr></thead><tbody>
-        {filtered.length === 0 ? <EmptyRow colSpan={9} text="No queries in scope." /> : filtered.map(row => <tr className="click" onClick={() => openDyad(row.code)} key={row.id}><td>{dyadName(dyads.find(dyad => dyad.code === row.code) ?? { code: row.code, label: 'Unknown' })}</td><td className="num">{row.day}</td><td className="q">"{row.query}"</td><td><span className="tag t-inf">{row.mode}</span></td><td className="num">{row.candidateCount ?? '—'}</td><td>{row.selectedRank ? `#${row.selectedRank} · ${row.selectedSource}` : '—'}</td><td>{row.resumed ? 'resumed' : '—'}</td><td>{row.reported ? <span className="tag t-rep">{row.reported}</span> : <span className="tag t-mute">no report</span>}</td><td><span className={`tag ${outcomeTag(row.outcome)}`}>{outcomeLabel(row.outcome)}</span></td></tr>)}
-      </tbody></table>
-      <div className="note">Context Rank lives in this table and the dyad page: candidate count plus rank position separates Context did not know it from Context knew it and buried it.</div>
-    </>
+    <section className="panel">
+      <div className="panel-heading">
+        <p>Study arc timeline</p>
+        <h2>Day-by-day signal across 28 days</h2>
+      </div>
+      <div className="markers">Check-ins: day 2, 5, 10, 14. Quiet period starts day 15.</div>
+      <div className="arc-list">
+        {rows.map(row => (
+          <article key={row.householdId} className="arc-row">
+            <h3>{row.householdName}</h3>
+            <div className="arc-days">
+              {row.days.map(day => {
+                const total = day.planLogged + day.planCompleted + day.smsReplied + day.contextViewed + (day.calendarItem ?? 0)
+                return <span key={day.day} className={`arc-day ${total > 0 ? 'active' : ''} marker-${[2, 5, 10, 14, 15].includes(day.day)}`} title={`Day ${day.day}: ${total} signals`}>{day.day}</span>
+              })}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
   )
 }
 
-function ThreadsTab({ data, dyads, openDyad }: { data: AnalyticsData; dyads: Dyad[]; openDyad: (code: string) => void }) {
+function BehaviorPanel({ data }: { data: AnalyticsData }) {
   return (
-    <>
-      <div className="grid c4 top-grid"><Kpi label="Captured" value={data.threads.captured} sub={`${dyads.length} dyads in scope`} provenance="obs" /><Kpi label="Completed" value={data.threads.completed} sub={`${pct(data.threads.completed, data.threads.captured)} of captured`} provenance="obs" /><Kpi label="Moved or cancelled" value={data.threads.movedOrCancelled} sub="deliberate change" provenance="obs" /><Kpi label="Started, unresolved" value={data.threads.startedUnresolved} sub="no terminal event" provenance="obs" /></div>
-      <h2 className="sec">Capture states</h2>
-      <Ladder rows={[{ title: 'Captured successfully', sub: 'Activity created and persisted, any modality.', value: data.threads.captured }, { title: 'Capture initiated, abandoned', sub: 'Input opened, nothing submitted.', value: data.threads.captureAbandoned }, { title: 'Prompt delivered, no response', sub: 'Text reached the phone, no reply.', value: data.threads.promptNoResponse }, { title: 'Captured, later resolved', sub: 'Completed, moved, or cancelled.', value: data.threads.capturedLaterResolved }, { title: 'Captured, later unresolved', sub: 'Classification as a dropped thread requires corroborating evidence.', value: data.threads.capturedLaterUnresolved }]} />
-      <h2 className="sec">Retrieval outcomes</h2>
-      <Ladder rows={[{ title: 'Resolved', sub: 'Result selected, thread resumed within the window.', value: data.threads.retrievalResolved }, { title: 'Unresolved after result', sub: 'Context answered. Nothing followed.', value: data.threads.retrievalUnresolvedAfterResult }, { title: 'Ranking failure', sub: 'Relevant context returned below the selection point.', value: data.threads.retrievalRankFailure }, { title: 'No context held', sub: 'Nothing relevant existed. The query text is the artifact.', value: data.threads.retrievalNoContext }, { title: 'Window still open', sub: 'Too recent to classify. Excluded from failure counts.', value: data.recovery.pending }]} />
-      <h2 className="sec">Per dyad</h2>
-      <table><thead><tr><th>Dyad</th><th className="num">Captured</th><th className="num">Abandoned</th><th className="num">Completed</th><th className="num">Unresolved</th><th className="num">Attempts</th><th className="num">Resumed</th><th className="num">Nothing held</th></tr></thead><tbody>{dyads.length === 0 ? <EmptyRow colSpan={8} /> : dyads.map(dyad => <tr className="click" onClick={() => openDyad(dyad.code)} key={dyad.code}><td>{dyadName(dyad)}</td><td className="num">{dyad.captured}</td><td className="num">{dyad.abandoned}</td><td className="num">{dyad.completed}</td><td className="num">{dyad.unresolved}</td><td className="num">{dyad.attempts}</td><td className="num">{dyad.resumed}</td><td className="num">{dyad.nothingHeld}</td></tr>)}</tbody></table>
-    </>
+    <section className="panel">
+      <div className="panel-heading">
+        <p>Behavior detail</p>
+        <h2>Signals that explain dyad health</h2>
+      </div>
+      <div className="stats-grid">
+        <StatCard label="Memory help attempts" value={data.recovery.attempts} />
+        <StatCard label="Reflections saved" value={data.modality.reflectionSaved} />
+        <StatCard label="Plans captured" value={data.threads.captured} />
+        <StatCard label="Calendar items synced" value={data.exports.calendar_events?.length ?? 0} />
+      </div>
+      <div className="feature-list">
+        {data.features.map(feature => (
+          <article key={feature.name}>
+            <span>{feature.label}</span>
+            <strong>{feature.count}</strong>
+          </article>
+        ))}
+      </div>
+    </section>
   )
 }
 
-function ModalityTab({ data, dyads, openDyad }: { data: AnalyticsData; dyads: Dyad[]; openDyad: (code: string) => void }) {
-  const captureTotal = Object.values(data.modality.captureModes).reduce((sum, value) => sum + value, 0)
-  const retrievalTotal = Object.values(data.modality.retrievalModes).reduce((sum, value) => sum + value, 0)
+function SmsPanel({ data }: { data: AnalyticsData }) {
   return (
-    <>
-      <div className="grid c4 top-grid"><Kpi label="Voice completion" value={pct(data.modality.voiceSaved, data.modality.voiceStarted)} sub={`${data.modality.voiceSaved} of ${data.modality.voiceStarted} started`} provenance="obs" /><Kpi label="Modality switches" value={data.modality.switches} sub="abandoned one, finished in another" provenance="obs" /><Kpi label="Reflection completion" value={pct(data.modality.reflectionSaved, data.modality.reflectionStarted)} sub={`${data.modality.reflectionSaved} of ${data.modality.reflectionStarted} started`} provenance="obs" /><Kpi label="Reflection to retrieval" value={data.modality.reflectionUsed} sub="selected source" provenance="obs" /></div>
-      <h2 className="sec">Capture versus retrieval</h2>
-      <div className="grid c2"><div className="card"><div className="k">How they capture</div><div className="bars">{(['voice', 'typed', 'tap', 'sms'] as const).map(mode => <Bar key={mode} label={mode} value={data.modality.captureModes[mode]} total={captureTotal} />)}</div></div><div className="card"><div className="k">How they retrieve when stuck</div><div className="bars">{(['voice', 'typed', 'tap'] as const).map(mode => <Bar key={mode} label={mode} value={data.modality.retrievalModes[mode]} total={retrievalTotal} />)}<div className="hint space">SMS is not a retrieval path in this build.</div></div></div></div>
-      <h2 className="sec">Per dyad</h2>
-      <table><thead><tr><th>Dyad</th><th className="num">Voice cap.</th><th className="num">Typed</th><th className="num">Tap</th><th className="num">SMS</th><th className="num">Refl. saved</th><th className="num">Refl. used</th></tr></thead><tbody>{dyads.length === 0 ? <EmptyRow colSpan={7} /> : dyads.map(dyad => <tr className="click" onClick={() => openDyad(dyad.code)} key={dyad.code}><td>{dyadName(dyad)}</td><td className="num">—</td><td className="num">—</td><td className="num">—</td><td className="num">{dyad.smsReplied}</td><td className="num">{dyad.reflectionsSaved}</td><td className="num">{dyad.reflectionUsed}</td></tr>)}</tbody></table>
-    </>
+    <section className="panel">
+      <div className="panel-heading">
+        <p>SMS reliability</p>
+        <h2>Prompts, replies, and parsing</h2>
+      </div>
+      <div className="stats-grid">
+        <StatCard label="Sent" value={data.sms.sent} />
+        <StatCard label="Delivered" value={data.sms.delivered} />
+        <StatCard label="Replies" value={data.sms.replied} />
+        <StatCard label="Parsed replies" value={data.sms.parsed} />
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Dyad</th><th>Sent</th><th>Delivered</th><th>Replies</th><th>Median reply</th></tr></thead>
+          <tbody>
+            {data.perDyad.map(dyad => (
+              <tr key={dyad.id}><td>{dyad.displayLabel}</td><td>{dyad.smsSent}</td><td>{dyad.smsDelivered}</td><td>{dyad.smsReplied}</td><td>{dyad.smsMedianLatency ?? '-'} min</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 
-function PartnerTab({ dyads, openDyad }: { dyads: Dyad[]; openDyad: (code: string) => void }) {
+function ReadinessPanel({ data }: { data: AnalyticsData }) {
+  const checks = [
+    ['Internal preview cohort', `${data.pilotReadiness.internalDyads} internal dyads found`, data.pilotReadiness.internalDyads >= 3],
+    ['Pilot feature flags', `${data.pilotReadiness.pilotPreviewEnabled} dyads have pilot preview enabled`, data.pilotReadiness.pilotPreviewEnabled >= data.pilotReadiness.internalDyads],
+    ['Calendar sync', `${data.pilotReadiness.calendarConnected} dyads connected`, data.pilotReadiness.calendarConnected > 0],
+    ['Dyad linking', `${data.pilotReadiness.missingMci + data.pilotReadiness.missingCp} missing role links`, data.pilotReadiness.missingMci + data.pilotReadiness.missingCp === 0],
+    ['Silence risk', `${data.pilotReadiness.silentDyads} silent dyads`, data.pilotReadiness.silentDyads === 0],
+    ['Outcome capture', `${data.pilotReadiness.outcomesStarted} dyads have outcome scores started`, data.pilotReadiness.outcomesStarted > 0],
+  ] as const
   return (
-    <>
-      <h2 className="sec first">Visibility, not intervention</h2>
-      <p className="lede">The care partner views in Context; they do not act in it. The left columns are checking behaviour. Offload is carried entirely by the reported columns.</p>
-      <table><thead><tr><th>Dyad</th><th className="num">Wk1 opens/day</th><th className="num">Wk2 opens/day</th><th>Trend</th><th>Day 7: reminding<span className="pv p-rep inline">rep</span></th><th>Day 7: extra checking<span className="pv p-rep inline">rep</span></th><th>Day 14 pair</th></tr></thead><tbody>{dyads.length === 0 ? <EmptyRow colSpan={7} /> : dyads.map(dyad => <tr className="click" onClick={() => openDyad(dyad.code)} key={dyad.code}><td>{dyadName(dyad)}</td><td className="num">{dyad.week1CpOpensPerDay.toFixed(1)}</td><td className="num">{typeof dyad.week2CpOpensPerDay === 'number' ? dyad.week2CpOpensPerDay.toFixed(1) : '—'}</td><td><Spark values={dyad.cpOpenTrend} tone="rep" /></td><td className="hint">pending</td><td className="hint">pending</td><td className="hint">pending exit</td></tr>)}</tbody></table>
-    </>
+    <section className="panel">
+      <div className="panel-heading">
+        <p>Pilot readiness</p>
+        <h2>Before participant rollout</h2>
+      </div>
+      <div className="readiness-list">
+        {checks.map(([label, note, ok]) => (
+          <article key={label} className={ok ? 'ready' : 'watch'}>
+            <strong>{label}</strong>
+            <span>{note}</span>
+          </article>
+        ))}
+      </div>
+      <div className="privacy-note">
+        New features should stay with Bilau, Baru, and Davis until you approve rollout to participant households.
+      </div>
+    </section>
   )
 }
 
-function SmsTab({ data, dyads, openDyad }: { data: AnalyticsData; dyads: Dyad[]; openDyad: (code: string) => void }) {
+function ExportsPanel({ data }: { data: AnalyticsData }) {
   return (
-    <>
-      <div className="grid c4 top-grid"><Kpi label="Sent" value={data.sms.sent} sub="morning prompts" provenance="obs" /><Kpi label="Delivered" value={data.sms.delivered} sub={`${pct(data.sms.delivered, data.sms.sent)} · Twilio callback`} provenance="obs" /><Kpi label="Replied" value={data.sms.replied} sub={`${pct(data.sms.replied, data.sms.delivered)} of delivered`} provenance="obs" /><Kpi label="Reply used" value={data.sms.parsed} sub="created or updated a thread" provenance="obs" /></div>
-      <h2 className="sec">Lifecycle</h2>
-      <Ladder rows={[{ title: 'Sent', sub: 'Scheduled and dispatched.', value: data.sms.sent }, { title: 'Delivered', sub: 'Carrier receipt.', value: data.sms.delivered }, { title: 'Delivered, no reply', sub: 'Not a failure on its own.', value: data.sms.deliveredNoReply }, { title: 'Replied', sub: 'Inbound message received.', value: data.sms.replied }, { title: 'Reply created or updated a thread', sub: 'The round trip landed in Context.', value: data.sms.parsed }, { title: 'Replied, not usable', sub: 'Received but not parsed or acted on.', value: data.sms.notUsable }]} />
-      <h2 className="sec">Per dyad</h2>
-      <table><thead><tr><th>Dyad</th><th className="num">Sent</th><th className="num">Delivered</th><th className="num">Replied</th><th className="num">Rate</th><th className="num">Median latency</th><th className="num">Landed</th></tr></thead><tbody>{dyads.length === 0 ? <EmptyRow colSpan={7} /> : dyads.map(dyad => <tr className="click" onClick={() => openDyad(dyad.code)} key={dyad.code}><td>{dyadName(dyad)}</td><td className="num">{dyad.smsSent}</td><td className="num">{dyad.smsDelivered}</td><td className="num">{dyad.smsReplied}</td><td className="num">{pct(dyad.smsReplied, dyad.smsDelivered)}</td><td className="num">{dyad.smsMedianLatency ? `${dyad.smsMedianLatency} min` : '—'}</td><td className="num">{dyad.smsParsed}</td></tr>)}</tbody></table>
-      <div className="note">Open rate is unavailable for ordinary SMS. Delivery receipts and inbound replies are the defensible signals.</div>
-    </>
+    <section className="panel">
+      <div className="panel-heading">
+        <p>Export center</p>
+        <h2>CSV files for study review</h2>
+      </div>
+      <div className="export-grid">
+        {EXPORTS.map(([dataset, label]) => <a key={dataset} href={exportHref(dataset, data)}>{label}</a>)}
+      </div>
+    </section>
   )
-}
-
-function PersistenceTab({ data, dyads, openDyad }: { data: AnalyticsData; dyads: Dyad[]; openDyad: (code: string) => void }) {
-  return (
-    <>
-      <div className="grid c3 top-grid"><Kpi label="Meaningful-use days" value={`${data.persistence.useDaysWeek1} to ${fmtMaybe(data.persistence.useDaysWeek2)}`} sub="week 1 to week 2" provenance="obs" /><Kpi label="Attempts in clean window" value={data.persistence.cleanWindowAttempts} sub="days 12 to 13" provenance="obs" /><Kpi label="Active in week 2" value={`${data.persistence.activeWeek2Dyads} of ${dyads.filter(d => d.currentStudyDay > 7).length}`} sub="of those who reached week 2" provenance="obs" /></div>
-      <h2 className="sec">Meaningful use</h2>
-      <p className="lede">A day counts if at least one substantive event occurred. Week 2 columns divide by days actually elapsed. A dyad on day 5 shows a dash, not zero.</p>
-      <table><thead><tr><th>Dyad</th><th className="num">Day</th><th className="num">Use days</th><th className="num">Captures</th><th className="num">Attempts</th><th className="num">Reflections</th><th className="num">CP opens/day</th><th className="num">Clean window</th></tr></thead><tbody>{dyads.length === 0 ? <EmptyRow colSpan={8} /> : dyads.map(dyad => <tr className="click" onClick={() => openDyad(dyad.code)} key={dyad.code}><td>{dyadName(dyad)}</td><td className="num">{dyad.currentStudyDay}</td><td className="num">{dyad.useDaysWeek1} to {fmtMaybe(dyad.useDaysWeek2)}</td><td className="num">{dyad.capturesWeek1} to {fmtMaybe(dyad.capturesWeek2)}</td><td className="num">{dyad.attemptsWeek1} to {fmtMaybe(dyad.attemptsWeek2)}</td><td className="num">{dyad.reflectionsWeek1} to {fmtMaybe(dyad.reflectionsWeek2)}</td><td className="num">{dyad.week1CpOpensPerDay.toFixed(1)} to {typeof dyad.week2CpOpensPerDay === 'number' ? dyad.week2CpOpensPerDay.toFixed(1) : '—'}</td><td className="num">{dyad.currentStudyDay > 11 ? dyad.cleanWindowAttempts : '—'}</td></tr>)}</tbody></table>
-    </>
-  )
-}
-
-function DisconfirmationTab({ data }: { data: AnalyticsData }) {
-  const rows = [
-    ['No participant with MCI shows a corroborated independent recovery', `${data.disconfirmation.corroboratedDyads} dyads have at least one observed and corroborated recovery. ${data.disconfirmation.observedResumptions} episodes show app-observed resumption.`],
-    ['Care partners keep doing their previous work while Context adds checking', `${data.disconfirmation.risingNoDrop} dyads show rising dashboard opens without a reported drop. Day 14 evidence pending.`],
-    ['Use occurs around researcher contact and does not persist', `${data.disconfirmation.attemptsNearContact} attempts fall near scheduled contact. ${data.disconfirmation.cleanWindowAttempts} fall in the clean window.`],
-    ['Dyadic privacy requirements conflict with no resolving configuration', 'Not derivable from telemetry. Coded from baseline, joint sharing, and day 14 questions.'],
-  ]
-  return (
-    <>
-      <h2 className="sec first">Predefined disconfirmation</h2>
-      <p className="lede">Written into the protocol before enrollment. No verdicts and no cutoffs: the panel shows evidence for the dyads currently in scope; the researcher makes the call.</p>
-      <div className="dis">{rows.map((row, index) => <div className="row" key={row[0]}><div className="idx">{String.fromCharCode(65 + index)}</div><div className="txt">{row[0]}<small>{row[1]}</small></div><div className="st">Researcher<br />interpretation</div></div>)}</div>
-      <h2 className="sec">Researcher contact log</h2>
-      <table><thead><tr><th className="num">Study day</th><th>Contact</th><th>Recipient</th><th>Type</th><th>Purpose</th></tr></thead><tbody><tr><td className="num">2</td><td>SMS</td><td>Both</td><td>Scheduled</td><td>Technical and support only. No outcome questions.</td></tr><tr><td className="num">7</td><td>SMS plus three questions</td><td>Both, survey to CP</td><td>Scheduled</td><td>Support, plus the day 7 care partner check.</td></tr><tr><td className="num">12 to 13</td><td>None</td><td>—</td><td>Clean</td><td>No contact. Persistence window.</td></tr><tr><td className="num">14</td><td>Interview plus scales</td><td>Both</td><td>Scheduled</td><td>Exit.</td></tr></tbody></table>
-    </>
-  )
-}
-
-function ActiveTab({ tab, data, dyads, currentDyad, openDyad }: { tab: TabKey; data: AnalyticsData; dyads: Dyad[]; currentDyad: Dyad | undefined; openDyad: (code: string) => void }) {
-  const scopedCodes = new Set(dyads.map(dyad => dyad.code))
-  const scopedQueries = data.queryLog.filter(row => scopedCodes.has(row.code))
-  if (tab === 'dyad') return <DyadPage dyad={currentDyad} data={data} />
-  if (tab === 'roster') return <RosterTab dyads={dyads} data={data} openDyad={openDyad} />
-  if (tab === 'queries') return <QueriesTab rows={scopedQueries} dyads={dyads} data={data} openDyad={openDyad} />
-  if (tab === 'threads') return <ThreadsTab data={data} dyads={dyads} openDyad={openDyad} />
-  if (tab === 'modality') return <ModalityTab data={data} dyads={dyads} openDyad={openDyad} />
-  if (tab === 'partner') return <PartnerTab dyads={dyads} openDyad={openDyad} />
-  if (tab === 'sms') return <SmsTab data={data} dyads={dyads} openDyad={openDyad} />
-  if (tab === 'persist') return <PersistenceTab data={data} dyads={dyads} openDyad={openDyad} />
-  return <DisconfirmationTab data={data} />
 }
 
 export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
-  const activeCohort = data.cohorts.find(cohort => cohort.active && cohort.count > 0)?.id ?? data.cohorts.find(cohort => cohort.count > 0)?.id ?? 'pilot-1'
-  const initialCohort = typeof window === 'undefined' ? activeCohort : new URLSearchParams(window.location.search).get('cohort') ?? activeCohort
-  const [cohort, setCohort] = useState(initialCohort)
-  const cohortDyads = data.perDyad.filter(dyad => dyad.cohort === cohort)
-  const initialDyads = typeof window === 'undefined' ? cohortDyads.map(dyad => dyad.code) : (new URLSearchParams(window.location.search).get('dyads')?.split(',').filter(Boolean) ?? cohortDyads.map(dyad => dyad.code))
-  const [selected, setSelected] = useState(new Set(initialDyads))
-  const [currentCode, setCurrentCode] = useState(initialDyads[0] ?? cohortDyads[0]?.code ?? '')
-  const [tab, setTab] = useState<TabKey>('dyad')
-  const selectedDyads = cohortDyads.filter(dyad => selected.has(dyad.code))
-  const currentDyad = data.perDyad.find(dyad => dyad.code === currentCode) ?? selectedDyads[0] ?? cohortDyads[0]
-  const activeStudyDays = selectedDyads.filter(row => row.active).map(row => row.currentStudyDay)
-  const minDay = activeStudyDays.length ? Math.min(...activeStudyDays) : 0
-  const maxDay = activeStudyDays.length ? Math.max(...activeStudyDays) : 0
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    params.set('cohort', cohort)
-    params.set('dyads', [...selected].join(','))
-    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`)
-  }, [cohort, selected])
-
-  function openDyad(code: string) {
-    setCurrentCode(code)
-    setTab('dyad')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
-    event.preventDefault()
-    const nextIndex = event.key === 'ArrowRight' ? (index + 1) % TABS.length : (index - 1 + TABS.length) % TABS.length
-    setTab(TABS[nextIndex].key)
-    document.getElementById(`tab-${TABS[nextIndex].key}`)?.focus()
-  }
+  const [tab, setTab] = useState<TabKey>('health')
+  const [selectedCohort, setSelectedCohort] = useState('all')
+  const [selectedHousehold, setSelectedHousehold] = useState(data.filters.householdId || 'all')
+  const dyads = useMemo(() => data.perDyad.filter(dyad =>
+    (selectedCohort === 'all' || dyad.cohort === selectedCohort) &&
+    (selectedHousehold === 'all' || dyad.id === selectedHousehold)
+  ), [data.perDyad, selectedCohort, selectedHousehold])
+  const outcomeRows = data.outcomeRows.filter(row => dyads.some(dyad => dyad.id === row.householdId))
 
   return (
-    <main className="pilot-dashboard">
-      <div className="wrap">
-        <header className="mast"><div className="mast-row"><div><h1>Context Study Instrument</h1><div className="sub">{data.cohorts.find(item => item.id === cohort)?.label ?? 'Pilot cohort'} · individual-first</div></div><div className="stamp">Study day <b>{minDay === maxDay ? maxDay : `${minDay} to ${maxDay}`}</b> across <b>{selectedDyads.filter(row => row.active).length}</b> active<br />Latest event <b>{fmtDate(data.freshness.latestEventAt)}</b> · Last cron <b>{fmtDate(data.freshness.lastCronAt)}</b>{data.freshness.cronWarning ? <><br /><span className="stale">Cron check needed</span></> : null}</div></div></header>
-        <ScopeBar data={data} cohort={cohort} setCohort={setCohort} selected={selected} setSelected={setSelected} setCurrentCode={setCurrentCode} setTab={setTab} />
-        <div className="prov"><span><span className="pv p-obs">Observed</span>an event the app or Twilio recorded</span><span><span className="pv p-inf">Inferred</span>derived from event patterns, not directly seen</span><span><span className="pv p-rep">Reported</span>from a prompt, check-in, or interview</span></div>
-        <nav role="tablist" aria-label="Dashboard sections">{TABS.map((item, index) => <button aria-controls={`panel-${item.key}`} aria-selected={tab === item.key} id={`tab-${item.key}`} key={item.key} onClick={() => setTab(item.key)} onKeyDown={event => onTabKeyDown(event, index)} role="tab" type="button">{item.label}</button>)}</nav>
-        <section id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}><ActiveTab tab={tab} data={data} dyads={selectedDyads} currentDyad={currentDyad} openDyad={openDyad} /></section>
-        <p className="foot">Generated {fmtDate(data.generatedAt)} · Admin-only · CSV exports use dyad codes only.</p>
-      </div>
+    <main className="admin-shell">
+      <header className="admin-hero">
+        <p>Context admin</p>
+        <h1>Pilot monitoring</h1>
+        <span>Generated {formatTime(data.generatedAt)}</span>
+      </header>
+      <SilentDyadAlert dyads={dyads} />
+      <ScopeBar data={data} selectedCohort={selectedCohort} setSelectedCohort={setSelectedCohort} selectedHousehold={selectedHousehold} setSelectedHousehold={setSelectedHousehold} />
+      <nav className="admin-tabs" aria-label="Analytics sections">
+        {TABS.map(item => <button key={item.key} className={tab === item.key ? 'active' : ''} onClick={() => setTab(item.key)}>{item.label}</button>)}
+      </nav>
+      {tab === 'health' ? <DyadHealthPanel dyads={dyads} /> : null}
+      {tab === 'outcomes' ? <OutcomeScoresPanel rows={outcomeRows} /> : null}
+      {tab === 'arc' ? <StudyArcPanel data={data} dyads={dyads} /> : null}
+      {tab === 'behavior' ? <BehaviorPanel data={data} /> : null}
+      {tab === 'sms' ? <SmsPanel data={data} /> : null}
+      {tab === 'readiness' ? <ReadinessPanel data={data} /> : null}
+      {tab === 'exports' ? <ExportsPanel data={data} /> : null}
       <style jsx global>{`
-        .pilot-dashboard{--paper:#F2F3EF;--ink:#16191C;--ink-60:#5A6169;--ink-30:#9AA1A8;--rule:#D6D9D2;--card:#FBFCFA;--obs:#2E5E4E;--inf:#3D4A5C;--rep:#7A5C1E;--alert:#A63A2B;min-height:100svh;background:var(--paper);color:var(--ink);font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
-        .pilot-dashboard *{box-sizing:border-box}.pilot-dashboard h1,.pilot-dashboard h2,.pilot-dashboard h3,.pilot-dashboard .v,.pilot-dashboard .q{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-weight:600}.pilot-dashboard .wrap{max-width:1240px;margin:0 auto;padding:0 24px 80px}
-        .pilot-dashboard .mast{border-bottom:2px solid var(--ink);padding:24px 0 12px}.pilot-dashboard .mast-row{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}.pilot-dashboard .mast h1{font-size:26px;margin:0;letter-spacing:-.01em}.pilot-dashboard .sub{color:var(--ink-60);font-size:11px;text-transform:uppercase;letter-spacing:.13em;margin-top:5px}.pilot-dashboard .stamp{text-align:right;font-size:11px;color:var(--ink-60);line-height:1.7}.pilot-dashboard .stamp b{color:var(--ink)}.pilot-dashboard .stale{color:var(--alert)}
-        .pilot-dashboard .scope{display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:11px 0;border-bottom:1px solid var(--rule)}.pilot-dashboard .grp{display:flex;gap:7px;align-items:center}.pilot-dashboard label{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-60)}.pilot-dashboard select,.pilot-dashboard input,.pilot-dashboard button.ctl{font:inherit;font-size:11px;background:var(--card);border:1px solid var(--rule);padding:5px 9px;color:var(--ink)}.pilot-dashboard button{cursor:pointer}.pilot-dashboard button.ctl:hover{background:#EBEEE8}.pilot-dashboard button.ctl[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}.pilot-dashboard .chips{display:flex;gap:5px;flex-wrap:wrap}.pilot-dashboard .chip{font:inherit;font-size:10.5px;border:1px solid var(--rule);background:var(--card);padding:3px 8px;color:var(--ink);white-space:nowrap}.pilot-dashboard .chip[aria-pressed="true"]{border-color:var(--ink);background:var(--ink);color:var(--paper)}.pilot-dashboard .n{font-size:11px;color:var(--ink-60);margin-left:auto}
-        .pilot-dashboard .prov{display:flex;gap:18px;flex-wrap:wrap;font-size:10.5px;color:var(--ink-60);padding:9px 0;border-bottom:1px solid var(--rule)}.pilot-dashboard .pv{display:inline-block;font-size:9px;letter-spacing:.09em;text-transform:uppercase;padding:1px 5px;border:1px solid currentColor;margin-right:6px;vertical-align:1px}.pilot-dashboard .p-obs{color:var(--obs)}.pilot-dashboard .p-inf{color:var(--inf)}.pilot-dashboard .p-rep{color:var(--rep)}.pilot-dashboard .p-none,.pilot-dashboard .p-mute{color:var(--ink-30)}
-        .pilot-dashboard nav{display:flex;border-bottom:1px solid var(--rule);margin-bottom:20px;overflow-x:auto}.pilot-dashboard nav button{background:none;border:0;border-bottom:2px solid transparent;font:inherit;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-60);padding:12px 15px;white-space:nowrap;margin-bottom:-1px}.pilot-dashboard nav button:hover{color:var(--ink)}.pilot-dashboard nav button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}.pilot-dashboard button:focus-visible,.pilot-dashboard a:focus-visible,.pilot-dashboard select:focus-visible,.pilot-dashboard input:focus-visible{outline:2px solid var(--obs);outline-offset:2px}
-        .pilot-dashboard .grid{display:grid;gap:13px}.pilot-dashboard .c4{grid-template-columns:repeat(4,1fr)}.pilot-dashboard .c3{grid-template-columns:repeat(3,1fr)}.pilot-dashboard .c2{grid-template-columns:1fr 1fr}.pilot-dashboard .top-grid{margin-top:13px}@media(max-width:900px){.pilot-dashboard .c4,.pilot-dashboard .c3,.pilot-dashboard .c2{grid-template-columns:1fr 1fr}}@media(max-width:620px){.pilot-dashboard .c4,.pilot-dashboard .c3,.pilot-dashboard .c2{grid-template-columns:1fr}.pilot-dashboard .stamp{text-align:left}.pilot-dashboard .strip-head,.pilot-dashboard .strip-row{grid-template-columns:1fr}.pilot-dashboard .tally{text-align:left}}
-        .pilot-dashboard .card{background:var(--card);border:1px solid var(--rule);padding:15px}.pilot-dashboard .k{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-60)}.pilot-dashboard .v{font-size:29px;line-height:1.05;margin:8px 0 2px;font-variant-numeric:tabular-nums}.pilot-dashboard .card.sm .v{font-size:22px}.pilot-dashboard .vsub{font-size:11px;color:var(--ink-60)}.pilot-dashboard h2.sec{font-size:16px;margin:32px 0 4px}.pilot-dashboard h2.first{margin-top:12px}.pilot-dashboard h3.sub{font-size:13.5px;margin:22px 0 4px}.pilot-dashboard p.lede{color:var(--ink-60);margin:0 0 13px;max-width:78ch;font-size:12px}.pilot-dashboard .hint{font-size:11px;color:var(--ink-60)}
-        .pilot-dashboard .strip-head,.pilot-dashboard .strip-row{display:grid;grid-template-columns:132px 1fr 152px;gap:12px;align-items:center}.pilot-dashboard .strip-head{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-60);padding:0 0 8px;border-bottom:1px solid var(--rule)}.pilot-dashboard .strip-row{width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--rule);padding:9px 0;color:inherit;font:inherit}.pilot-dashboard .strip-row:not(.static):hover{background:#EBEEE8}.pilot-dashboard .dyad{font-size:12px;font-weight:600}.pilot-dashboard .dyad small{display:block;color:var(--ink-30);font-weight:400;font-size:10px}.pilot-dashboard .right{text-align:right}
-        .pilot-dashboard .track{position:relative;height:32px;border-left:1px solid var(--rule);border-right:1px solid var(--rule)}.pilot-dashboard .track .wk{position:absolute;top:0;bottom:0;width:1px;background:var(--rule)}.pilot-dashboard .track .clean{position:absolute;top:0;bottom:0;background:#E9ECE6}.pilot-dashboard .track .now{position:absolute;top:0;bottom:0;width:1px;background:var(--ink-30)}.pilot-dashboard .ep{position:absolute;top:5px;width:7px;height:7px;border-radius:50%;transform:translateX(-50%)}.pilot-dashboard .ep.res{background:var(--obs)}.pilot-dashboard .ep.unres{background:none;border:1.5px solid var(--obs)}.pilot-dashboard .ep.nores{background:var(--alert)}.pilot-dashboard .ep.pend{background:var(--ink-30)}.pilot-dashboard .ep.unre{top:20px;width:6px;height:6px;border-radius:0;background:none;border:1px solid var(--ink-30)}.pilot-dashboard .tally{font-size:11px;color:var(--ink-60);text-align:right;font-variant-numeric:tabular-nums}.pilot-dashboard .tally b{color:var(--ink)}
-        .pilot-dashboard .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:10.5px;color:var(--ink-60);margin-top:11px}.pilot-dashboard .legend i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}.pilot-dashboard .legend .hollow{background:none;border:1.5px solid var(--obs)}.pilot-dashboard .legend .sq{border-radius:0;border:1px solid var(--ink-30);background:none}.pilot-dashboard svg.spark{display:block}
-        .pilot-dashboard table{width:100%;border-collapse:collapse;font-size:12px}.pilot-dashboard th{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-60);text-align:left;font-weight:400;padding:8px 9px;border-bottom:1px solid var(--ink)}.pilot-dashboard td{padding:9px;border-bottom:1px solid var(--rule);vertical-align:top}.pilot-dashboard td.num,.pilot-dashboard th.num{text-align:right;font-variant-numeric:tabular-nums}.pilot-dashboard tbody tr:hover,.pilot-dashboard tr.click:hover{background:#EBEEE8}.pilot-dashboard tr.click{cursor:pointer}.pilot-dashboard .q{font-size:13.5px}.pilot-dashboard .tag{display:inline-block;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;padding:2px 6px;border:1px solid currentColor}.pilot-dashboard .t-obs{color:var(--obs)}.pilot-dashboard .t-inf{color:var(--inf)}.pilot-dashboard .t-alert{color:var(--alert)}.pilot-dashboard .t-mute{color:var(--ink-30)}.pilot-dashboard .t-rep{color:var(--rep)}
-        .pilot-dashboard .flags{border:1px solid var(--ink);background:var(--card)}.pilot-dashboard .fh{padding:11px 15px;border-bottom:1px solid var(--ink);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-60)}.pilot-dashboard .f{display:grid;grid-template-columns:1fr 190px;gap:14px;padding:12px 15px;border-bottom:1px solid var(--rule)}.pilot-dashboard .f:last-child{border-bottom:0}.pilot-dashboard .ask{font-family:"Iowan Old Style",Palatino,Georgia,serif;font-size:13.5px}.pilot-dashboard .ev{font-size:11px;color:var(--ink-60);margin-top:3px}.pilot-dashboard .src{font-size:10px;color:var(--ink-30);text-align:right;letter-spacing:.06em;text-transform:uppercase}.pilot-dashboard .none{padding:14px 15px;font-size:11.5px;color:var(--ink-60)}
-        .pilot-dashboard .bar{height:9px;background:#E3E6DF;position:relative;overflow:hidden}.pilot-dashboard .bar span{position:absolute;left:0;top:0;bottom:0;background:var(--inf)}.pilot-dashboard .bar span.g{background:var(--obs)}.pilot-dashboard .bar span.r{background:var(--alert)}.pilot-dashboard .brow{display:grid;grid-template-columns:190px 1fr 54px;gap:10px;align-items:center;padding:6px 0;font-size:11.5px}.pilot-dashboard .brow .n{text-align:right;color:var(--ink-60);font-variant-numeric:tabular-nums}.pilot-dashboard .bars{margin-top:9px}.pilot-dashboard .space{margin-top:7px}
-        .pilot-dashboard .ladder{border:1px solid var(--rule);background:var(--card)}.pilot-dashboard .ladder .r{display:grid;grid-template-columns:1fr 74px;gap:12px;padding:11px 15px;border-bottom:1px solid var(--rule);align-items:baseline}.pilot-dashboard .ladder .r:last-child{border-bottom:0}.pilot-dashboard .ladder small{display:block;color:var(--ink-60);font-size:11px;margin-top:2px}.pilot-dashboard .ladder .n{text-align:right;font-variant-numeric:tabular-nums;font-family:Palatino,Georgia,serif;font-size:19px}
-        .pilot-dashboard .chain{border:1px solid var(--rule);padding:10px 12px;margin:8px 0;background:var(--paper);font-size:11.5px}.pilot-dashboard .chain .line{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:5px}.pilot-dashboard .chain span.b{border:1px solid var(--rule);padding:2px 7px;background:var(--card)}.pilot-dashboard .chain em{color:var(--ink-30);font-style:normal}.pilot-dashboard .rank{margin-top:6px;font-size:11px;color:var(--ink-60)}.pilot-dashboard .rank ol{margin:4px 0 0 18px;padding:0}.pilot-dashboard .rank li.sel{color:var(--obs);font-weight:600}
-        .pilot-dashboard .dis{border:1px solid var(--rule);background:var(--card)}.pilot-dashboard .dis .row{display:grid;grid-template-columns:24px 1fr 128px;gap:12px;padding:14px 16px;border-bottom:1px solid var(--rule);align-items:start}.pilot-dashboard .idx{font-family:Palatino,Georgia,serif;color:var(--ink-30);font-size:15px}.pilot-dashboard .txt small{display:block;color:var(--ink-60);margin-top:4px;font-size:11px}.pilot-dashboard .st{font-size:10px;letter-spacing:.07em;text-transform:uppercase;text-align:right;color:var(--ink-60)}.pilot-dashboard .cmp{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--rule);background:var(--card)}.pilot-dashboard .cmp>div{padding:14px 16px}.pilot-dashboard .cmp>div+div{border-left:1px solid var(--rule)}
-        .pilot-dashboard .note{border-left:2px solid var(--ink);padding:2px 0 2px 12px;font-size:11.5px;color:var(--ink-60);margin:14px 0;max-width:80ch}.pilot-dashboard .filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px}.pilot-dashboard .restricted{margin-left:auto}.pilot-dashboard .export{color:var(--obs);text-decoration:underline}.pilot-dashboard .inline{margin-left:6px}.pilot-dashboard .foot{text-align:center;color:var(--ink-30);font-size:11px;margin-top:34px}.pilot-dashboard .srt{font:inherit;color:inherit;background:none;border:0;padding:0;text-transform:inherit;letter-spacing:inherit}
-        @media (prefers-reduced-motion: reduce){.pilot-dashboard *{scroll-behavior:auto!important;transition:none!important}}
+        .admin-shell { min-height: 100vh; background: #f8f4ea; color: #27211a; padding: 32px; font-family: var(--font-sans, system-ui, sans-serif); }
+        .admin-hero, .panel, .scope-card, .silent-alert { max-width: 1180px; margin: 0 auto 22px; }
+        .admin-hero p, .panel-heading p, .dyad-topline span { color: #4b7440; font-size: 0.78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+        .admin-hero h1 { font-family: var(--font-serif, Georgia, serif); font-size: clamp(2.3rem, 5vw, 4.4rem); line-height: 1; margin: 8px 0; }
+        .admin-hero span { color: #817669; }
+        .scope-card, .panel, .silent-alert { background: #fffdfa; border: 1px solid #ead8b6; border-radius: 24px; box-shadow: 0 14px 36px rgba(44, 35, 24, .07); padding: 24px; }
+        .scope-card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+        label { display: grid; gap: 7px; color: #6f6558; font-weight: 700; }
+        select { min-height: 48px; border: 1px solid #ddceb8; border-radius: 12px; background: white; color: #27211a; padding: 0 14px; font: inherit; }
+        .admin-tabs { max-width: 1180px; margin: 0 auto 22px; display: flex; gap: 10px; flex-wrap: wrap; }
+        .admin-tabs button, .export-grid a { min-height: 48px; border-radius: 999px; border: 1px solid #ddceb8; background: #fffdfa; color: #463b2d; padding: 0 18px; font-weight: 800; text-decoration: none; display: inline-grid; place-items: center; }
+        .admin-tabs button.active { background: #3f6b36; color: white; border-color: #3f6b36; }
+        .silent-alert { background: #fff7ed; border-color: #c9763e; }
+        .silent-alert h2, .panel h2 { margin: 0; font-family: var(--font-serif, Georgia, serif); font-size: 1.8rem; }
+        .alert-list, .feature-list, .readiness-list, .export-grid, .dyad-grid, .stats-grid { display: grid; gap: 14px; }
+        .alert-list { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+        .alert-list span { background: white; border-radius: 14px; padding: 14px; font-weight: 800; color: #8b3d20; }
+        .panel-heading { margin-bottom: 22px; }
+        .dyad-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+        .dyad-card { border: 1px solid #e8dfd2; border-radius: 20px; padding: 20px; background: #fff; }
+        .dyad-card.flag-red { border-color: #c9763e; }
+        .dyad-card.flag-amber { border-color: #d9b96e; }
+        .dyad-topline { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+        .dyad-topline h3 { margin: 5px 0 0; font-size: 1.3rem; }
+        .dyad-topline strong { background: #edf3ea; color: #3f6b36; padding: 8px 12px; border-radius: 999px; }
+        .flag-red .dyad-topline strong { background: #fff0e7; color: #8b3d20; }
+        .flag-amber .dyad-topline strong { background: #fbf0d9; color: #7b5a15; }
+        dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 18px 0 0; }
+        dt { color: #817669; font-size: .78rem; font-weight: 800; text-transform: uppercase; }
+        dd { margin: 3px 0 0; font-weight: 800; }
+        .outcome-table, .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 760px; }
+        th, td { border-bottom: 1px solid #eee2d1; padding: 14px; text-align: left; vertical-align: top; }
+        th span { display: block; color: #817669; font-size: .82rem; margin-top: 4px; }
+        td label { display: inline-grid; grid-template-columns: auto 64px; align-items: center; gap: 6px; margin-right: 8px; font-size: .82rem; }
+        td strong { display: block; margin-top: 8px; color: #4b7440; }
+        .markers { color: #6f6558; margin-bottom: 16px; }
+        .arc-row { margin-bottom: 18px; }
+        .arc-row h3 { margin: 0 0 10px; }
+        .arc-days { display: grid; grid-template-columns: repeat(28, minmax(22px, 1fr)); gap: 5px; }
+        .arc-day { min-height: 28px; border-radius: 8px; background: #f0eadf; color: #817669; display: grid; place-items: center; font-size: .72rem; font-weight: 800; }
+        .arc-day.active { background: #3f6b36; color: white; }
+        .arc-day.marker-true { outline: 2px solid #c9763e; outline-offset: 1px; }
+        .stats-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 18px; }
+        .admin-stat, .feature-list article, .readiness-list article { background: #faf7f0; border-radius: 16px; padding: 16px; }
+        .admin-stat span, .feature-list span { color: #817669; font-weight: 800; }
+        .admin-stat strong { display: block; font-size: 2rem; margin-top: 5px; }
+        .feature-list { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+        .feature-list article, .readiness-list article { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+        .feature-list strong { font-size: 1.5rem; }
+        .readiness-list article.ready { border-left: 6px solid #3f6b36; }
+        .readiness-list article.watch { border-left: 6px solid #c9763e; }
+        .privacy-note { margin-top: 18px; border-radius: 16px; padding: 16px; background: #edf3ea; color: #3f6b36; font-weight: 800; }
+        .export-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+        @media (max-width: 720px) { .admin-shell { padding: 18px; } .scope-card { grid-template-columns: 1fr; } dl { grid-template-columns: 1fr; } }
       `}</style>
     </main>
   )

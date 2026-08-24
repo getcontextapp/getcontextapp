@@ -6,11 +6,8 @@ export interface AnalyticsFilters {
   role: string
 }
 
-const NEUTRAL_LABELS = [
-  'Cedar', 'Harbor', 'Juniper', 'Quarry', 'Lantern', 'Meadow', 'Copper', 'Bramble',
-  'Solstice', 'Kettle', 'Marlow', 'Thicket', 'Almond', 'Beacon', 'Rowan', 'Pebble',
-  'Ledger', 'Fennel', 'Willow', 'Maple', 'Cypress', 'Granite', 'Elm', 'Birch',
-]
+const STUDY_DAYS = 28
+const INTERNAL_PREVIEW_NAMES = ['bilau', 'baru', 'davis']
 
 type ProfileRow = {
   id: string
@@ -132,6 +129,46 @@ type ReflectionRow = {
   updated_at: string
 }
 
+type FeatureFlagRow = {
+  id: string
+  household_id: string
+  feature_key: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+type CalendarConnectionRow = {
+  id: string
+  household_id: string
+  owner_profile_id: string
+  connected_by_profile_id: string | null
+  provider: string
+  provider_account_email: string | null
+  status: string
+  last_synced_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+type CalendarEventRow = {
+  id: string
+  household_id: string
+  owner_profile_id: string
+  connection_id: string
+  provider: string
+  provider_event_id: string
+  title: string
+  starts_at: string
+  ends_at: string | null
+  all_day: boolean
+  status: string
+  hidden_at: string | null
+  synced_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type OutcomeRole = 'mci' | 'cp'
 export type OutcomeSession = 'pre' | 'post'
 
@@ -232,8 +269,13 @@ function medianDisplay(values: number[]) {
 
 function cohortForHousehold(household: HouseholdRow) {
   const name = household.name.toLowerCase()
-  if (name.includes('test') || name.includes('demo') || name.includes('internal')) {
-    return { cohort: 'test', prefix: 'D' }
+  if (
+    INTERNAL_PREVIEW_NAMES.some(internalName => name.includes(internalName)) ||
+    name.includes('test') ||
+    name.includes('demo') ||
+    name.includes('internal')
+  ) {
+    return { cohort: 'internal', prefix: 'I' }
   }
   return { cohort: 'pilot-1', prefix: 'P' }
 }
@@ -259,19 +301,23 @@ function eventLabel(name: string) {
   const labels: Record<string, string> = {
     mci_dashboard_viewed: 'MCI dashboard viewed',
     care_partner_dashboard_viewed: 'Care partner dashboard viewed',
-    planned_activity_created: 'Thread created',
-    planned_activity_confirmed: 'Thread completed',
-    planned_activity_moved: 'Thread moved',
-    planned_activity_deleted: 'Thread cancelled',
+    planned_activity_created: 'Plan added',
+    planned_activity_confirmed: 'Plan completed',
+    planned_activity_moved: 'Plan moved',
+    planned_activity_deleted: 'Plan deleted',
     natural_language_plan_parsed: 'Capture parsed',
     natural_language_timeline_parsed: 'Moment captured',
-    reentry_recall_requested: 'Recovery opened',
-    reentry_moment_confirmed: 'Recovery result selected',
-    reentry_moment_rejected: 'Recovery result rejected',
+    reentry_recall_requested: 'Memory help opened',
+    reentry_moment_confirmed: 'Memory help confirmed',
+    reentry_moment_rejected: 'Memory help rejected',
+    reentry_session_exhausted: 'Memory help completed',
+    recovery_opened: 'Memory help opened',
+    recovery_result_selected: 'Memory help answer selected',
     reflection_saved: 'Reflection saved',
     sms_completed_activity_parsed: 'SMS reply parsed',
     sms_inbound_inbound_plan_reply: 'SMS reply received',
     sms_inbound_inbound_confirmation: 'SMS confirmation',
+    calendar_event_synced: 'Calendar item synced',
   }
   return labels[name] ?? name.replaceAll('_', ' ')
 }
@@ -321,6 +367,9 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     recoverySessions,
     recoveryMoments,
     reflections,
+    featureFlags,
+    calendarConnections,
+    calendarEvents,
   ] = await Promise.all([
     service.from('profiles').select('id,user_id,role,display_name,household_id,timezone,created_at').order('created_at'),
     service.from('households').select('id,name,created_at').order('created_at'),
@@ -353,6 +402,21 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       service.from('reflections').select('id,user_id,household_id,raw_input,ai_summary,source,reflection_date,created_at,updated_at')
         .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
       'reflections',
+    ),
+    optionalSelect<FeatureFlagRow>(
+      service.from('household_feature_flags').select('id,household_id,feature_key,enabled,created_at,updated_at')
+        .order('created_at').limit(20000),
+      'household_feature_flags',
+    ),
+    optionalSelect<CalendarConnectionRow>(
+      service.from('calendar_connections').select('id,household_id,owner_profile_id,connected_by_profile_id,provider,provider_account_email,status,last_synced_at,created_at,updated_at')
+        .order('created_at').limit(20000),
+      'calendar_connections',
+    ),
+    optionalSelect<CalendarEventRow>(
+      service.from('calendar_events').select('id,household_id,owner_profile_id,connection_id,provider,provider_event_id,title,starts_at,ends_at,all_day,status,hidden_at,synced_at,created_at,updated_at')
+        .gte('starts_at', historyStart.toISOString()).order('starts_at').limit(20000),
+      'calendar_events',
     ),
   ])
 
@@ -392,6 +456,14 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const filteredTimeline = timelineRows.filter(row => inRange(row.created_at) && householdIds.has(row.household_id))
   const filteredRecoveryMoments = recoveryMoments.filter(row => inRange(row.created_at) && householdIds.has(row.household_id))
   const filteredReflections = reflections.filter(row => inRange(row.created_at) && householdIds.has(row.household_id))
+  const filteredFeatureFlags = featureFlags.filter(row => householdIds.has(row.household_id))
+  const filteredCalendarConnections = calendarConnections.filter(row => householdIds.has(row.household_id))
+  const filteredCalendarEvents = calendarEvents.filter(row =>
+    inRange(row.starts_at) &&
+    householdIds.has(row.household_id) &&
+    row.status !== 'cancelled' &&
+    !row.hidden_at
+  )
 
   const activityDatesForProfile = (profile: ProfileRow) => [
     ...events.filter(event => event.profile_id === profile.id).map(event => event.created_at),
@@ -400,10 +472,11 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     ...activities.filter(activity => activity.logged_by === profile.id).map(activity => activity.occurred_at),
     ...timelineRows.filter(event => event.profile_id === profile.id).map(event => event.created_at),
     ...recoveryMoments.filter(moment => moment.profile_id === profile.id).map(moment => moment.created_at),
+    ...calendarEvents.filter(event => event.owner_profile_id === profile.id && event.status !== 'cancelled' && !event.hidden_at).map(event => event.starts_at),
   ]
 
   const cohortSequences = new Map<string, number>()
-  const dyads = includedHouseholds.map((household, index) => {
+  const dyads = includedHouseholds.map((household) => {
     const cohortInfo = cohortForHousehold(household)
     const nextSequence = (cohortSequences.get(cohortInfo.cohort) ?? 0) + 1
     cohortSequences.set(cohortInfo.cohort, nextSequence)
@@ -413,6 +486,13 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const onboardingAt = firstDate([household.created_at, ...members.map(member => member.created_at)]) ?? household.created_at
     const days = daysSince(onboardingAt, now)
     const phase = studyPhase(days)
+    const householdFeatureFlags = filteredFeatureFlags.filter(flag => flag.household_id === household.id)
+    const householdCalendarConnections = filteredCalendarConnections.filter(connection => connection.household_id === household.id)
+    const householdCalendarEvents = filteredCalendarEvents.filter(event => event.household_id === household.id)
+    const upcomingCalendarEvents = householdCalendarEvents
+      .filter(event => new Date(event.starts_at) >= now)
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+    const nextCalendar = upcomingCalendarEvents[0] ?? null
     const mciLastActive = mci ? latestDate(activityDatesForProfile(mci)) : null
     const cpLastActive = cp ? latestDate(activityDatesForProfile(cp)) : null
     const householdActivityDates = [
@@ -422,6 +502,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       ...activities.filter(activity => activity.household_id === household.id).map(activity => activity.occurred_at),
       ...timelineRows.filter(event => event.household_id === household.id).map(event => event.created_at),
       ...recoveryMoments.filter(moment => moment.household_id === household.id).map(moment => moment.created_at),
+      ...calendarEvents.filter(event => event.household_id === household.id && event.status !== 'cancelled' && !event.hidden_at).map(event => event.starts_at),
     ]
     const lastActive = latestDate(householdActivityDates)
     const mciPrompts = sms.filter(message => message.profile_id === mci?.id && message.direction === 'outbound' && PROMPT_PURPOSES.has(message.purpose))
@@ -439,8 +520,8 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       id: household.id,
       cohort: cohortInfo.cohort,
       code: `${cohortInfo.prefix}${String(nextSequence).padStart(2, '0')}`,
-      label: NEUTRAL_LABELS[index % NEUTRAL_LABELS.length],
-      displayLabel: `${cohortInfo.prefix}${String(nextSequence).padStart(2, '0')} · ${NEUTRAL_LABELS[index % NEUTRAL_LABELS.length]}`,
+      label: household.name,
+      displayLabel: `${cohortInfo.prefix}${String(nextSequence).padStart(2, '0')} · ${household.name}`,
       name: household.name,
       timezone: mci?.timezone ?? cp?.timezone ?? 'America/New_York',
       onboardingAt,
@@ -459,6 +540,14 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       cpLastActive,
       lastActive,
       mciSmsResponseRate: percent(promptsWithReply, mciPrompts.length),
+      pilotPreviewEnabled: householdFeatureFlags.some(flag => flag.feature_key === 'pilot_preview' && flag.enabled),
+      calendarSyncEnabled: householdFeatureFlags.some(flag => flag.feature_key === 'calendar_sync' && flag.enabled),
+      calendarConnected: householdCalendarConnections.some(connection => connection.status === 'active'),
+      calendarLastSyncedAt: latestDate(householdCalendarConnections.map(connection => connection.last_synced_at ?? connection.updated_at)),
+      calendarEventsInWindow: householdCalendarEvents.length,
+      calendarUpcomingCount: upcomingCalendarEvents.length,
+      nextCalendarTitle: nextCalendar?.title ?? null,
+      nextCalendarAt: nextCalendar?.starts_at ?? null,
       statusFlag: [mciHours, cpHours].some(value => value === null || value > 48)
         ? 'red'
         : [mciHours, cpHours].some(value => value !== null && value > 24)
@@ -490,7 +579,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
           : 'pending'
     return {
       id: moment.id,
-      code: dyad?.code ?? 'D--',
+      code: dyad?.code ?? '--',
       householdId: moment.household_id,
       day: dyad ? studyDay(dyad.onboardingAt, shownAt) : 1,
       t: dyad ? studyDay(dyad.onboardingAt, shownAt) + (new Date(shownAt).getUTCHours() / 24) : 1,
@@ -521,7 +610,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       const dyad = event.household_id ? dyadByHousehold.get(event.household_id) : undefined
       return {
         id: event.id,
-        code: dyad?.code ?? 'D--',
+        code: dyad?.code ?? '--',
         householdId: event.household_id ?? '',
         day: dyad ? studyDay(dyad.onboardingAt, event.created_at) : 1,
         t: dyad ? studyDay(dyad.onboardingAt, event.created_at) + (new Date(event.created_at).getUTCHours() / 24) : 1,
@@ -553,7 +642,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     .filter(plan => plan.status === 'planned' && new Date(plan.planned_for) < now)
     .map(plan => ({
       id: plan.id,
-      code: dyadCodes.get(plan.household_id) ?? 'D--',
+      code: dyadCodes.get(plan.household_id) ?? '--',
       householdId: plan.household_id,
       day: studyDay(dyadByHousehold.get(plan.household_id)?.onboardingAt ?? plan.created_at, plan.created_at),
       t: studyDay(dyadByHousehold.get(plan.household_id)?.onboardingAt ?? plan.created_at, plan.created_at),
@@ -604,6 +693,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     ...activities.map(activity => activity.created_at),
     ...timelineRows.map(event => event.created_at),
     ...recoveryMoments.map(moment => moment.updated_at),
+    ...calendarEvents.map(event => event.updated_at ?? event.synced_at ?? event.starts_at),
   ])
   const lastCronAt = latestDate(events.filter(event => event.event_name.includes('cron') || event.event_name.includes('sweep')).map(event => event.created_at))
   const lastCronHours = hoursSince(lastCronAt, now)
@@ -628,7 +718,15 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       const pre = outcomeByDyad.get(dyad.id)?.get(outcomeKey(role, 'pre', measure.key))
       const post = outcomeByDyad.get(dyad.id)?.get(outcomeKey(role, 'post', measure.key))
       const delta = typeof pre?.score === 'number' && typeof post?.score === 'number' ? post.score - pre.score : null
-      return { key: measure.key, role, label: measure.label, pre: pre?.score ?? null, post: post?.score ?? null, delta }
+      return {
+        key: measure.key,
+        role,
+        profileId: role === 'mci' ? dyad.mciProfileId : dyad.cpProfileId,
+        label: measure.label,
+        pre: pre?.score ?? null,
+        post: post?.score ?? null,
+        delta,
+      }
     }),
   }))
 
@@ -637,6 +735,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const householdSms = filteredSms.filter(message => message.household_id === dyad.id)
     return {
       id: dyad.id,
+      code: dyad.code,
       name: dyad.name,
       studyPhase: dyad.studyPhase,
       members: [dyad.mciName, dyad.cpName].filter(Boolean).join(', '),
@@ -645,6 +744,10 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       smsReplies: householdSms.filter(message => message.direction === 'inbound').length,
       lastActive: dyad.lastActive,
       statusFlag: dyad.statusFlag,
+      pilotPreviewEnabled: dyad.pilotPreviewEnabled,
+      calendarConnected: dyad.calendarConnected,
+      calendarUpcomingCount: dyad.calendarUpcomingCount,
+      nextCalendarAt: dyad.nextCalendarAt,
     }
   })
 
@@ -679,6 +782,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const dyadEpisodes = allRecoveryEpisodes.filter(episode => episode.householdId === dyad.id)
     const dyadMoments = filteredRecoveryMoments.filter(moment => moment.household_id === dyad.id)
     const dyadReflections = filteredReflections.filter(reflection => reflection.household_id === dyad.id)
+    const dyadCalendarEvents = filteredCalendarEvents.filter(event => event.household_id === dyad.id)
     const w1Cp = dyadEvents.filter(event => event.event_name === 'care_partner_dashboard_viewed' && studyDay(dyad.onboardingAt, event.created_at) <= 7).length
     const w2Cp = dyadEvents.filter(event => event.event_name === 'care_partner_dashboard_viewed' && studyDay(dyad.onboardingAt, event.created_at) > 7).length
     const week1Days = Math.min(7, Math.max(1, dyad.currentStudyDay))
@@ -688,6 +792,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       ...dyadEvents.filter(event => SUBSTANTIVE_EVENTS.has(event.event_name)).map(event => studyDay(dyad.onboardingAt, event.created_at)),
       ...dyadSms.filter(message => message.direction === 'inbound').map(message => studyDay(dyad.onboardingAt, message.created_at)),
       ...dyadReflections.map(reflection => studyDay(dyad.onboardingAt, reflection.created_at)),
+      ...dyadCalendarEvents.map(event => studyDay(dyad.onboardingAt, event.starts_at)),
     ])
     return {
       ...dyad,
@@ -712,14 +817,15 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       reflectionsWeek2: week2Value(dyad.currentStudyDay, dyadReflections.filter(reflection => studyDay(dyad.onboardingAt, reflection.created_at) > 7).length),
       cleanWindowAttempts: dyadEpisodes.filter(episode => episode.day >= 12 && episode.day <= 13).length,
       daysDark: Math.max(0, dyad.currentStudyDay - Math.max(0, ...[...daySet])),
-      useTrend: Array.from({ length: Math.min(14, Math.max(1, dyad.currentStudyDay)) }, (_, index) => {
+      useTrend: Array.from({ length: Math.min(STUDY_DAYS, Math.max(1, dyad.currentStudyDay)) }, (_, index) => {
         const day = index + 1
         return dyadPlans.filter(plan => studyDay(dyad.onboardingAt, plan.created_at) === day).length +
           dyadEvents.filter(event => SUBSTANTIVE_EVENTS.has(event.event_name) && studyDay(dyad.onboardingAt, event.created_at) === day).length +
           dyadEpisodes.filter(episode => episode.day === day).length +
-          dyadReflections.filter(reflection => studyDay(dyad.onboardingAt, reflection.created_at) === day).length
+          dyadReflections.filter(reflection => studyDay(dyad.onboardingAt, reflection.created_at) === day).length +
+          dyadCalendarEvents.filter(event => studyDay(dyad.onboardingAt, event.starts_at) === day).length
       }),
-      cpOpenTrend: Array.from({ length: Math.min(14, Math.max(1, dyad.currentStudyDay)) }, (_, index) => {
+      cpOpenTrend: Array.from({ length: Math.min(STUDY_DAYS, Math.max(1, dyad.currentStudyDay)) }, (_, index) => {
         const day = index + 1
         return dyadEvents.filter(event => event.event_name === 'care_partner_dashboard_viewed' && studyDay(dyad.onboardingAt, event.created_at) === day).length
       }),
@@ -793,15 +899,32 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
 
   const eventCounts = new Map<string, number>()
   for (const event of filteredEvents.filter(event => isStudyEvent(event.event_name))) eventCounts.set(event.event_name, (eventCounts.get(event.event_name) ?? 0) + 1)
+  if (filteredCalendarEvents.length > 0) eventCounts.set('calendar_event_synced', filteredCalendarEvents.length)
   const features = [...eventCounts.entries()].map(([name, count]) => ({ name, label: eventLabel(name), count })).sort((a, b) => b.count - a.count).slice(0, 12)
   const pilotDyads = perDyad.filter(dyad => dyad.cohort === 'pilot-1')
+  const internalDyads = perDyad.filter(dyad => dyad.cohort === 'internal')
   const activePilotDyads = pilotDyads.filter(dyad => dyad.active)
   const week2CpValues = perDyad.map(dyad => dyad.week2CpOpensPerDay).filter((value): value is number => typeof value === 'number')
   const week2UseValues = perDyad.map(dyad => dyad.useDaysWeek2).filter((value): value is number => typeof value === 'number')
-  const exportDyads = perDyad.map(({ id, code, cohort, active, currentStudyDay, daysDark, flagCount, attempts, resumed, nothingHeld, captured, completed, unresolved, smsSent, smsDelivered, smsReplied }) => ({
+  const pilotReadiness = {
+    internalDyads: internalDyads.length,
+    pilotDyads: pilotDyads.length,
+    pilotPreviewEnabled: perDyad.filter(dyad => dyad.pilotPreviewEnabled).length,
+    calendarSyncEnabled: perDyad.filter(dyad => dyad.calendarSyncEnabled).length,
+    calendarConnected: perDyad.filter(dyad => dyad.calendarConnected).length,
+    silentDyads: perDyad.filter(dyad => dyad.silentHours > 48).length,
+    missingMci: perDyad.filter(dyad => !dyad.mciProfileId).length,
+    missingCp: perDyad.filter(dyad => !dyad.cpProfileId).length,
+    outcomesStarted: outcomeRows.filter(row => row.scores.some(score => score.pre !== null || score.post !== null)).length,
+  }
+  const exportDyads = perDyad.map(({ id, code, cohort, name, mciName, cpName, studyPhase, active, currentStudyDay, daysDark, flagCount, attempts, resumed, nothingHeld, captured, completed, unresolved, smsSent, smsDelivered, smsReplied, pilotPreviewEnabled, calendarConnected, calendarUpcomingCount, nextCalendarAt }) => ({
     id,
     code,
     cohort,
+    name,
+    mciName,
+    cpName,
+    studyPhase,
     active,
     currentStudyDay,
     daysDark,
@@ -815,7 +938,40 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     smsSent,
     smsDelivered,
     smsReplied,
+    pilotPreviewEnabled,
+    calendarConnected,
+    calendarUpcomingCount,
+    nextCalendarAt,
   }))
+  const studyArc = perDyad.map(dyad => ({
+    householdId: dyad.id,
+    householdName: dyad.name,
+    studyPhase: dyad.studyPhase,
+    days: Array.from({ length: STUDY_DAYS }, (_, index) => {
+      const day = index + 1
+      const dayEvents = events.filter(event => event.household_id === dyad.id && studyDay(dyad.onboardingAt, event.created_at) === day)
+      const daySms = sms.filter(message => message.household_id === dyad.id && studyDay(dyad.onboardingAt, message.created_at) === day)
+      const dayPlans = plans.filter(plan => plan.household_id === dyad.id && studyDay(dyad.onboardingAt, plan.created_at) === day)
+      const dayCompletions = plans.filter(plan => plan.household_id === dyad.id && plan.confirmed_at && studyDay(dyad.onboardingAt, plan.confirmed_at) === day)
+      const dayCalendar = filteredCalendarEvents.filter(event => event.household_id === dyad.id && studyDay(dyad.onboardingAt, event.starts_at) === day)
+      return {
+        day,
+        planLogged: dayPlans.length,
+        planCompleted: dayCompletions.length,
+        smsReplied: daySms.filter(message => message.direction === 'inbound').length,
+        contextViewed: dayEvents.filter(isDashboardEvent).length,
+        calendarItem: dayCalendar.length,
+      }
+    }),
+  }))
+  const exportStudyArc = studyArc.flatMap(row =>
+    row.days.map(day => ({
+      householdId: row.householdId,
+      householdName: row.householdName,
+      studyPhase: row.studyPhase,
+      ...day,
+    }))
+  )
 
   return {
     filters,
@@ -827,8 +983,8 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     },
     households: includedHouseholds.map(household => ({ id: household.id, name: household.name })),
     cohorts: [
-      { id: 'pilot-1', label: 'Pilot cohort', prefix: 'P', active: true, count: pilotDyads.length },
-      { id: 'test', label: 'Internal testers', prefix: 'D', active: false, count: perDyad.filter(dyad => dyad.cohort === 'test').length },
+      { id: 'internal', label: 'Internal preview', prefix: 'I', active: internalDyads.length > 0, count: internalDyads.length },
+      { id: 'pilot-1', label: 'Participant pilot', prefix: 'P', active: internalDyads.length === 0, count: pilotDyads.length },
     ],
     dyads,
     perDyad,
@@ -911,26 +1067,9 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       attemptsNearContact: allRecoveryEpisodes.filter(episode => [2, 7].some(day => Math.abs(episode.day - day) <= 1)).length,
       cleanWindowAttempts: allRecoveryEpisodes.filter(episode => episode.day >= 12 && episode.day <= 13).length,
     },
-    studyArc: perDyad.map(dyad => ({
-      householdId: dyad.id,
-      householdName: dyad.name,
-      studyPhase: dyad.studyPhase,
-      days: Array.from({ length: 28 }, (_, index) => {
-        const day = index + 1
-        const dayEvents = events.filter(event => event.household_id === dyad.id && studyDay(dyad.onboardingAt, event.created_at) === day)
-        const daySms = sms.filter(message => message.household_id === dyad.id && studyDay(dyad.onboardingAt, message.created_at) === day)
-        const dayPlans = plans.filter(plan => plan.household_id === dyad.id && studyDay(dyad.onboardingAt, plan.created_at) === day)
-        const dayCompletions = plans.filter(plan => plan.household_id === dyad.id && plan.confirmed_at && studyDay(dyad.onboardingAt, plan.confirmed_at) === day)
-        return {
-          day,
-          planLogged: dayPlans.length,
-          planCompleted: dayCompletions.length,
-          smsReplied: daySms.filter(message => message.direction === 'inbound').length,
-          contextViewed: dayEvents.filter(isDashboardEvent).length,
-        }
-      }),
-    })),
+    studyArc,
     features,
+    pilotReadiness,
     outcomeMeasures: OUTCOME_MEASURES,
     outcomeRows,
     householdRows,
@@ -945,10 +1084,16 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       sms: filteredSms,
       plans: filteredPlans,
       outcomes,
+      outcome_rows: outcomeRows,
+      study_arc: exportStudyArc,
       timeline: filteredTimeline,
       recovery_moments: filteredRecoveryMoments,
       recovery_sessions: recoverySessions.filter(row => householdIds.has(row.household_id)),
       reflections: filteredReflections,
+      feature_flags: filteredFeatureFlags,
+      calendar_connections: filteredCalendarConnections,
+      calendar_events: filteredCalendarEvents,
+      pilot_readiness: [pilotReadiness],
     },
   }
 }

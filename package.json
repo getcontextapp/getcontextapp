@@ -8,6 +8,7 @@
     "start": "next start",
     "test": "tsx --test src/lib/*.test.ts",
     "test:weekly-summary": "tsx --test src/lib/weekly-summary.test.ts",
+    "test:pilot-readiness": "tsx scripts/pilot-readiness-check.ts",
     "lint": "eslint"
   },
   "dependencies": {
