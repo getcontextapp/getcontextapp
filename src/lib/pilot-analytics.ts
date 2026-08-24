@@ -267,14 +267,14 @@ function medianDisplay(values: number[]) {
   return value === null ? 'Not instrumented' : value
 }
 
-function cohortForHousehold(household: HouseholdRow) {
-  const name = household.name.toLowerCase()
-  if (
-    INTERNAL_PREVIEW_NAMES.some(internalName => name.includes(internalName)) ||
-    name.includes('test') ||
-    name.includes('demo') ||
-    name.includes('internal')
-  ) {
+function cohortForHousehold(household: HouseholdRow, members: ProfileRow[], featureFlags: FeatureFlagRow[]) {
+  const identity = [household.name, ...members.map(member => member.display_name)]
+    .join(' ')
+    .toLowerCase()
+  const namedInternalHousehold = INTERNAL_PREVIEW_NAMES.some(internalName => identity.includes(internalName))
+  const explicitlyFlaggedInternal = featureFlags.some(flag => flag.feature_key === 'pilot_preview' && flag.enabled)
+
+  if (namedInternalHousehold || explicitlyFlaggedInternal) {
     return { cohort: 'internal', prefix: 'I' }
   }
   return { cohort: 'pilot-1', prefix: 'P' }
@@ -477,9 +477,6 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
 
   const cohortSequences = new Map<string, number>()
   const dyads = includedHouseholds.map((household) => {
-    const cohortInfo = cohortForHousehold(household)
-    const nextSequence = (cohortSequences.get(cohortInfo.cohort) ?? 0) + 1
-    cohortSequences.set(cohortInfo.cohort, nextSequence)
     const members = profilesByHousehold.get(household.id) ?? []
     const mci = members.find(member => member.role === 'mci_user') ?? null
     const cp = members.find(member => member.role === 'care_partner') ?? null
@@ -487,6 +484,9 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const days = daysSince(onboardingAt, now)
     const phase = studyPhase(days)
     const householdFeatureFlags = filteredFeatureFlags.filter(flag => flag.household_id === household.id)
+    const cohortInfo = cohortForHousehold(household, members, householdFeatureFlags)
+    const nextSequence = (cohortSequences.get(cohortInfo.cohort) ?? 0) + 1
+    cohortSequences.set(cohortInfo.cohort, nextSequence)
     const householdCalendarConnections = filteredCalendarConnections.filter(connection => connection.household_id === household.id)
     const householdCalendarEvents = filteredCalendarEvents.filter(event => event.household_id === household.id)
     const upcomingCalendarEvents = householdCalendarEvents

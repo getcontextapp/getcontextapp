@@ -31,6 +31,12 @@ for (const token of [
 ]) {
   expectIncludes(analytics, token, 'pilot analytics')
 }
+for (const token of [
+  "name.includes('demo')",
+  "name.includes('internal')",
+]) {
+  expectExcludes(analytics, token, 'pilot analytics cohort rules')
+}
 
 const dashboard = read('src/app/admin/analytics/AnalyticsDashboard.tsx')
 for (const token of [

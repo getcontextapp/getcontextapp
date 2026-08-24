@@ -88,5 +88,15 @@ cross join (values ('pilot_preview'), ('calendar_sync')) as feature(feature_key)
 where lower(h.name) like '%bilau%'
    or lower(h.name) like '%baru%'
    or lower(h.name) like '%davis%'
+   or exists (
+     select 1
+     from profiles p
+     where p.household_id = h.id
+       and (
+         lower(p.display_name) like '%bilau%'
+         or lower(p.display_name) like '%baru%'
+         or lower(p.display_name) like '%davis%'
+       )
+   )
 on conflict (household_id, feature_key)
 do update set enabled = excluded.enabled, updated_at = now();
