@@ -1,13 +1,16 @@
 import { redirect } from 'next/navigation'
+import HomePage from './home/page'
 import { createServerClient } from '@/lib/supabase-server'
 import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
+
+export { metadata } from './home/page'
 
 export default async function RootPage() {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {
-    redirect('/auth/login')
+    return <HomePage />
   }
 
   // Get profile to determine role

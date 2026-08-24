@@ -156,7 +156,15 @@ export default function HomePage() {
             <span className="landing-logo-mark" aria-hidden="true">c</span>
             <span className="landing-logo-name">context</span>
           </a>
-          <p>An Ajao Labs product. Context is a memory support tool and is not a medical device. Questions? Write to <a href="mailto:getcontextapp@gmail.com">getcontextapp@gmail.com</a>.</p>
+          <div className="landing-footer-copy">
+            <p>Context is a memory support tool and is not a medical device. Questions? Write to <a href="mailto:getcontextapp@gmail.com">getcontextapp@gmail.com</a>.</p>
+            <nav aria-label="Footer links">
+              <a href="/privacy">Privacy Policy</a>
+              <a href="/terms">Terms and Conditions</a>
+              <a href="/auth/login">Sign in</a>
+            </nav>
+            <p>(C) 2026 Context. All rights reserved. Terms and Conditions apply.</p>
+          </div>
         </div>
       </footer>
 
@@ -333,7 +341,7 @@ function LandingStyles() {
       .landing-f-grid{display:grid;grid-template-columns:1fr 1fr;gap:.9rem}.landing-field label{display:block;font-weight:700;font-size:.86rem;margin-bottom:.35rem}.landing-field label span{font-weight:400;color:var(--ink-soft)}.landing-field input,.landing-field select{width:100%;font:inherit;font-size:1rem;color:var(--ink);background:var(--cream);border:1.5px solid var(--line);border-radius:12px;padding:.75rem .9rem;min-height:52px}.landing-submit{width:100%;margin-top:1rem}.landing-f-privacy{display:flex;gap:.5rem;align-items:center;font-size:.82rem;color:var(--ink-soft);margin-top:.9rem}.landing-form-status{margin-top:1rem;padding:.9rem 1.1rem;border-radius:12px;font-weight:700;font-size:.95rem}.landing-form-status.ok{background:var(--green-tint);color:var(--green-dark)}.landing-form-status.err{background:#FBEDED;color:#8C2B2B}
       .landing-pilot-photo{position:relative;min-height:100%;background:radial-gradient(closest-side at 65% 35%,rgba(217,201,138,.55),transparent 75%),radial-gradient(closest-side at 30% 80%,rgba(104,134,86,.4),transparent 70%),linear-gradient(160deg,#E9DFC9,#CBD3BC);overflow:hidden}.landing-photo-person{position:absolute;inset:18% 8% 0 18%}.landing-photo-head{position:absolute;right:24%;top:4%;width:88px;height:88px;border-radius:50%;background:linear-gradient(145deg,#D2A06E,#8F6B4E);box-shadow:0 16px 36px rgba(30,27,22,.18)}.landing-photo-body{position:absolute;right:6%;bottom:-4%;width:210px;height:250px;border-radius:110px 110px 0 0;background:linear-gradient(145deg,#E7D8BE,#B6A37F)}.landing-photo-phone{position:absolute;right:50%;bottom:18%;width:54px;height:92px;border-radius:12px;background:#2E271E;transform:rotate(-10deg);box-shadow:0 20px 30px rgba(30,27,22,.22)}
       .landing-faq-wrap{max-width:780px}.landing-faq h2{margin-bottom:1.8rem}.landing-faq details{background:#fff;border:1px solid var(--line);border-radius:16px;margin-bottom:.9rem;box-shadow:var(--shadow-sm)}.landing-faq summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:1rem;padding:1.15rem 1.4rem;font-weight:800;font-size:1.05rem;min-height:56px}.landing-faq summary::-webkit-details-marker{display:none}.landing-faq summary:after{content:"+";font-family:"Lora",serif;font-size:1.5rem;color:var(--green);line-height:1}.landing-faq details[open] summary:after{content:"-"}.landing-faq details p{padding:0 1.4rem 1.25rem;color:var(--ink-soft);font-size:1rem;max-width:60ch;margin:0}
-      .landing-footer{border-top:1px solid var(--line);padding:2.6rem 0 3rem;background:var(--cream)}.landing-footer .landing-wrap{display:flex;flex-wrap:wrap;gap:1.4rem;justify-content:space-between;align-items:baseline}.landing-footer p{font-size:.9rem;color:var(--ink-soft);max-width:54ch}.landing-footer a{color:var(--green-dark)}
+      .landing-footer{border-top:1px solid var(--line);padding:2.6rem 0 3rem;background:var(--cream)}.landing-footer .landing-wrap{display:flex;flex-wrap:wrap;gap:1.4rem;justify-content:space-between;align-items:flex-start}.landing-footer-copy{display:grid;gap:.7rem;justify-items:end;text-align:right}.landing-footer p{font-size:.9rem;color:var(--ink-soft);max-width:58ch;margin:0}.landing-footer a{color:var(--green-dark)}.landing-footer nav{display:flex;flex-wrap:wrap;gap:1rem;justify-content:flex-end}.landing-footer nav a{font-size:.95rem;font-weight:800;text-decoration:none}.landing-footer nav a:hover{text-decoration:underline}
       @media (prefers-reduced-motion:reduce){.landing-btn,.landing-arr{transition:none!important}}
       @media (max-width:1060px){.landing-flow{grid-template-columns:1fr 1fr;gap:1.6rem}.landing-flow-arrow{display:none}.landing-step-head{min-height:0}.landing-mini{min-height:0}}
       @media (max-width:1020px){.landing-pilot-inner{grid-template-columns:1fr 1.2fr}.landing-pilot-photo{display:none}.landing-pilot-form{padding-right:clamp(2rem,4vw,3.2rem)}}
@@ -341,6 +349,7 @@ function LandingStyles() {
       @media (max-width:900px){.landing-care-inner{grid-template-columns:1fr}.landing-nav-links{display:none}}
       @media (max-width:760px){.landing-pilot-inner{grid-template-columns:1fr}.landing-pilot-form{padding:0 clamp(1.4rem,4vw,3.2rem) clamp(2rem,4vw,3.2rem)}.landing-f-grid{grid-template-columns:1fr}}
       @media (max-width:640px){.landing-flow{grid-template-columns:1fr}.landing-strip-inner{grid-template-columns:1fr}.landing-page h1{font-size:3rem}.landing-phone{width:min(330px,100%)}}
+      @media (max-width:560px){.landing-footer .landing-wrap{display:grid}.landing-footer-copy{justify-items:start;text-align:left}.landing-footer nav{justify-content:flex-start}}
     `}</style>
   )
 }
