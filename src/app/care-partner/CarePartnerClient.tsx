@@ -7,8 +7,9 @@ import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import { formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 import CalendarCard from '@/components/calendar/CalendarCard'
+import ReadOnlyDailyReflection from '@/components/mci/ReadOnlyDailyReflection'
 import { ACTIVITY_TILES } from '@/types'
-import type { Profile, ActivityLog, PlannedActivity } from '@/types'
+import type { Profile, ActivityLog, PlannedActivity, Reflection } from '@/types'
 import type { CalendarDashboardData } from '@/lib/calendar-sync'
 
 interface Props {
@@ -16,6 +17,7 @@ interface Props {
   mciProfile: Profile | null
   initialActivities: ActivityLog[]
   initialPlannedActivities: PlannedActivity[]
+  initialReflection: Reflection | null
   calendar: CalendarDashboardData
   dashboardSource: 'sms_link' | 'direct' | 'home_screen'
 }
@@ -92,7 +94,7 @@ const PERIOD_ORDER: Record<string, number> = {
 
 const SHOW_SMS_TEST_TOOLS = process.env.NEXT_PUBLIC_SHOW_SMS_TEST_TOOLS === 'true'
 
-export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities, calendar, dashboardSource }: Props) {
+export default function CarePartnerClient({ careProfile, mciProfile, initialActivities, initialPlannedActivities, initialReflection, calendar, dashboardSource }: Props) {
   const supabase = createClient()
   const [activities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
@@ -403,6 +405,12 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             </div>
           )}
         </div>
+
+        {initialReflection && (
+          <div className="animate-fade-up delay-300">
+            <ReadOnlyDailyReflection reflection={initialReflection} />
+          </div>
+        )}
 
       </div>
 

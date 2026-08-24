@@ -5,6 +5,7 @@ import { getLinkedMciProfile } from '@/lib/household-links'
 import { linkSavedPhoneToAuth } from '@/lib/auth-phone'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import { getCalendarDashboardData } from '@/lib/calendar-sync'
+import { reflectionToClient } from '@/lib/reflections'
 import CarePartnerClient from './CarePartnerClient'
 
 function dashboardSource(value: string | string[] | undefined) {
@@ -57,6 +58,17 @@ export default async function CarePartnerPage({
     .in('status', ['planned', 'not_now', 'confirmed'])
     .order('created_at', { ascending: true })
   const calendar = await getCalendarDashboardData(supabase, linkedProfile)
+  const reflectionDate = linkedProfile
+    ? getLocalDateKey(new Date(), linkedProfile.timezone)
+    : todayKey
+  const { data: reflection } = linkedProfile
+    ? await supabase
+      .from('reflections')
+      .select('*')
+      .eq('user_id', linkedProfile.user_id)
+      .eq('reflection_date', reflectionDate)
+      .maybeSingle()
+    : { data: null }
 
   return (
     <CarePartnerClient
@@ -64,6 +76,7 @@ export default async function CarePartnerPage({
       mciProfile={linkedProfile}
       initialActivities={activities ?? []}
       initialPlannedActivities={plannedActivities ?? []}
+      initialReflection={reflection ? reflectionToClient(reflection) : null}
       calendar={calendar}
       dashboardSource={dashboardSource(params?.source)}
     />
