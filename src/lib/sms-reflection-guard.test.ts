@@ -14,8 +14,15 @@ test('blocks SMS task commands from being saved as reflection', () => {
     'delete 1 and 2',
     'remove all',
     'stop repeating',
+    'stop gym from repeating',
+    'cancel repeating gym',
     'done',
+    'done gym',
+    'delete gym',
     'Add: drive, go to the gym',
+    'Exactly, so add: Drive, go to the gym',
+    'Please add drive and gym',
+    'Drive, go to the gym in the evening, find 3k',
     'I plan to drive and go to the gym',
     'change gym to 6',
     'reschedule gym to evening',
@@ -34,6 +41,7 @@ test('allows ordinary reflection replies after a reflection prompt', () => {
   const reflections = [
     'I felt good today after lunch.',
     'Went grocery shopping and called a friend.',
+    'Went to the gym and felt good.',
     'I had lunch and felt productive.',
   ]
 

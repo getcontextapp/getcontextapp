@@ -6,10 +6,18 @@ import { buildPlanSavedReply, dashboardLink, logSmsMessage, normalizePhone, twim
 import { getSmsProfileMatch } from '@/lib/household-links'
 import { trackEvent } from '@/lib/analytics'
 import { addDaysToKey } from '@/lib/task-scheduling'
-import { ensureNextOccurrence, ensureRepeatOccurrencesForDate, findMatchingRepeatFamily, findMatchingRepeatOccurrence } from '@/lib/task-scheduling-server'
+import { ensureNextOccurrence, ensureRepeatOccurrencesForDate, findMatchingRepeatFamily, findMatchingRepeatOccurrence, retireRepeatFamily } from '@/lib/task-scheduling-server'
 import { saveReflectionInput } from '@/lib/reflections'
 import { findPlanUpdateIntent, formatPlanUpdateReply } from '@/lib/plan-update-intent'
 import { shouldSaveSmsAsReflectionReply } from '@/lib/sms-reflection-guard'
+import {
+  extractDeleteTarget,
+  extractDoneTarget,
+  extractStopRepeatingTarget,
+  findBestSmsTaskMatches,
+  isClearNewSmsIntent,
+  isStopRepeatingCommand,
+} from '@/lib/sms-command-intent'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity } from '@/types'
 
 function xmlResponse(message: string) {
@@ -175,7 +183,7 @@ function parseCarryOverMoveSelection(body: string) {
 }
 
 type SelectionPrompt = {
-  action: 'complete' | 'undo' | 'delete' | 'delete_confirm'
+  action: 'complete' | 'undo' | 'delete' | 'delete_confirm' | 'stop_repeat'
   itemIds: string[]
   createdAt: string
 }
@@ -245,6 +253,19 @@ function buildDeleteConfirmReply(items: any[]) {
   return [
     `Are you sure you want to delete ${formatItemList(items.map(pendingItemLabel))}?`,
     `Reply YES to delete, or NO to keep it.`,
+  ].join('\n')
+}
+
+function buildStopRepeatChoiceReply(items: any[]) {
+  const lines = items
+    .slice(0, 8)
+    .map((item, index) => `${index + 1}. ${pendingItemLabel(item)}`)
+
+  return [
+    `Which repeating task should I stop?`,
+    ...lines,
+    ``,
+    `Reply with the number or numbers, or say cancel.`,
   ].join('\n')
 }
 
@@ -505,6 +526,109 @@ async function deletePlannedItems(
   return `Okay. I deleted ${formatItemList(labels)} from today's Context plan.`
 }
 
+async function getTodaysRepeatingItems(supabase: ReturnType<typeof createServiceClient>, profile: any) {
+  return supabase
+    .from('planned_activities')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+    .neq('repeat_rule', 'none')
+    .in('status', ['planned', 'not_now'])
+    .order('created_at', { ascending: true })
+    .limit(12)
+}
+
+async function stopRepeatingItems(
+  supabase: ReturnType<typeof createServiceClient>,
+  profile: any,
+  items: PlannedActivity[],
+) {
+  const labels: string[] = []
+
+  for (const item of items) {
+    labels.push(pendingItemLabel(item))
+    await retireRepeatFamily(supabase, item)
+
+    await trackEvent(supabase, {
+      eventName: 'sms_repeat_stopped',
+      profile,
+      userId: profile.user_id,
+      properties: {
+        planned_activity_id: item.id,
+        repeat_rule: item.repeat_rule,
+      },
+    })
+  }
+
+  return `Okay. I stopped repeating ${formatItemList(labels)}. It will not come back tomorrow.`
+}
+
+async function handleStopRepeatRequest(supabase: ReturnType<typeof createServiceClient>, profile: any, body: string) {
+  const { data: items } = await getTodaysRepeatingItems(supabase, profile)
+  const repeatingItems = (items ?? []) as PlannedActivity[]
+
+  if (repeatingItems.length === 0) {
+    return {
+      reply: `I do not see repeating tasks in today's Context plan.`,
+      prompt: false,
+      selectedItems: [] as PlannedActivity[],
+    }
+  }
+
+  const target = extractStopRepeatingTarget(body)
+  if (!target) {
+    return {
+      reply: buildStopRepeatChoiceReply(repeatingItems),
+      prompt: true,
+      selectedItems: [] as PlannedActivity[],
+    }
+  }
+
+  const matches = findBestSmsTaskMatches(target, repeatingItems)
+  if (matches.length === 1) {
+    return {
+      reply: await stopRepeatingItems(supabase, profile, matches),
+      prompt: false,
+      selectedItems: matches,
+    }
+  }
+
+  return {
+    reply: matches.length > 1 ? buildStopRepeatChoiceReply(matches) : buildStopRepeatChoiceReply(repeatingItems),
+    prompt: true,
+    selectedItems: matches.length > 1 ? matches : repeatingItems,
+  }
+}
+
+async function handleStopRepeatSelection(
+  supabase: ReturnType<typeof createServiceClient>,
+  profile: any,
+  body: string,
+  prompt: SelectionPrompt,
+) {
+  if (isCancelReply(body)) return 'Okay. I did not stop any repeating tasks.'
+
+  const selections = parseNumberedSelections(body)
+  if (!selections) return null
+
+  const promptItems = await loadPromptItems(supabase, profile, prompt.itemIds)
+  if (promptItems.every(item => !item)) return null
+
+  const selectedIndexes = selections === 'all'
+    ? promptItems.map((_, index) => index)
+    : selections.map(selection => selection - 1)
+
+  const selectedItems = selectedIndexes
+    .map(index => promptItems[index])
+    .filter((item): item is PlannedActivity => Boolean(item?.repeat_rule && item.repeat_rule !== 'none'))
+
+  if (selectedItems.length === 0) {
+    return buildStopRepeatChoiceReply(promptItems.filter(item => item?.repeat_rule && item.repeat_rule !== 'none'))
+  }
+
+  return stopRepeatingItems(supabase, profile, selectedItems)
+}
+
 async function handleDeleteRequest(supabase: ReturnType<typeof createServiceClient>, profile: any) {
   const { data: items } = await getTodaysPlannedItems(supabase, profile)
   if (!items || items.length === 0) {
@@ -512,6 +636,58 @@ async function handleDeleteRequest(supabase: ReturnType<typeof createServiceClie
   }
 
     return buildDeleteChoiceReply(items.filter(Boolean))
+}
+
+async function handleNamedDeleteRequest(supabase: ReturnType<typeof createServiceClient>, profile: any, target: string) {
+  const { data: items } = await getTodaysPlannedItems(supabase, profile)
+  const todaysItems = (items ?? []) as PlannedActivity[]
+  if (todaysItems.length === 0) {
+    return {
+      reply: `I do not see any tasks in today's Context plan. You can open Context here: ${dashboardLink('/mci-user')}`,
+      selectedItems: [] as PlannedActivity[],
+      promptAction: 'none' as const,
+    }
+  }
+
+  const matches = findBestSmsTaskMatches(target, todaysItems)
+  if (matches.length === 0) {
+    return {
+      reply: buildDeleteChoiceReply(todaysItems),
+      selectedItems: todaysItems.slice(0, 8),
+      promptAction: 'choose' as const,
+    }
+  }
+
+  return {
+    reply: buildDeleteConfirmReply(matches),
+    selectedItems: matches,
+    promptAction: 'confirm' as const,
+  }
+}
+
+async function handleNamedDoneRequest(supabase: ReturnType<typeof createServiceClient>, profile: any, target: string) {
+  const { data: pendingItems } = await getPendingItems(supabase, profile)
+  const items = (pendingItems ?? []) as PlannedActivity[]
+  if (items.length === 0) return null
+
+  const matches = findBestSmsTaskMatches(target, items)
+  if (matches.length === 1) {
+    return {
+      reply: await updatePendingItem(supabase, profile, matches[0], 'yes'),
+      selectedItems: matches,
+      prompt: false,
+    }
+  }
+
+  if (matches.length > 1) {
+    return {
+      reply: buildPendingChoiceReply(matches, 'finished'),
+      selectedItems: matches,
+      prompt: true,
+    }
+  }
+
+  return null
 }
 
 async function handleDeleteSelection(
@@ -598,6 +774,7 @@ async function getActiveSelectionPrompt(
     if (metadata?.completion_prompt) return { action: 'complete', itemIds, createdAt: message.created_at } satisfies SelectionPrompt
     if (metadata?.undo_prompt) return { action: 'undo', itemIds, createdAt: message.created_at } satisfies SelectionPrompt
     if (metadata?.delete_prompt) return { action: 'delete', itemIds, createdAt: message.created_at } satisfies SelectionPrompt
+    if (metadata?.stop_repeat_prompt) return { action: 'stop_repeat', itemIds, createdAt: message.created_at } satisfies SelectionPrompt
   }
 
   return null
@@ -607,16 +784,6 @@ function isPromptFresh(prompt: SelectionPrompt, now = Date.now()) {
   const age = now - Date.parse(prompt.createdAt)
   const maxAge = prompt.action === 'delete_confirm' ? DELETE_CONFIRM_MAX_AGE_MS : SELECTION_PROMPT_MAX_AGE_MS
   return Number.isFinite(age) && age >= 0 && age <= maxAge
-}
-
-function isClearNewSmsIntent(body: string) {
-  const normalized = body.trim().toLowerCase()
-  if (!normalized) return false
-  if (/^(yes|y|yep|yeah|no|n|nope|cancel|stop|nevermind|never mind)$/i.test(normalized)) return false
-  if (parseNumberedSelections(body)) return false
-  return /^(add|plan|done|finished|complete|completed|undo|status|help)\b/i.test(normalized) ||
-    /\b(i plan to|i want to|i need to|i will|i'm going to|im going to)\b/i.test(normalized) ||
-    /^add\s*:/i.test(body)
 }
 
 async function handleNumberedSelection(
@@ -906,6 +1073,41 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    if (isStopRepeatingCommand(body)) {
+      const result = await handleStopRepeatRequest(supabase, profile, body)
+      return sendActionReply(result.reply, {
+        deterministic_command: 'stop_repeating',
+        stop_repeat_prompt: result.prompt,
+        prompt_item_ids: result.prompt
+          ? promptItemIds(result.selectedItems.length ? result.selectedItems : ((await getTodaysRepeatingItems(supabase, profile)).data ?? []), 8)
+          : [],
+      })
+    }
+
+    const deleteTarget = extractDeleteTarget(body)
+    if (deleteTarget) {
+      const result = await handleNamedDeleteRequest(supabase, profile, deleteTarget)
+      return sendActionReply(result.reply, {
+        deterministic_command: 'delete_named',
+        delete_confirm_prompt: result.promptAction === 'confirm',
+        delete_prompt: result.promptAction === 'choose',
+        prompt_item_ids: promptItemIds(result.selectedItems, 8),
+      })
+    }
+
+    const doneTarget = extractDoneTarget(body)
+    if (doneTarget) {
+      const result = await handleNamedDoneRequest(supabase, profile, doneTarget)
+      if (result) {
+        return sendActionReply(result.reply, {
+          deterministic_command: 'done_named',
+          target: doneTarget,
+          completion_prompt: result.prompt,
+          prompt_item_ids: promptItemIds(result.selectedItems),
+        })
+      }
+    }
+
     if (isBareStatus(body)) {
       const { data: pendingItems } = await getPendingItems(supabase, profile)
       return sendActionReply(buildPendingStatusReply(pendingItems ?? []), {
@@ -954,6 +1156,11 @@ export async function POST(request: NextRequest) {
     if (!shouldBypassActivePrompt && activePrompt?.action === 'complete') {
       const reply = await handleNumberedSelection(supabase, profile, body, activePrompt)
       if (reply) return sendActionReply(reply, { selected_by_number: body })
+    }
+
+    if (!shouldBypassActivePrompt && activePrompt?.action === 'stop_repeat') {
+      const reply = await handleStopRepeatSelection(supabase, profile, body, activePrompt)
+      if (reply) return sendActionReply(reply, { stop_repeat_selection: body })
     }
   } catch (error) {
     console.error('[SMS] Planned activity action failed:', error)
