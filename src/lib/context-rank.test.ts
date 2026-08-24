@@ -117,6 +117,91 @@ test('what_should_i_do_next can use an upcoming calendar event as a next step', 
   assert.match(result.card.candidates[0].because.summary, /calendar/i)
 })
 
+test('what_should_i_do_next prefers the next calendar event over a broad anytime task', () => {
+  const evidence = [
+    makeEvidence({
+      id: 'anytime',
+      userId: 'u1',
+      content: 'work on Context',
+      source: 'task_planned',
+      time: { earliest: base - 12 * 60 * 60 * 1000, latest: base + 12 * 60 * 60 * 1000 },
+      provenance: 'planned_activities:anytime',
+    }),
+    makeEvidence({
+      id: 'soon-calendar',
+      userId: 'u1',
+      content: 'doctor appointment',
+      source: 'calendar_event',
+      time: {
+        earliest: base + 25 * 60 * 1000,
+        latest: base + 55 * 60 * 1000,
+        pointEstimate: base + 25 * 60 * 1000,
+      },
+      provenance: 'calendar_events:soon',
+    }),
+  ]
+  const result = runContextRank({ evidence, query: query('what_should_i_do_next'), session: session() })
+  assert.match(result.card.candidates[0].episode.activityLabel, /doctor appointment/i)
+})
+
+test('what_should_i_do_next skips a past calendar item when a future plan exists', () => {
+  const evidence = [
+    makeEvidence({
+      id: 'past-calendar',
+      userId: 'u1',
+      content: 'morning appointment',
+      source: 'calendar_event',
+      time: {
+        earliest: base - 3 * 60 * 60 * 1000,
+        latest: base - 2 * 60 * 60 * 1000,
+        pointEstimate: base - 3 * 60 * 60 * 1000,
+      },
+      provenance: 'calendar_events:past',
+    }),
+    makeEvidence({ id: 'future-plan', userId: 'u1', content: 'call the pharmacy', source: 'task_planned', time: windowAt(-45), provenance: 'planned_activities:future' }),
+  ]
+  const result = runContextRank({ evidence, query: query('what_should_i_do_next'), session: session() })
+  assert.match(result.card.candidates[0].episode.activityLabel, /call the pharmacy/i)
+  assert.doesNotMatch(result.card.candidates[0].episode.activityLabel, /morning appointment/i)
+})
+
+test('what_should_i_do_next treats completed plus planned duplicate as done, not next', () => {
+  const evidence = [
+    makeEvidence({ id: 'done', userId: 'u1', content: 'go to the gym', source: 'task_done', time: windowAt(10), provenance: 'planned_activities:done' }),
+    makeEvidence({ id: 'planned-duplicate', userId: 'u1', content: 'going to gym', source: 'task_planned', time: windowAt(-30), provenance: 'planned_activities:duplicate' }),
+    makeEvidence({ id: 'pending', userId: 'u1', content: 'work on research paper', source: 'task_planned', time: windowAt(-40), provenance: 'planned_activities:pending' }),
+  ]
+  const result = runContextRank({ evidence, query: query('what_should_i_do_next'), session: session() })
+  assert.match(result.card.candidates[0].episode.activityLabel, /work on research paper/i)
+})
+
+test('reflection can support what_was_i_doing without becoming the next step by itself', () => {
+  const evidence = [
+    makeEvidence({ id: 'reflection', userId: 'u1', content: 'worked on the Context dashboard', source: 'reflection', time: windowAt(20), provenance: 'reflections:today' }),
+  ]
+  const doing = runContextRank({ evidence, query: query('what_was_i_doing'), session: session() })
+  const next = runContextRank({ evidence, query: query('what_should_i_do_next'), session: session() })
+  assert.match(doing.card.candidates[0]?.episode.activityLabel ?? '', /context dashboard/i)
+  assert.equal(next.card.mode, 'abstain')
+})
+
+test('confirmed session memory prevents the same moment from being asked again', () => {
+  const evidence = [
+    makeEvidence({ id: 'confirmed', userId: 'u1', content: 'made breakfast', source: 'user_confirmation', time: windowAt(15), provenance: 'recovery_session_moments:confirmed' }),
+    makeEvidence({ id: 'other', userId: 'u1', content: 'went for a walk', source: 'task_done', time: windowAt(20), provenance: 'planned_activities:other' }),
+  ]
+  const result = runContextRank({
+    evidence,
+    query: query('what_was_i_doing'),
+    session: {
+      ...session(),
+      candidateStates: { 'u1:make-breakfast': 'confirmed' },
+    },
+  })
+  assert.doesNotMatch(result.card.candidates[0]?.episode.activityLabel ?? '', /breakfast/i)
+  assert.match(result.card.candidates[0]?.episode.activityLabel ?? '', /walk/i)
+})
+
 test('calendar evidence stays planned instead of completed', () => {
   const evidence = [
     makeEvidence({ id: 'calendar', userId: 'u1', content: 'dentist appointment', source: 'calendar_event', time: windowAt(5), provenance: 'calendar_events:calendar' }),

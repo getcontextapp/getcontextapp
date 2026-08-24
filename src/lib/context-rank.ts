@@ -282,6 +282,12 @@ function buildBecauseSummary(
   return `This looks relevant to what you were doing, based on ${sourceText}.`
 }
 
+function evidenceForEpisode(episode: Episode, evidenceById: Map<string, Evidence>) {
+  return episode.evidenceIds
+    .map(id => evidenceById.get(id))
+    .filter((item): item is Evidence => Boolean(item))
+}
+
 function sourceLabel(source: EvidenceSource) {
   const labels: Record<EvidenceSource, string> = {
     user_confirmation: 'what you confirmed',
@@ -421,6 +427,104 @@ function temporalRelevance(
   return decayed
 }
 
+function hasFutureOrOngoingCalendar(evidence: Evidence[], queryTime: number) {
+  return evidence.some(item => item.source === 'calendar_event' && item.time.latest >= queryTime)
+}
+
+function hasFutureCalendarStart(evidence: Evidence[], queryTime: number) {
+  return evidence.some(item => item.source === 'calendar_event' && (item.time.pointEstimate ?? item.time.earliest) >= queryTime)
+}
+
+function exactFutureTime(item: Evidence, queryTime: number) {
+  const point = item.time.pointEstimate ?? item.time.earliest
+  return Number.isFinite(point) && point >= queryTime
+}
+
+function intentSourceFit(
+  evidence: Evidence[],
+  episode: Episode,
+  query: RecoveryQuery,
+) {
+  const sources = new Set(evidence.map(item => item.source))
+  const hasCompletedSignal = evidence.some(item => ['activity_log', 'task_done', 'user_confirmation', 'sms_response'].includes(item.source))
+  const hasReflection = sources.has('reflection')
+  const hasPlannedTask = sources.has('task_planned')
+  const hasReopenedTask = sources.has('task_reopened')
+  const hasCalendar = sources.has('calendar_event')
+  const futureCalendar = hasFutureOrOngoingCalendar(evidence, query.queryTime)
+  const futureCalendarStart = hasFutureCalendarStart(evidence, query.queryTime)
+
+  if (query.intent === 'what_should_i_do_next') {
+    if (hasCompletedSignal && !hasPlannedTask && !hasReopenedTask && !futureCalendar) return 0
+    if (hasCompletedSignal && hasPlannedTask && !hasReopenedTask && !futureCalendarStart) return 0
+    if (hasCalendar && !futureCalendar && !hasPlannedTask && !hasReopenedTask) return 0
+    if (hasCalendar && futureCalendarStart) return 1.15
+    if (hasReopenedTask) return 0.55
+    if (hasReflection && !hasPlannedTask && !hasCalendar) return 0.25
+    return 1
+  }
+
+  if (query.intent === 'what_was_i_doing') {
+    if (hasCompletedSignal) return 1
+    if (hasReflection) return 0.85
+    if (hasCalendar) return futureCalendarStart ? 0.25 : 0.75
+    if (hasPlannedTask || hasReopenedTask) return 0.35
+    return 0.4
+  }
+
+  if (query.intent === 'where_did_i_leave_off') {
+    if (hasCompletedSignal || hasReflection) return 1
+    if (hasCalendar) return futureCalendarStart ? 0.35 : 0.85
+    if (hasPlannedTask || hasReopenedTask) return 0.65
+    return 0.4
+  }
+
+  if (query.intent === 'did_i_finish_this') {
+    if (hasCompletedSignal) return 1
+    if (hasReflection) return 0.75
+    if (hasCalendar || hasPlannedTask || hasReopenedTask) return 0.35
+    return 0.3
+  }
+
+  if (query.intent === 'what_changed_today') {
+    if (hasCompletedSignal || hasReflection) return 1
+    if (hasCalendar) return 0.7
+    if (hasPlannedTask || hasReopenedTask) return 0.45
+  }
+
+  return clamp01(episode.statusDistribution.unknown ?? 0.5)
+}
+
+function intentTiePriority(candidate: ScoredCandidate, query: RecoveryQuery, evidenceById: Map<string, Evidence>) {
+  const evidence = evidenceForEpisode(candidate.episode, evidenceById)
+  const hasCompletedSignal = evidence.some(item => ['activity_log', 'task_done', 'user_confirmation', 'sms_response'].includes(item.source))
+  const hasReflection = evidence.some(item => item.source === 'reflection')
+  const futureCalendar = evidence.some(item => item.source === 'calendar_event' && exactFutureTime(item, query.queryTime))
+  const ongoingCalendar = evidence.some(item => item.source === 'calendar_event' && item.time.earliest <= query.queryTime && item.time.latest >= query.queryTime)
+  const plannedExact = evidence.some(item => item.source === 'task_planned' && exactFutureTime(item, query.queryTime) && (item.time.latest - item.time.earliest) <= 2 * 60 * 60 * 1000)
+  const plannedTask = evidence.some(item => item.source === 'task_planned')
+
+  if (query.intent === 'what_should_i_do_next') {
+    if (futureCalendar) return 5
+    if (plannedExact) return 4
+    if (plannedTask) return 3
+    if (ongoingCalendar) return 2
+    return 0
+  }
+  if (query.intent === 'what_was_i_doing') {
+    if (hasCompletedSignal) return 4
+    if (hasReflection) return 3
+    if (ongoingCalendar) return 2
+    if (plannedTask) return 1
+  }
+  if (query.intent === 'where_did_i_leave_off') {
+    if (hasCompletedSignal || hasReflection) return 4
+    if (ongoingCalendar) return 3
+    if (plannedTask) return 2
+  }
+  return 0
+}
+
 function sessionGate(episode: Episode, session: RecoverySession, intent: RecoveryIntent, cfg = config) {
   const state = session.candidateStates[episode.id] ?? episode.state
   if (state === 'rejected' || state === 'exhausted') return 0
@@ -443,12 +547,14 @@ export function scoreEpisodes(
   const evidenceById = new Map(evidence.map(item => [item.id, item]))
   const queryText = query.intent.replace(/_/g, ' ')
   return episodes.map(episode => {
+    const episodeEvidence = evidenceForEpisode(episode, evidenceById)
     const support = supportForEpisode(episode, evidenceById, cfg)
-    const semantic = Math.max(similarity(episode.activityLabel, queryText), similarity(episodeSummary(episode.evidenceIds.map(id => evidenceById.get(id)).filter(Boolean) as Evidence[]), queryText))
+    const semantic = Math.max(similarity(episode.activityLabel, queryText), similarity(episodeSummary(episodeEvidence), queryText))
     const typefit = statusFit(episode.statusDistribution, query.intent)
     const temporal = temporalRelevance(episode.interval, query.queryTime, query.intent, episode.statusDistribution, cfg)
-    const relevance = clamp01(Math.max(semantic, 0.72) * typefit * temporal)
-    const contradiction = episodeConflict(episode.evidenceIds.map(id => evidenceById.get(id)).filter(Boolean) as Evidence[])
+    const sourcefit = intentSourceFit(episodeEvidence, episode, query)
+    const relevance = clamp01(Math.max(semantic, 0.72) * typefit * temporal * sourcefit)
+    const contradiction = episodeConflict(episodeEvidence)
     const gate = sessionGate(episode, session, query.intent, cfg)
     const score = clamp01(support * relevance * gate * (1 - contradiction))
     const confidence = clamp01(support * temporal * (1 - contradiction))
@@ -467,6 +573,9 @@ export function scoreEpisodes(
 
 function compareCandidates(left: ScoredCandidate, right: ScoredCandidate, query: RecoveryQuery, evidenceById: Map<string, Evidence>, cfg: ContextRankConfig) {
   if (Math.abs(left.score - right.score) >= cfg.scoring.tieEpsilon) return right.score - left.score
+  const leftIntentPriority = intentTiePriority(left, query, evidenceById)
+  const rightIntentPriority = intentTiePriority(right, query, evidenceById)
+  if (leftIntentPriority !== rightIntentPriority) return rightIntentPriority - leftIntentPriority
   if (left.confidence !== right.confidence) return right.confidence - left.confidence
   const leftTemporal = temporalRelevance(left.episode.interval, query.queryTime, query.intent, left.episode.statusDistribution, cfg)
   const rightTemporal = temporalRelevance(right.episode.interval, query.queryTime, query.intent, right.episode.statusDistribution, cfg)
