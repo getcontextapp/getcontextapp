@@ -264,8 +264,8 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             </div>
             <p className="mt-4 rounded-2xl bg-sage-50 px-4 py-3 text-base font-medium leading-6 text-sage-600">
               {todayConfirmedEntries.length > 0
-                ? `${mciProfile.display_name} has some notes from earlier today. Nothing needs your attention.`
-                : `${mciProfile.display_name} has a quiet day so far. Nothing needs your attention.`}
+                ? `${mciProfile.display_name} has activity noted from earlier today. No follow-up is needed right now.`
+                : `${mciProfile.display_name} has a quiet day so far. No follow-up is needed right now.`}
             </p>
           </div>
         ) : (
@@ -408,7 +408,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
 
         {initialReflection && (
           <div className="animate-fade-up delay-300">
-            <ReadOnlyDailyReflection reflection={initialReflection} />
+            <ReadOnlyDailyReflection reflection={initialReflection} ownerName={mciProfile?.display_name} />
           </div>
         )}
 

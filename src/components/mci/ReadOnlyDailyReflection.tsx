@@ -9,6 +9,22 @@ const EMPTY_NODES: ReflectionNodes = {
   feelings: [],
 }
 
+function possessiveName(name: string) {
+  return name.endsWith('s') ? `${name}'` : `${name}'s`
+}
+
+function reflectionForReader(summary: string | null | undefined, ownerName?: string | null) {
+  if (!summary) return ''
+  const name = ownerName?.trim()
+  if (!name) return summary
+
+  return summary
+    .replace(/\bYou\b/g, name)
+    .replace(/\byou\b/g, name)
+    .replace(/\bYour\b/g, possessiveName(name))
+    .replace(/\byour\b/g, possessiveName(name))
+}
+
 function TagRow({
   label,
   items,
@@ -34,10 +50,17 @@ function TagRow({
   )
 }
 
-export default function ReadOnlyDailyReflection({ reflection }: { reflection: Reflection | null }) {
+export default function ReadOnlyDailyReflection({
+  reflection,
+  ownerName,
+}: {
+  reflection: Reflection | null
+  ownerName?: string | null
+}) {
   if (!reflection) return null
 
   const nodes = reflection.nodes ?? EMPTY_NODES
+  const summary = reflectionForReader(reflection.ai_summary, ownerName)
 
   return (
     <section className="rounded-[20px] border border-[#DDD0B8] bg-[#F5EFE6] p-4 animate-fade-up" aria-label="Daily Reflection">
@@ -48,7 +71,7 @@ export default function ReadOnlyDailyReflection({ reflection }: { reflection: Re
         </span>
       </div>
       <p className="font-serif text-[17px] font-medium leading-7 text-warm-900">
-        {reflection.ai_summary}
+        {summary}
       </p>
       <div className="mt-4 space-y-2">
         <TagRow label="Activities" items={nodes.activities} tagClass="bg-sage-100 text-sage-600" />
