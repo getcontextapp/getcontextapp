@@ -22,7 +22,7 @@ export default function HomePage() {
             <li><a href="#care-partners">For care partners</a></li>
             <li><a href="#faq">FAQ</a></li>
           </ul>
-          <a className="landing-btn landing-btn-dark" href="#pilot">Join the pilot</a>
+          <a className="landing-btn landing-btn-dark" href="/auth/login">Login/Sign Up</a>
         </div>
       </header>
 
@@ -34,7 +34,7 @@ export default function HomePage() {
               <span className="landing-pill">Invitation-only pilot</span>
               <h1>Helping you pick up where you left off.</h1>
               <p className="landing-sub">Context is a simple, supportive way to stay connected to your day, together.</p>
-              <a className="landing-btn landing-btn-dark" href="#pilot">Join the pilot <span className="landing-arr">→</span></a>
+              <a className="landing-btn landing-btn-dark" href="/auth/login">Start with Context <span className="landing-arr">→</span></a>
               <div className="landing-assure">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#44603C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></svg>
                 <p><strong>Secure. Private. You&apos;re in control.</strong> Built with researchers at Georgia Tech and Emory.</p>
@@ -161,7 +161,6 @@ export default function HomePage() {
             <nav aria-label="Footer links">
               <a href="/privacy">Privacy Policy</a>
               <a href="/terms">Terms and Conditions</a>
-              <a href="/auth/login">Sign in</a>
             </nav>
             <p>(C) 2026 Context. All rights reserved. Terms and Conditions apply.</p>
           </div>
