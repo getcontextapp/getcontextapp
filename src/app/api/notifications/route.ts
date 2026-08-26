@@ -43,6 +43,7 @@ export async function GET() {
     publicKey: pushConfiguration().publicKey,
     preferences,
     subscriptionCount: subscriptionsResult.data?.length ?? 0,
+    hasSmsNumber: Boolean(context.profile.phone_e164),
     events: eventsResult.data ?? [],
   })
 }
@@ -71,11 +72,16 @@ export async function PATCH(request: NextRequest) {
 
   const { data: existingPreferences } = await context.service.from('notification_preferences')
     .select('categories').eq('profile_id', context.profile.id).maybeSingle()
+  const categories = {
+    ...DEFAULT_CATEGORIES,
+    ...(existingPreferences?.categories ?? {}),
+    ...(typeof body.dueEnabled === 'boolean' ? { due: body.dueEnabled } : {}),
+  }
   const { data, error } = await context.service.from('notification_preferences').upsert({
     profile_id: context.profile.id,
     user_id: context.user.id,
     household_id: context.profile.household_id,
-    categories: existingPreferences?.categories ?? DEFAULT_CATEGORIES,
+    categories,
     ...patch,
   }, { onConflict: 'profile_id' }).select('*').single()
   return error ? NextResponse.json({ error: error.message }, { status: 500 }) : NextResponse.json({ preferences: data })

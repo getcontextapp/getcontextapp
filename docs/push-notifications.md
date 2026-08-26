@@ -46,3 +46,10 @@ Open Context in a supported browser, enable notifications from Updates, send a t
 - Each user must grant permission on their own device.
 - Turning notifications off disables only the current device when other active subscriptions exist.
 - Expired push endpoints are disabled after the push service returns 404 or 410.
+## Batch B exact-time delivery
+
+- Plans with a specific `expected_time` are checked every five minutes in the recipient's timezone.
+- A due reminder is sent once per plan and recipient, using the assigned profile when present.
+- Push and SMS are independently controlled in Updates; exact-time reminders have their own toggle.
+- Lock-screen task details remain hidden unless the profile explicitly enables them.
+- The rollout remains restricted to the three Internal Preview households.

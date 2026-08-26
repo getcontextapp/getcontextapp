@@ -8,7 +8,7 @@ export async function getNotificationContext() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id,user_id,household_id,role,display_name,timezone')
+    .select('id,user_id,household_id,role,display_name,timezone,phone_e164')
     .eq('user_id', user.id)
     .single()
   if (!profile) return { error: 'Profile not found', status: 404 as const }

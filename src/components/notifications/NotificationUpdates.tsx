@@ -18,9 +18,12 @@ type NotificationState = {
   configured?: boolean
   publicKey?: string
   subscriptionCount?: number
+  hasSmsNumber?: boolean
   preferences?: {
     push_enabled: boolean
+    sms_enabled: boolean
     detailed_content: boolean
+    categories?: Record<string, boolean>
   }
   events?: NotificationEvent[]
 }
@@ -176,6 +179,25 @@ export default function NotificationUpdates() {
     if (response.ok) await load()
   }
 
+  async function setDeliveryPreference(patch: { pushEnabled?: boolean; smsEnabled?: boolean; dueEnabled?: boolean }) {
+    setWorking(true)
+    setMessage('')
+    try {
+      const response = await fetch('/api/notifications', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Could not update notification settings.')
+      setMessage('Your reminder settings are updated.')
+      await load()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not update notification settings.')
+    } finally {
+      setWorking(false)
+    }
+  }
+
   const enabled = deviceSubscribed
 
   return (
@@ -235,6 +257,46 @@ export default function NotificationUpdates() {
                   <span>Show task or appointment details on the lock screen. Leave this off for more privacy.</span>
                 </label>
               )}
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-cream-300 bg-white p-4">
+              <h3 className="font-semibold text-warm-900">Reminder delivery</h3>
+              <p className="mt-1 text-sm leading-5 text-warm-500">During this pilot, app notifications and text messages can work together. You can change either one.</p>
+              <label className="mt-4 flex min-h-12 items-center justify-between gap-4 border-t border-cream-200 pt-4 text-sm font-medium text-warm-700">
+                <span>App notifications</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(state.preferences?.push_enabled)}
+                  disabled={working || (state.subscriptionCount ?? 0) === 0}
+                  onChange={event => void setDeliveryPreference({ pushEnabled: event.target.checked })}
+                  className="h-5 w-5"
+                />
+              </label>
+              {(state.subscriptionCount ?? 0) === 0 && <p className="text-xs text-warm-400">Enable notifications on a device first.</p>}
+              <label className="mt-3 flex min-h-12 items-center justify-between gap-4 border-t border-cream-200 pt-3 text-sm font-medium text-warm-700">
+                <span>Text messages</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(state.preferences?.sms_enabled)}
+                  disabled={working || !state.hasSmsNumber}
+                  onChange={event => void setDeliveryPreference({ smsEnabled: event.target.checked })}
+                  className="h-5 w-5"
+                />
+              </label>
+              {!state.hasSmsNumber && <p className="text-xs text-warm-400">Add a mobile number in reminder settings to use text messages.</p>}
+              <label className="mt-3 flex min-h-12 items-center justify-between gap-4 border-t border-cream-200 pt-3 text-sm font-medium text-warm-700">
+                <span>
+                  Exact-time reminders
+                  <span className="mt-0.5 block text-xs font-normal text-warm-400">For plans with a specific time, such as 9:00 AM.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={state.preferences?.categories?.due !== false}
+                  disabled={working}
+                  onChange={event => void setDeliveryPreference({ dueEnabled: event.target.checked })}
+                  className="h-5 w-5 shrink-0"
+                />
+              </label>
             </div>
 
             <div className="mt-6">

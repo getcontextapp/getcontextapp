@@ -134,6 +134,7 @@ export type SmsPurpose =
   | 'morning_followup'
   | 'care_partner_no_response'
   | 'pending_reminder'
+  | 'due_reminder'
   | 'daily_summary'
   | 'reflection_prompt'
   | 'inbound_reflection'

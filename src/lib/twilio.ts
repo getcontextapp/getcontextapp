@@ -72,6 +72,20 @@ export function buildPendingPlanReminderMessage(
   ].join('\n')
 }
 
+export function buildDueReminderMessage(
+  displayName: string,
+  detail: string,
+  appUrl: string,
+  role: 'mci_user' | 'care_partner' = 'mci_user',
+): string {
+  return [
+    `Hi ${displayName}, a gentle Context reminder:`,
+    `${detail} is due now.`,
+    ``,
+    `Open Context to confirm it or choose later: ${sourcedDashboardUrl(appUrl, role === 'care_partner' ? '/care-partner' : '/mci-user')}`,
+  ].join('\n')
+}
+
 export function buildDailySummaryMessage(
   carePartnerName: string,
   memberName: string,
