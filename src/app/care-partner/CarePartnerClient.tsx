@@ -8,6 +8,7 @@ import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import { formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 import CalendarCard from '@/components/calendar/CalendarCard'
 import ReadOnlyDailyReflection from '@/components/mci/ReadOnlyDailyReflection'
+import NotificationUpdates from '@/components/notifications/NotificationUpdates'
 import { ACTIVITY_TILES } from '@/types'
 import type { Profile, ActivityLog, PlannedActivity, Reflection } from '@/types'
 import type { CalendarDashboardData } from '@/lib/calendar-sync'
@@ -233,6 +234,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             </h1>
           </div>
           <div className="flex gap-2">
+            <NotificationUpdates />
             <button
               onClick={() => setSettingsOpen(true)}
               aria-label="Open settings"

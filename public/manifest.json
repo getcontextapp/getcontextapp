@@ -1,6 +1,7 @@
 {
   "name": "Context",
   "short_name": "Context",
+  "id": "/",
   "description": "Cognitive continuity for everyday life",
   "start_url": "/",
   "display": "standalone",

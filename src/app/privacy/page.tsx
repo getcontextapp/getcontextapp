@@ -11,7 +11,7 @@ export default function PrivacyPage() {
             Context
           </a>
           <h1 className="font-serif text-3xl font-semibold text-warm-900">Privacy Policy</h1>
-          <p className="text-sm text-warm-400">Last updated: August 24, 2026</p>
+          <p className="text-sm text-warm-400">Last updated: August 26, 2026</p>
         </header>
 
         <section className="card space-y-5 p-6 text-warm-700">
@@ -27,7 +27,8 @@ export default function PrivacyPage() {
             information, care partner information, app settings, plans, completed activities,
             moved or deleted tasks, repeat rules, daily reflections, reflection tags, calendar
             items you connect, SMS messages sent to or from Context, recovery confirmations and
-            rejections, support requests, pilot form entries, and app usage information needed
+            rejections, notification preferences, device push subscriptions, notification delivery
+            and opening status, support requests, pilot form entries, and app usage information needed
             to provide the service.
           </p>
 
@@ -56,6 +57,15 @@ export default function PrivacyPage() {
             Context may also receive SMS replies such as DONE, MOVE, DELETE, HELP, and STOP so it
             can update plans or stop messages. We do not share SMS opt-in data or consent records
             for marketing.
+          </p>
+
+          <h2 className="font-serif text-xl font-semibold text-warm-900">App Notifications</h2>
+          <p>
+            If you enable notifications on a supported device, Context may send gentle reminders
+            and updates through your browser or installed web app. Context stores the device push
+            subscription needed for delivery and limited delivery and opening information. You can
+            turn notifications off in Context or in your device settings. Lock-screen content may
+            be visible to anyone who can view your device, so Context uses limited detail by default.
           </p>
 
           <h2 className="font-serif text-xl font-semibold text-warm-900">Sharing Information</h2>
@@ -118,7 +128,8 @@ export default function PrivacyPage() {
             You can ask us to access, correct, export, or delete information associated with your
             account, subject to legal, security, backup, and research record requirements. You can
             disconnect Google Calendar in Context or from your Google Account. You can opt out of
-            SMS messages by replying STOP.
+            SMS messages by replying STOP, and you can disable app notifications in Context or in
+            your device settings.
           </p>
 
           <h2 className="font-serif text-xl font-semibold text-warm-900">Data Security</h2>

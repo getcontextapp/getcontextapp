@@ -11,7 +11,7 @@ export default function TermsPage() {
             Context
           </a>
           <h1 className="font-serif text-3xl font-semibold text-warm-900">Terms and Conditions</h1>
-          <p className="text-sm text-warm-400">Last updated: August 24, 2026</p>
+          <p className="text-sm text-warm-400">Last updated: August 26, 2026</p>
         </header>
 
         <section className="card space-y-5 p-6 text-warm-700">
@@ -33,8 +33,8 @@ export default function TermsPage() {
             Context helps users record plans and daily activities, check items off, move or delete
             tasks, repeat tasks, add reflections, connect read-only calendar information, ask for
             recall help, and share a calm day view with a care partner. If users opt in, Context may
-            send text messages that include reminder cues, re-entry prompts, task workflows, and
-            daily activity summaries.
+            send app notifications or text messages that include reminder cues, re-entry prompts,
+            task workflows, and daily activity summaries.
           </p>
 
           <h2 className="font-serif text-xl font-semibold text-warm-900">Not Medical or Emergency Care</h2>
@@ -73,6 +73,14 @@ export default function TermsPage() {
             By entering your mobile phone number in Context and continuing setup, you agree to
             receive text messages from Context related to reminders, activity summaries, and account
             use. Consent is not a condition of purchase.
+          </p>
+
+          <h2 className="font-serif text-xl font-semibold text-warm-900">App Notification Permission</h2>
+          <p>
+            Context sends push notifications only after you enable them on a supported device.
+            You can disable them in Context or in your device settings. Notification delivery is
+            not guaranteed, and lock-screen content may be visible to other people with access to
+            your device.
           </p>
 
           <h2 className="font-serif text-xl font-semibold text-warm-900">Message Frequency</h2>
@@ -129,8 +137,8 @@ export default function TermsPage() {
           <h2 className="font-serif text-xl font-semibold text-warm-900">Availability and Changes</h2>
           <p>
             We try to keep Context reliable, but we do not guarantee uninterrupted availability,
-            error-free suggestions, delivery of every SMS message, or compatibility with every
-            device, browser, carrier, or calendar setting.
+            error-free suggestions, delivery of every SMS or push notification, or compatibility
+            with every device, browser, carrier, or calendar setting.
           </p>
 
           <h2 className="font-serif text-xl font-semibold text-warm-900">Ownership</h2>

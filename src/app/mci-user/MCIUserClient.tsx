@@ -12,6 +12,7 @@ import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanCom
 import EditTaskSheet from '@/components/mci/EditTaskSheet'
 import DailyReflection from '@/components/mci/DailyReflection'
 import CalendarCard from '@/components/calendar/CalendarCard'
+import NotificationUpdates from '@/components/notifications/NotificationUpdates'
 import { addDaysToKey, formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 import { buildRecoveryAnswerText } from '@/lib/recovery-copy'
 import type { ContinuityCard, RecoveryIntent, RecoverySession, ScoredCandidate } from '@/lib/context-rank'
@@ -635,6 +636,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               </h1>
             </div>
             <div className="flex items-center gap-2">
+              <NotificationUpdates />
               <button
                 onClick={() => setShowHousehold(true)}
                 className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
