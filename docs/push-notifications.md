@@ -67,3 +67,4 @@ Open Context in a supported browser, enable notifications from Updates, send a t
 - Lock-screen detail remains private unless the profile enables it. The signed-in Recent updates history retains the selected task name.
 - Push and SMS follow the profile’s existing delivery toggles. **Personalized check-ins** have a separate on/off control.
 - Participant Pilot households keep the existing reminder-list SMS flow during this Internal Preview test.
+- Forced QA calls can target one profile and reject targets outside Internal Preview, preventing a test from messaging the broader pilot cohort.

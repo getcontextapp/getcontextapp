@@ -236,6 +236,7 @@ export async function GET(request: NextRequest) {
   const slot = reminderSlot(request.nextUrl.pathname)
   const isFixedSlot = slot === 'noon' || slot === 'afternoon'
   const force = request.nextUrl.searchParams.get('force') === '1'
+  const forcedProfileId = force ? request.nextUrl.searchParams.get('profile_id') : null
 
   let smsReadyProfiles
   try {
@@ -268,8 +269,15 @@ export async function GET(request: NextRequest) {
   const internalPreviewHouseholdIds = new Set((householdRows ?? [])
     .filter(household => cohortForHouseholdName(household.name).cohort === 'internal')
     .map(household => household.id))
-  const mciProfiles = candidateProfiles.filter(profile =>
+  let mciProfiles = candidateProfiles.filter(profile =>
     Boolean(profile.phone_e164) || internalPreviewHouseholdIds.has(profile.household_id))
+  if (forcedProfileId) {
+    const forcedProfile = mciProfiles.find(profile => profile.id === forcedProfileId)
+    if (!forcedProfile || !internalPreviewHouseholdIds.has(forcedProfile.household_id)) {
+      return NextResponse.json({ error: 'Forced profile must belong to Internal Preview.' }, { status: 403 })
+    }
+    mciProfiles = [forcedProfile]
+  }
 
   let sent = 0
   let failed = 0
