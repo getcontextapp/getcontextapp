@@ -38,3 +38,8 @@ test('uses a calendar title instead of its location as the due detail', () => {
   assert.equal(dueReminderDetail({ category: 'custom', label: 'Doctor appointment', note: 'Main Street Clinic' }), 'Doctor appointment')
   assert.equal(dueReminderDetail({ category: 'meal', label: 'Meal', note: 'Make lunch' }), 'Make lunch')
 })
+
+test('uses the specific task note instead of a generic custom label', () => {
+  assert.equal(dueReminderDetail({ category: 'custom', label: 'Other', note: 'Finish STHL coding' }), 'Finish STHL coding')
+  assert.equal(dueReminderDetail({ category: 'custom', label: 'Custom', note: 'Call the pharmacy' }), 'Call the pharmacy')
+})

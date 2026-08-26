@@ -51,6 +51,10 @@ export function dueReminderCopy(detail: string, detailedContent: boolean) {
 }
 
 export function dueReminderDetail(task: { category: string; label: string; note?: string | null }) {
-  if (task.category === 'custom' && task.label.trim().toLowerCase() !== 'custom') return task.label.trim()
-  return task.note?.trim() || task.label.trim()
+  const label = task.label.trim()
+  const note = task.note?.trim()
+  const genericCustomLabel = ['custom', 'other'].includes(label.toLowerCase())
+
+  if (task.category === 'custom' && !genericCustomLabel) return label
+  return note || label
 }
