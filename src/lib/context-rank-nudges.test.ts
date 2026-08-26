@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ScoredCandidate } from './context-rank'
-import { chooseRankedNudge, rankedNudgeCopy, rankedNudgeReplyAction, rankedNudgeSafety } from './context-rank-nudges'
+import {
+  chooseRankedNudge,
+  rankedNudgeAllowsLegacySmsFallback,
+  rankedNudgeCopy,
+  rankedNudgeReplyAction,
+  rankedNudgeSafety,
+} from './context-rank-nudges'
 import type { PlannedActivity } from '@/types'
 
 function candidate(id: string, score = 0.8): ScoredCandidate {
@@ -82,6 +88,29 @@ test('enforces daily, cooldown, and recent due-reminder safeguards', () => {
   assert.equal(rankedNudgeSafety({ sentToday: 1, latestNudgeAt: '2026-08-26T13:00:00.000Z', nowMs }), 'cooldown')
   assert.equal(rankedNudgeSafety({ sentToday: 1, recentDueAt: '2026-08-26T15:55:00.000Z', nowMs }), 'recent_due_reminder')
   assert.equal(rankedNudgeSafety({ sentToday: 1, latestNudgeAt: '2026-08-26T12:00:00.000Z', nowMs }), 'send')
+})
+
+test('falls back to the pending-list SMS only when ranking cannot choose a message', () => {
+  for (const outcome of [
+    'context_rank_failed',
+    'context_rank_abstained',
+    'ranked_task_lookup_failed',
+    'no_eligible_ranked_task',
+  ]) {
+    assert.equal(rankedNudgeAllowsLegacySmsFallback(outcome, true), true)
+    assert.equal(rankedNudgeAllowsLegacySmsFallback(outcome, false), false)
+  }
+
+  for (const safetyOutcome of [
+    'skipped_cooldown',
+    'skipped_daily_limit',
+    'skipped_recent_due_reminder',
+    'disabled_personalized_checkins',
+    'duplicate_ranked_task',
+    'ranked_nudge_delivery_failed',
+  ]) {
+    assert.equal(rankedNudgeAllowsLegacySmsFallback(safetyOutcome, true), false)
+  }
 })
 
 test('understands short replies to the latest ranked nudge without guessing from longer messages', () => {

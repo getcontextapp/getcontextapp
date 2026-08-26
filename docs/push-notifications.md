@@ -1,6 +1,6 @@
-# Context Web Push — Batch A
+# Context Web Push — Batches A–C
 
-Batch A provides authenticated, per-device Web Push subscriptions and a calm Updates history for Internal Preview households only.
+Batch A provides authenticated, per-device Web Push subscriptions and a calm Updates history for Context households.
 
 ## Production setup
 
@@ -14,15 +14,15 @@ Batch A provides authenticated, per-device Web Push subscriptions and a calm Upd
 
 Do not rotate the VAPID key pair casually. Existing browser subscriptions are associated with the public key and may need to be enabled again after rotation.
 
-## Internal Preview boundary
+## Cohort rollout
 
-The UI and APIs check the exact household name through the shared cohort classifier. Batch A is available only to:
+The dashboard keeps these three households labeled **Internal Preview**:
 
 - My Home
 - The Odu Household
 - Baru Home
 
-All other households receive `eligible: false` and cannot create a push subscription.
+All other households are labeled **Participant Pilot**. Batches A–C are available to both cohorts, including newly created households.
 
 ## iPhone test
 
@@ -52,11 +52,11 @@ Open Context in a supported browser, enable notifications from Updates, send a t
 - A due reminder is sent once per plan and recipient, using the assigned profile when present.
 - Push and SMS are independently controlled in Updates; exact-time reminders have their own toggle.
 - Lock-screen task details remain hidden unless the profile explicitly enables them.
-- The rollout remains restricted to the three Internal Preview households.
+- The rollout is available to Internal Preview and Participant Pilot households.
 
 ## Batch C ContextRank check-ins
 
-- The existing noon and 4 PM local reminder touchpoints use ContextRank for Internal Preview MCI profiles.
+- The existing noon and 4 PM local reminder touchpoints use ContextRank for MCI profiles in both cohorts.
 - ContextRank ranks today’s evidence for the `what_should_i_do_next` intent. Delivery then selects one currently planned, untimed task that belongs to the recipient.
 - Exact-time tasks are excluded because Batch B already handles them at their due time.
 - Tasks marked done, deferred with **Later**, assigned to someone else, or already suggested that day are excluded.
@@ -66,5 +66,5 @@ Open Context in a supported browser, enable notifications from Updates, send a t
 - Short SMS replies are bound to the exact task in the latest ContextRank check-in: **yes** keeps it as the suggested next step, **later/no** defers it, and **done** completes it.
 - Lock-screen detail remains private unless the profile enables it. The signed-in Recent updates history retains the selected task name.
 - Push and SMS follow the profile’s existing delivery toggles. **Personalized check-ins** have a separate on/off control.
-- Participant Pilot households keep the existing reminder-list SMS flow during this Internal Preview test.
-- Forced QA calls can target one profile and reject targets outside Internal Preview, preventing a test from messaging the broader pilot cohort.
+- If ContextRank abstains or cannot find an eligible untimed task, the existing pending-plan SMS remains the fallback so the scheduled check-in is not silently lost.
+- Forced QA calls can target one profile, preventing a test from messaging the broader pilot cohort.

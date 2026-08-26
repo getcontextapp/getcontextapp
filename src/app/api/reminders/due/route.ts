@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
-import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 import { dueReminderCopy, dueReminderDetail, isDueReminderWindow, localDateAndMinute } from '@/lib/due-reminders'
 import { sendPushNotification } from '@/lib/push-notifications'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
@@ -55,11 +54,9 @@ export async function GET(request: NextRequest) {
 
   const service = createServiceClient()
   const now = new Date()
-  const { data: households, error: householdError } = await service.from('households').select('id,name')
+  const { data: households, error: householdError } = await service.from('households').select('id')
   if (householdError) return NextResponse.json({ error: householdError.message }, { status: 500 })
-  const eligibleHouseholds = (households ?? []).filter(household =>
-    cohortForHouseholdName(household.name).cohort === 'internal')
-  const householdIds = eligibleHouseholds.map(household => household.id)
+  const householdIds = (households ?? []).map(household => household.id)
   if (householdIds.length === 0) return NextResponse.json({ processed: 0, sent: 0, results: [] })
 
   const { data: profileRows, error: profileError } = await service.from('profiles')

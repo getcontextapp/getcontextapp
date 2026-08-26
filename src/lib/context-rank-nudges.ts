@@ -4,10 +4,21 @@ import type { PlannedActivity } from '@/types'
 export const CONTEXT_RANK_NUDGE_COOLDOWN_MS = 4 * 60 * 60 * 1000
 export const CONTEXT_RANK_DAILY_LIMIT = 2
 
+const LEGACY_SMS_FALLBACK_OUTCOMES = new Set([
+  'context_rank_failed',
+  'context_rank_abstained',
+  'ranked_task_lookup_failed',
+  'no_eligible_ranked_task',
+])
+
 export type RankedNudgeChoice = {
   candidate: ScoredCandidate
   task: PlannedActivity
   detail: string
+}
+
+export function rankedNudgeAllowsLegacySmsFallback(outcome: string, hasSms: boolean) {
+  return hasSms && LEGACY_SMS_FALLBACK_OUTCOMES.has(outcome)
 }
 
 function plannedActivityIds(candidate: ScoredCandidate) {

@@ -23,6 +23,7 @@ const DEFAULT_SUMMARY_TIME = '20:00'
 
 export default function ReminderSettings({ profile, onClose, onSignOut }: Props) {
   const supabase = createClient()
+  const [firstName, setFirstName] = useState(profile.display_name)
   const [gap, setGap] = useState(profile.reminder_gap_minutes)
   const [summaryTime, setSummaryTime] = useState(profile.daily_summary_time || DEFAULT_SUMMARY_TIME)
   const [phone, setPhone] = useState(profile.phone_e164 ?? '')
@@ -32,8 +33,14 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
   const [saved, setSaved] = useState(false)
 
   async function handleSave() {
+    const displayName = firstName.trim().replace(/\s+/g, ' ')
     const phoneValue = phone.trim()
     const phoneE164 = phoneValue ? normalizePhone(phoneValue) : null
+
+    if (!displayName) {
+      setError('Please enter your first name.')
+      return
+    }
 
     if (phoneE164 && !smsConsent) {
       setError('Please check the SMS consent box to receive text reminders, or leave the phone number blank.')
@@ -44,7 +51,12 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
     setSaving(true)
     const { error: updateError } = await supabase
       .from('profiles')
-      .update({ reminder_gap_minutes: gap, daily_summary_time: summaryTime, phone_e164: phoneE164 })
+      .update({
+        display_name: displayName,
+        reminder_gap_minutes: gap,
+        daily_summary_time: summaryTime,
+        phone_e164: phoneE164,
+      })
       .eq('id', profile.id)
     setSaving(false)
 
@@ -53,8 +65,14 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
       return
     }
 
+    const nameChanged = displayName !== profile.display_name
+    setFirstName(displayName)
     if (phoneE164) setPhone(phoneE164)
     setSaved(true)
+    if (nameChanged) {
+      setTimeout(() => window.location.reload(), 500)
+      return
+    }
     setTimeout(() => setSaved(false), 2000)
   }
 
@@ -70,6 +88,24 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
         </div>
 
         <div className="space-y-6">
+          <div>
+            <label htmlFor="mci-first-name" className="block text-sm font-medium text-warm-700 mb-1">
+              First name
+            </label>
+            <p className="text-xs text-warm-400 mb-3">Used in greetings and personal reminders.</p>
+            <input
+              id="mci-first-name"
+              type="text"
+              required
+              maxLength={60}
+              value={firstName}
+              onChange={e => setFirstName(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900
+                         focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
+              autoComplete="given-name"
+            />
+          </div>
+
           {/* Phone number */}
           <div>
             <label htmlFor="mci-phone" className="block text-sm font-medium text-warm-700 mb-1">

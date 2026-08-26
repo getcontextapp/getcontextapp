@@ -8,10 +8,14 @@ import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { getMciProfilesForSms } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
-import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 import { buildContextRankInput } from '@/lib/context-rank-adapter'
 import { runContextRank } from '@/lib/context-rank'
-import { chooseRankedNudge, rankedNudgeCopy, rankedNudgeSafety } from '@/lib/context-rank-nudges'
+import {
+  chooseRankedNudge,
+  rankedNudgeAllowsLegacySmsFallback,
+  rankedNudgeCopy,
+  rankedNudgeSafety,
+} from '@/lib/context-rank-nudges'
 import { sendPushNotification } from '@/lib/push-notifications'
 
 const CRON_SECRET = process.env.CRON_SECRET
@@ -31,12 +35,24 @@ type RankedNudgePreference = {
 
 type ReminderProfile = Profile & { household_id: string }
 
-async function sendInternalPreviewRankedNudge(
+type RankedNudgeResult = {
+  sent: number
+  failed: number
+  outcome: string
+  allowLegacySmsFallback?: boolean
+  error?: string
+  task_id?: string
+  channels?: string[]
+  score?: number
+  confidence?: number
+}
+
+async function sendRankedNudge(
   supabase: SupabaseClient,
   profile: ReminderProfile,
   slot: 'noon' | 'afternoon',
   now: Date,
-) {
+): Promise<RankedNudgeResult> {
   const todayKey = getLocalDateKey(now, profile.timezone)
   const dayStart = getUtcRangeForLocalDay(now, profile.timezone).start
   const recentDueSince = new Date(now.getTime() - 45 * 60 * 1000).toISOString()
@@ -70,7 +86,8 @@ async function sendInternalPreviewRankedNudge(
   }
   const pushEnabled = preference?.push_enabled ?? false
   const smsEnabled = preference?.sms_enabled ?? true
-  if (!pushEnabled && !smsEnabled) return { sent: 0, failed: 0, outcome: 'no_enabled_channel' }
+  const hasSms = Boolean(smsEnabled && profile.phone_e164)
+  if (!pushEnabled && !hasSms) return { sent: 0, failed: 0, outcome: 'no_enabled_channel' }
 
   const safety = rankedNudgeSafety({
     sentToday: nudgeRows?.length ?? 0,
@@ -94,11 +111,22 @@ async function sendInternalPreviewRankedNudge(
       session: input.session,
     })
   } catch (error) {
-    return { sent: 0, failed: 1, outcome: 'context_rank_failed', error: error instanceof Error ? error.message : 'Unknown error' }
+    return {
+      sent: 0,
+      failed: 1,
+      outcome: 'context_rank_failed',
+      allowLegacySmsFallback: rankedNudgeAllowsLegacySmsFallback('context_rank_failed', hasSms),
+      error: error instanceof Error ? error.message : 'Unknown error',
+    }
   }
 
   if (ranked.card.mode === 'abstain' || ranked.card.candidates.length === 0) {
-    return { sent: 0, failed: 0, outcome: 'context_rank_abstained' }
+    return {
+      sent: 0,
+      failed: 0,
+      outcome: 'context_rank_abstained',
+      allowLegacySmsFallback: rankedNudgeAllowsLegacySmsFallback('context_rank_abstained', hasSms),
+    }
   }
 
   const { data: taskRows, error: taskError } = await supabase.from('planned_activities')
@@ -106,10 +134,21 @@ async function sendInternalPreviewRankedNudge(
     .eq('household_id', profile.household_id)
     .eq('planned_for', todayKey)
     .in('status', ['planned', 'not_now'])
-  if (taskError) return { sent: 0, failed: 1, outcome: 'ranked_task_lookup_failed', error: taskError.message }
+  if (taskError) return {
+    sent: 0,
+    failed: 1,
+    outcome: 'ranked_task_lookup_failed',
+    allowLegacySmsFallback: rankedNudgeAllowsLegacySmsFallback('ranked_task_lookup_failed', hasSms),
+    error: taskError.message,
+  }
 
   const choice = chooseRankedNudge(ranked.card.candidates, (taskRows ?? []) as PlannedActivity[], profile.id)
-  if (!choice) return { sent: 0, failed: 0, outcome: 'no_eligible_ranked_task' }
+  if (!choice) return {
+    sent: 0,
+    failed: 0,
+    outcome: 'no_eligible_ranked_task',
+    allowLegacySmsFallback: rankedNudgeAllowsLegacySmsFallback('no_eligible_ranked_task', hasSms),
+  }
 
   const dedupeKey = `context-rank-nudge:${todayKey}:${choice.task.id}:${profile.id}`
   const { data: duplicate } = await supabase.from('notification_events').select('id')
@@ -157,7 +196,7 @@ async function sendInternalPreviewRankedNudge(
     }
   }
 
-  if (smsEnabled && profile.phone_e164) {
+  if (hasSms && profile.phone_e164) {
     const smsBody = buildContextRankNudgeMessage(profile.display_name, choice.detail, APP_URL)
     const sms = await sendSMS(profile.phone_e164, smsBody)
     smsStatus = { sent: Boolean(sms.sid && sms.status !== 'failed'), status: sms.status, error: sms.error }
@@ -180,7 +219,7 @@ async function sendInternalPreviewRankedNudge(
     }
   }
 
-  if (!eventId && smsEnabled && profile.phone_e164) {
+  if (!eventId && hasSms && profile.phone_e164) {
     const { data: event, error } = await supabase.from('notification_events').insert({
       profile_id: profile.id,
       user_id: profile.user_id,
@@ -266,15 +305,12 @@ export async function GET(request: NextRequest) {
     .select('id,name')
     .in('id', householdIds)
   if (householdError) return NextResponse.json({ error: householdError.message }, { status: 500 })
-  const internalPreviewHouseholdIds = new Set((householdRows ?? [])
-    .filter(household => cohortForHouseholdName(household.name).cohort === 'internal')
-    .map(household => household.id))
-  let mciProfiles = candidateProfiles.filter(profile =>
-    Boolean(profile.phone_e164) || internalPreviewHouseholdIds.has(profile.household_id))
+  const participantHouseholdIds = new Set((householdRows ?? []).map(household => household.id))
+  let mciProfiles = candidateProfiles.filter(profile => participantHouseholdIds.has(profile.household_id))
   if (forcedProfileId) {
     const forcedProfile = mciProfiles.find(profile => profile.id === forcedProfileId)
-    if (!forcedProfile || !internalPreviewHouseholdIds.has(forcedProfile.household_id)) {
-      return NextResponse.json({ error: 'Forced profile must belong to Internal Preview.' }, { status: 403 })
+    if (!forcedProfile) {
+      return NextResponse.json({ error: 'Forced profile must belong to a Context household.' }, { status: 403 })
     }
     mciProfiles = [forcedProfile]
   }
@@ -304,17 +340,25 @@ export async function GET(request: NextRequest) {
       continue
     }
 
-    if (isFixedSlot && internalPreviewHouseholdIds.has(profile.household_id)) {
-      const rankedResult = await sendInternalPreviewRankedNudge(
+    if (isFixedSlot) {
+      const rankedResult = await sendRankedNudge(
         supabase,
         profile,
         slot as 'noon' | 'afternoon',
         new Date(),
       )
-      sent += rankedResult.sent
-      failed += rankedResult.failed
-      results.push({ profile_id: profile.id, local_hour: localHour, ...rankedResult })
-      continue
+      if (!rankedResult.allowLegacySmsFallback) {
+        sent += rankedResult.sent
+        failed += rankedResult.failed
+        results.push({ profile_id: profile.id, local_hour: localHour, ...rankedResult })
+        continue
+      }
+      results.push({
+        profile_id: profile.id,
+        local_hour: localHour,
+        outcome: 'using_pending_sms_fallback',
+        context_rank_outcome: rankedResult.outcome,
+      })
     }
 
     const gapMinutes = profile.reminder_gap_minutes ?? 240

@@ -107,6 +107,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [smsTestState, setSmsTestState] = useState<Record<string, 'idle' | 'sending' | 'sent' | 'error'>>({})
   const [smsTestError, setSmsTestError] = useState<string | null>(null)
+  const [careFirstName, setCareFirstName] = useState(careProfile.display_name)
   const [carePhone, setCarePhone] = useState(careProfile.phone_e164 ?? '')
   const [careSmsConsent, setCareSmsConsent] = useState(Boolean(careProfile.phone_e164))
   const [carePhoneSaving, setCarePhoneSaving] = useState(false)
@@ -189,9 +190,15 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
     }
   }
 
-  async function saveCarePhone() {
+  async function saveCareProfile() {
+    const displayName = careFirstName.trim().replace(/\s+/g, ' ')
     const phoneValue = carePhone.trim()
     const phoneE164 = phoneValue ? normalizePhone(phoneValue) : null
+
+    if (!displayName) {
+      setCarePhoneError('Please enter your first name.')
+      return
+    }
 
     if (phoneE164 && !careSmsConsent) {
       setCarePhoneError('Please check SMS consent to receive care partner texts, or leave the phone number blank.')
@@ -202,15 +209,21 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
     setCarePhoneError(null)
     const { error } = await supabase
       .from('profiles')
-      .update({ phone_e164: phoneE164 })
+      .update({ display_name: displayName, phone_e164: phoneE164 })
       .eq('id', careProfile.id)
     setCarePhoneSaving(false)
     if (error) {
       setCarePhoneError(getPhoneSaveErrorMessage(error))
       return
     }
+    const nameChanged = displayName !== careProfile.display_name
+    setCareFirstName(displayName)
     setCarePhone(phoneE164 ?? '')
     setCarePhoneSaved(true)
+    if (nameChanged) {
+      setTimeout(() => window.location.reload(), 500)
+      return
+    }
     setTimeout(() => setCarePhoneSaved(false), 2500)
   }
 
@@ -429,6 +442,22 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
 
             <div className="space-y-6">
               <div>
+                <label htmlFor="care-first-name" className="font-medium text-warm-900 text-sm">First name</label>
+                <p className="text-warm-400 text-xs mt-0.5">Used in greetings and care partner messages.</p>
+                <input
+                  id="care-first-name"
+                  type="text"
+                  required
+                  maxLength={60}
+                  value={careFirstName}
+                  onChange={e => setCareFirstName(e.target.value)}
+                  className="mt-3 w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900
+                             focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
+                  autoComplete="given-name"
+                />
+              </div>
+
+              <div>
                 <p className="font-medium text-warm-900 text-sm">Care partner phone</p>
                 <p className="text-warm-400 text-xs mt-0.5">
                   Used for daily summaries and no-response alerts.
@@ -463,12 +492,12 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                   <p className="mt-3 text-xs text-terracotta-500 bg-terracotta-50 rounded-lg px-3 py-2">{carePhoneError}</p>
                 )}
                 <button
-                  onClick={saveCarePhone}
+                  onClick={saveCareProfile}
                   disabled={carePhoneSaving}
                   className="mt-3 w-full py-2.5 rounded-xl border-2 border-warm-300 text-warm-700 text-sm font-medium
                              hover:bg-cream-100 active:scale-[0.98] transition-all disabled:opacity-50"
                 >
-                  {carePhoneSaving ? 'Saving...' : carePhoneSaved ? 'Saved!' : 'Save care partner phone'}
+                  {carePhoneSaving ? 'Saving...' : carePhoneSaved ? 'Saved!' : 'Save settings'}
                 </button>
               </div>
 

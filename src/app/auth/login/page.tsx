@@ -36,18 +36,32 @@ export default function LoginPage() {
     setError(null)
     setNotice(null)
 
-    const { error } = isEmail
+    if (mode === 'signup' && !isEmail) {
+      setError('Create your account with an email address. You can add your mobile number during setup.')
+      setLoading(false)
+      return
+    }
+
+    const { error } = mode === 'signup'
+      ? await supabase.auth.signInWithOtp({
+          email: trimmedIdentifier.toLowerCase(),
+          options: {
+            emailRedirectTo: `${location.origin}/auth/callback?next=${encodeURIComponent(getNextPath())}`,
+            shouldCreateUser: true,
+          },
+        })
+      : isEmail
       ? await supabase.auth.signInWithOtp({
           email: destination,
           options: {
             emailRedirectTo: `${location.origin}/auth/callback?next=${encodeURIComponent(getNextPath())}`,
-            shouldCreateUser: mode === 'signup',
+            shouldCreateUser: false,
           },
         })
       : await supabase.auth.signInWithOtp({
           phone: destination,
           options: {
-            shouldCreateUser: mode === 'signup',
+            shouldCreateUser: false,
           },
         })
 
@@ -157,6 +171,7 @@ export default function LoginPage() {
                     type="button"
                     onClick={() => {
                       setMode(option)
+                      if (option === 'signup' && identifier && !identifier.includes('@')) setIdentifier('')
                       setError(null)
                     }}
                     className={`min-h-11 rounded-lg px-3 text-sm font-medium transition-colors ${
@@ -171,25 +186,28 @@ export default function LoginPage() {
                 {mode === 'signin' ? 'Welcome back' : 'Create your account'}
               </h2>
               <p className="text-warm-400 text-sm">
-                Enter your mobile number or email. No password needed.
+                {mode === 'signin'
+                  ? 'Enter your mobile number or email. No password needed.'
+                  : 'Start with your email. You will add your mobile number during setup.'}
               </p>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-warm-600 mb-1.5" htmlFor="identifier">
-                Mobile number or email
+                {mode === 'signin' ? 'Mobile number or email' : 'Email address'}
               </label>
               <input
                 id="identifier"
-                type="text"
+                type={mode === 'signin' ? 'text' : 'email'}
                 required
                 value={identifier}
                 onChange={e => setIdentifier(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900 text-base
                            focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100
                            placeholder:text-warm-300 transition-colors"
-                placeholder="(555) 555-0100 or you@example.com"
-                autoComplete="username"
+                placeholder={mode === 'signin' ? '(555) 555-0100 or you@example.com' : 'you@example.com'}
+                autoComplete={mode === 'signin' ? 'username' : 'email'}
+                inputMode={mode === 'signin' ? undefined : 'email'}
               />
             </div>
 
@@ -207,7 +225,7 @@ export default function LoginPage() {
                          hover:bg-warm-900 active:scale-[0.98] transition-all
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Sending...' : isEmail ? 'Send email code and link' : 'Send text code'}
+              {loading ? 'Sending...' : mode === 'signup' || isEmail ? 'Send email code and link' : 'Send text code'}
             </button>
           </form>
         ) : (
@@ -273,7 +291,7 @@ export default function LoginPage() {
               }}
               className="text-sm text-terracotta-500 underline underline-offset-2"
             >
-              Use a different number or email
+              {mode === 'signup' ? 'Use a different email' : 'Use a different number or email'}
             </button>
           </form>
         )}
