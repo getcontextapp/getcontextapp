@@ -10,6 +10,7 @@ import { ensureNextOccurrence, ensureRepeatOccurrencesForDate, findMatchingRepea
 import { saveReflectionInput } from '@/lib/reflections'
 import { findPlanUpdateIntent, formatPlanUpdateReply } from '@/lib/plan-update-intent'
 import { shouldSaveSmsAsReflectionReply } from '@/lib/sms-reflection-guard'
+import { rankedNudgeReplyAction } from '@/lib/context-rank-nudges'
 import {
   extractDeleteTarget,
   extractDoneTarget,
@@ -78,6 +79,36 @@ async function getRecentConversation(supabase: ReturnType<typeof createServiceCl
       direction: message.direction as 'inbound' | 'outbound',
       body: String(message.body ?? '').slice(0, 500),
     }))
+}
+
+async function getLatestContextRankNudgeItem(
+  supabase: ReturnType<typeof createServiceClient>,
+  profile: any,
+) {
+  const since = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString()
+  const { data: latestOutbound } = await supabase.from('sms_messages')
+    .select('purpose,metadata,created_at')
+    .eq('profile_id', profile.id)
+    .eq('direction', 'outbound')
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const metadata = latestOutbound?.metadata as Record<string, unknown> | undefined
+  const taskId = metadata?.nudge_kind === 'context_rank' && typeof metadata.planned_activity_id === 'string'
+    ? metadata.planned_activity_id
+    : null
+  if (latestOutbound?.purpose !== 'pending_reminder' || !taskId) return null
+
+  const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  const { data: item } = await supabase.from('planned_activities')
+    .select('*')
+    .eq('id', taskId)
+    .eq('household_id', profile.household_id)
+    .eq('planned_for', todayKey)
+    .in('status', ['planned', 'not_now'])
+    .maybeSingle()
+  return item
 }
 
 async function getPromptingReminderLogId(supabase: ReturnType<typeof createServiceClient>, profileId: string) {
@@ -982,6 +1013,35 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const rankedNudgeAction = rankedNudgeReplyAction(body)
+    if (rankedNudgeAction) {
+      const rankedNudgeItem = await getLatestContextRankNudgeItem(supabase, profile)
+      if (rankedNudgeItem) {
+        const itemLabel = pendingItemLabel(rankedNudgeItem)
+        if (rankedNudgeAction === 'done') {
+          const reply = await updateSelectedPendingItems(supabase, profile, [rankedNudgeItem], 'yes')
+          return sendActionReply(reply, {
+            context_rank_nudge_response: 'done',
+            planned_activity_id: rankedNudgeItem.id,
+          })
+        }
+        if (rankedNudgeAction === 'later') {
+          const reply = await updateSelectedPendingItems(supabase, profile, [rankedNudgeItem], 'not_now')
+          return sendActionReply(reply, {
+            context_rank_nudge_response: 'later',
+            planned_activity_id: rankedNudgeItem.id,
+          })
+        }
+        return sendActionReply(
+          `Okay. I will keep ${itemLabel} as a possible next step. Reply DONE when you finish it, or open Context to update your plan.`,
+          {
+            context_rank_nudge_response: 'accepted',
+            planned_activity_id: rankedNudgeItem.id,
+          },
+        )
+      }
+    }
+
     const carrySelection = parseCarryOverMoveSelection(body)
     if (carrySelection) {
       const recentPrompt = await supabase.from('sms_messages').select('metadata')

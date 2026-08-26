@@ -44,6 +44,7 @@ export async function GET() {
     preferences,
     subscriptionCount: subscriptionsResult.data?.length ?? 0,
     hasSmsNumber: Boolean(context.profile.phone_e164),
+    profileRole: context.profile.role,
     events: eventsResult.data ?? [],
   })
 }
@@ -76,6 +77,7 @@ export async function PATCH(request: NextRequest) {
     ...DEFAULT_CATEGORIES,
     ...(existingPreferences?.categories ?? {}),
     ...(typeof body.dueEnabled === 'boolean' ? { due: body.dueEnabled } : {}),
+    ...(typeof body.reentryEnabled === 'boolean' ? { reentry: body.reentryEnabled } : {}),
   }
   const { data, error } = await context.service.from('notification_preferences').upsert({
     profile_id: context.profile.id,

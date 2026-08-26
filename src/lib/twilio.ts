@@ -86,6 +86,19 @@ export function buildDueReminderMessage(
   ].join('\n')
 }
 
+export function buildContextRankNudgeMessage(
+  displayName: string,
+  detail: string,
+  appUrl: string,
+): string {
+  return [
+    `Hi ${displayName}, a gentle Context check-in.`,
+    `Would “${detail}” be a helpful next step?`,
+    `You can reply YES, LATER, or DONE.`,
+    `Open Context to mark it done or choose later: ${sourcedDashboardUrl(appUrl, '/mci-user')}`,
+  ].join('\n\n')
+}
+
 export function buildDailySummaryMessage(
   carePartnerName: string,
   memberName: string,

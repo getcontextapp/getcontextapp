@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient } from '@/lib/supabase-server'
-import { sendSMS, buildPendingPlanReminderMessage } from '@/lib/twilio'
-import { ACTIVITY_TILES } from '@/types'
+import { sendSMS, buildContextRankNudgeMessage, buildPendingPlanReminderMessage } from '@/lib/twilio'
+import { ACTIVITY_TILES, type PlannedActivity, type Profile } from '@/types'
 import { trackEvent } from '@/lib/analytics'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { getMciProfilesForSms } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
+import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { buildContextRankInput } from '@/lib/context-rank-adapter'
+import { runContextRank } from '@/lib/context-rank'
+import { chooseRankedNudge, rankedNudgeCopy, rankedNudgeSafety } from '@/lib/context-rank-nudges'
+import { sendPushNotification } from '@/lib/push-notifications'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
@@ -14,6 +20,208 @@ function reminderSlot(pathname: string) {
   if (pathname.includes('/noon')) return 'noon'
   if (pathname.includes('/afternoon')) return 'afternoon'
   return 'gap'
+}
+
+type RankedNudgePreference = {
+  push_enabled: boolean
+  sms_enabled: boolean
+  detailed_content: boolean
+  categories: Record<string, boolean> | null
+}
+
+type ReminderProfile = Profile & { household_id: string }
+
+async function sendInternalPreviewRankedNudge(
+  supabase: SupabaseClient,
+  profile: ReminderProfile,
+  slot: 'noon' | 'afternoon',
+  now: Date,
+) {
+  const todayKey = getLocalDateKey(now, profile.timezone)
+  const dayStart = getUtcRangeForLocalDay(now, profile.timezone).start
+  const recentDueSince = new Date(now.getTime() - 45 * 60 * 1000).toISOString()
+  const [{ data: preferenceRow, error: preferenceError }, { data: nudgeRows, error: nudgeError }, { data: recentDue, error: dueError }] = await Promise.all([
+    supabase.from('notification_preferences')
+      .select('push_enabled,sms_enabled,detailed_content,categories')
+      .eq('profile_id', profile.id)
+      .maybeSingle(),
+    supabase.from('notification_events')
+      .select('id,sent_at')
+      .eq('profile_id', profile.id)
+      .eq('category', 'reentry')
+      .gte('sent_at', dayStart)
+      .order('sent_at', { ascending: false })
+      .limit(2),
+    supabase.from('notification_events')
+      .select('id,sent_at')
+      .eq('profile_id', profile.id)
+      .eq('category', 'due')
+      .gte('sent_at', recentDueSince)
+      .order('sent_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+  const lookupError = preferenceError || nudgeError || dueError
+  if (lookupError) return { sent: 0, failed: 1, outcome: 'notification_lookup_failed', error: lookupError.message }
+
+  const preference = preferenceRow as RankedNudgePreference | null
+  if (preference?.categories?.reentry === false) {
+    return { sent: 0, failed: 0, outcome: 'disabled_personalized_checkins' }
+  }
+  const pushEnabled = preference?.push_enabled ?? false
+  const smsEnabled = preference?.sms_enabled ?? true
+  if (!pushEnabled && !smsEnabled) return { sent: 0, failed: 0, outcome: 'no_enabled_channel' }
+
+  const safety = rankedNudgeSafety({
+    sentToday: nudgeRows?.length ?? 0,
+    latestNudgeAt: nudgeRows?.[0]?.sent_at,
+    recentDueAt: recentDue?.sent_at,
+    nowMs: now.getTime(),
+  })
+  if (safety !== 'send') return { sent: 0, failed: 0, outcome: `skipped_${safety}` }
+
+  let ranked
+  try {
+    const input = await buildContextRankInput({
+      supabase,
+      profile,
+      queryTime: now.getTime(),
+      intent: 'what_should_i_do_next',
+    })
+    ranked = runContextRank({
+      evidence: input.evidence,
+      query: { userId: profile.user_id, queryTime: now.getTime(), intent: 'what_should_i_do_next' },
+      session: input.session,
+    })
+  } catch (error) {
+    return { sent: 0, failed: 1, outcome: 'context_rank_failed', error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+
+  if (ranked.card.mode === 'abstain' || ranked.card.candidates.length === 0) {
+    return { sent: 0, failed: 0, outcome: 'context_rank_abstained' }
+  }
+
+  const { data: taskRows, error: taskError } = await supabase.from('planned_activities')
+    .select('*')
+    .eq('household_id', profile.household_id)
+    .eq('planned_for', todayKey)
+    .in('status', ['planned', 'not_now'])
+  if (taskError) return { sent: 0, failed: 1, outcome: 'ranked_task_lookup_failed', error: taskError.message }
+
+  const choice = chooseRankedNudge(ranked.card.candidates, (taskRows ?? []) as PlannedActivity[], profile.id)
+  if (!choice) return { sent: 0, failed: 0, outcome: 'no_eligible_ranked_task' }
+
+  const dedupeKey = `context-rank-nudge:${todayKey}:${choice.task.id}:${profile.id}`
+  const { data: duplicate } = await supabase.from('notification_events').select('id')
+    .eq('dedupe_key', dedupeKey).maybeSingle()
+  if (duplicate) return { sent: 0, failed: 0, outcome: 'duplicate_ranked_task' }
+
+  const copy = rankedNudgeCopy(choice.detail, preference?.detailed_content ?? false)
+  const url = '/mci-user'
+  const channels: string[] = []
+  let eventId: string | null = null
+  let pushStatus: Record<string, unknown> | null = null
+  let smsStatus: Record<string, unknown> | null = null
+  let sent = 0
+  let failed = 0
+  const metadata = {
+    planned_activity_id: choice.task.id,
+    context_rank_episode_id: choice.candidate.episode.id,
+    context_rank_score: choice.candidate.score,
+    context_rank_confidence: choice.candidate.confidence,
+    reminder_slot: slot,
+  }
+
+  if (pushEnabled) {
+    try {
+      const push = await sendPushNotification(supabase, {
+        profileId: profile.id,
+        userId: profile.user_id,
+        householdId: profile.household_id,
+        category: 'reentry',
+        title: copy.title,
+        body: copy.pushBody,
+        url,
+        dedupeKey,
+        metadata,
+      })
+      eventId = 'eventId' in push && typeof push.eventId === 'string' ? push.eventId : null
+      pushStatus = push
+      if (push.sent > 0) {
+        channels.push('push')
+        sent++
+      }
+    } catch (error) {
+      failed++
+      pushStatus = { error: error instanceof Error ? error.message : 'Push failed' }
+    }
+  }
+
+  if (smsEnabled && profile.phone_e164) {
+    const smsBody = buildContextRankNudgeMessage(profile.display_name, choice.detail, APP_URL)
+    const sms = await sendSMS(profile.phone_e164, smsBody)
+    smsStatus = { sent: Boolean(sms.sid && sms.status !== 'failed'), status: sms.status, error: sms.error }
+    await logSmsMessage(supabase, {
+      householdId: profile.household_id,
+      profileId: profile.id,
+      direction: 'outbound',
+      purpose: 'pending_reminder',
+      phoneE164: profile.phone_e164,
+      body: smsBody,
+      twilioSid: sms.sid,
+      status: sms.status,
+      metadata: { ...metadata, nudge_kind: 'context_rank', dedupe_key: dedupeKey },
+    })
+    if (sms.sid && sms.status !== 'failed') {
+      channels.push('sms')
+      sent++
+    } else {
+      failed++
+    }
+  }
+
+  if (!eventId && smsEnabled && profile.phone_e164) {
+    const { data: event, error } = await supabase.from('notification_events').insert({
+      profile_id: profile.id,
+      user_id: profile.user_id,
+      household_id: profile.household_id,
+      category: 'reentry',
+      title: copy.title,
+      body: copy.historyBody,
+      url,
+      dedupe_key: dedupeKey,
+      channels,
+      delivery_status: { sms: smsStatus },
+      metadata,
+      sent_at: channels.length ? new Date().toISOString() : null,
+    }).select('id').single()
+    if (error && error.code !== '23505') failed++
+    eventId = event?.id ?? null
+  } else if (eventId) {
+    await supabase.from('notification_events').update({
+      body: copy.historyBody,
+      channels,
+      delivery_status: { push: pushStatus, sms: smsStatus },
+      sent_at: channels.length ? new Date().toISOString() : null,
+    }).eq('id', eventId)
+  }
+
+  await trackEvent(supabase, {
+    eventName: 'context_rank_nudge_attempted',
+    profile,
+    userId: profile.user_id,
+    properties: { ...metadata, channels, sent, failed },
+  })
+
+  return {
+    sent,
+    failed,
+    outcome: channels.length ? 'sent_context_rank_nudge' : 'ranked_nudge_delivery_failed',
+    task_id: choice.task.id,
+    channels,
+    score: choice.candidate.score,
+    confidence: choice.candidate.confidence,
+  }
 }
 
 // Called by scheduled reminder touchpoints.
@@ -29,9 +237,9 @@ export async function GET(request: NextRequest) {
   const isFixedSlot = slot === 'noon' || slot === 'afternoon'
   const force = request.nextUrl.searchParams.get('force') === '1'
 
-  let mciProfiles
+  let smsReadyProfiles
   try {
-    mciProfiles = await getMciProfilesForSms(supabase)
+    smsReadyProfiles = await getMciProfilesForSms(supabase)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown profile lookup error'
     console.error(`[Cron reminder:${slot}] Profile lookup failed:`, message)
@@ -41,9 +249,27 @@ export async function GET(request: NextRequest) {
     }, { status: 500 })
   }
 
-  if (mciProfiles.length === 0) {
+  const { data: pushOnlyRows, error: pushOnlyError } = await supabase.from('profiles')
+    .select('*')
+    .eq('role', 'mci_user')
+    .is('phone_e164', null)
+    .not('household_id', 'is', null)
+  if (pushOnlyError) return NextResponse.json({ error: pushOnlyError.message }, { status: 500 })
+  const candidateProfiles = [...smsReadyProfiles, ...((pushOnlyRows ?? []) as ReminderProfile[])] as ReminderProfile[]
+  if (candidateProfiles.length === 0) {
     return NextResponse.json({ processed: 0, sent: 0, failed: 0, slot, force, results: [] })
   }
+
+  const householdIds = Array.from(new Set(candidateProfiles.map(profile => profile.household_id)))
+  const { data: householdRows, error: householdError } = await supabase.from('households')
+    .select('id,name')
+    .in('id', householdIds)
+  if (householdError) return NextResponse.json({ error: householdError.message }, { status: 500 })
+  const internalPreviewHouseholdIds = new Set((householdRows ?? [])
+    .filter(household => cohortForHouseholdName(household.name).cohort === 'internal')
+    .map(household => household.id))
+  const mciProfiles = candidateProfiles.filter(profile =>
+    Boolean(profile.phone_e164) || internalPreviewHouseholdIds.has(profile.household_id))
 
   let sent = 0
   let failed = 0
@@ -67,6 +293,19 @@ export async function GET(request: NextRequest) {
     }
     if (!force && slot === 'afternoon' && localHour !== 16) {
       results.push({ profile_id: profile.id, local_hour: localHour, outcome: 'skipped_wrong_local_hour' })
+      continue
+    }
+
+    if (isFixedSlot && internalPreviewHouseholdIds.has(profile.household_id)) {
+      const rankedResult = await sendInternalPreviewRankedNudge(
+        supabase,
+        profile,
+        slot as 'noon' | 'afternoon',
+        new Date(),
+      )
+      sent += rankedResult.sent
+      failed += rankedResult.failed
+      results.push({ profile_id: profile.id, local_hour: localHour, ...rankedResult })
       continue
     }
 

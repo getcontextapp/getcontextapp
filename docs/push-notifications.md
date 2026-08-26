@@ -53,3 +53,17 @@ Open Context in a supported browser, enable notifications from Updates, send a t
 - Push and SMS are independently controlled in Updates; exact-time reminders have their own toggle.
 - Lock-screen task details remain hidden unless the profile explicitly enables them.
 - The rollout remains restricted to the three Internal Preview households.
+
+## Batch C ContextRank check-ins
+
+- The existing noon and 4 PM local reminder touchpoints use ContextRank for Internal Preview MCI profiles.
+- ContextRank ranks today’s evidence for the `what_should_i_do_next` intent. Delivery then selects one currently planned, untimed task that belongs to the recipient.
+- Exact-time tasks are excluded because Batch B already handles them at their due time.
+- Tasks marked done, deferred with **Later**, assigned to someone else, or already suggested that day are excluded.
+- A profile can receive at most two personalized check-ins per day, with at least four hours between them.
+- A personalized check-in is skipped when an exact-time reminder was sent in the previous 45 minutes.
+- ContextRank may abstain. When it does, Context sends nothing rather than inventing a suggestion.
+- Short SMS replies are bound to the exact task in the latest ContextRank check-in: **yes** keeps it as the suggested next step, **later/no** defers it, and **done** completes it.
+- Lock-screen detail remains private unless the profile enables it. The signed-in Recent updates history retains the selected task name.
+- Push and SMS follow the profile’s existing delivery toggles. **Personalized check-ins** have a separate on/off control.
+- Participant Pilot households keep the existing reminder-list SMS flow during this Internal Preview test.

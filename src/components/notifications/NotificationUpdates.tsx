@@ -19,6 +19,7 @@ type NotificationState = {
   publicKey?: string
   subscriptionCount?: number
   hasSmsNumber?: boolean
+  profileRole?: 'mci_user' | 'care_partner'
   preferences?: {
     push_enabled: boolean
     sms_enabled: boolean
@@ -179,7 +180,7 @@ export default function NotificationUpdates() {
     if (response.ok) await load()
   }
 
-  async function setDeliveryPreference(patch: { pushEnabled?: boolean; smsEnabled?: boolean; dueEnabled?: boolean }) {
+  async function setDeliveryPreference(patch: { pushEnabled?: boolean; smsEnabled?: boolean; dueEnabled?: boolean; reentryEnabled?: boolean }) {
     setWorking(true)
     setMessage('')
     try {
@@ -297,6 +298,21 @@ export default function NotificationUpdates() {
                   className="h-5 w-5 shrink-0"
                 />
               </label>
+              {state.profileRole === 'mci_user' && (
+                <label className="mt-3 flex min-h-12 items-center justify-between gap-4 border-t border-cream-200 pt-3 text-sm font-medium text-warm-700">
+                  <span>
+                    Personalized check-ins
+                    <span className="mt-0.5 block text-xs font-normal text-warm-400">One ContextRank-selected next step, with calm daily limits.</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={state.preferences?.categories?.reentry !== false}
+                    disabled={working}
+                    onChange={event => void setDeliveryPreference({ reentryEnabled: event.target.checked })}
+                    className="h-5 w-5 shrink-0"
+                  />
+                </label>
+              )}
             </div>
 
             <div className="mt-6">
