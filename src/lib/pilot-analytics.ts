@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/lib/supabase-server'
+import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 
 export interface AnalyticsFilters {
   days: number
@@ -7,7 +8,6 @@ export interface AnalyticsFilters {
 }
 
 const STUDY_DAYS = 28
-const INTERNAL_PREVIEW_NAMES = ['bilau', 'baru', 'davis']
 
 type ProfileRow = {
   id: string
@@ -267,19 +267,6 @@ function medianDisplay(values: number[]) {
   return value === null ? 'Not instrumented' : value
 }
 
-function cohortForHousehold(household: HouseholdRow, members: ProfileRow[], featureFlags: FeatureFlagRow[]) {
-  const identity = [household.name, ...members.map(member => member.display_name)]
-    .join(' ')
-    .toLowerCase()
-  const namedInternalHousehold = INTERNAL_PREVIEW_NAMES.some(internalName => identity.includes(internalName))
-  const explicitlyFlaggedInternal = featureFlags.some(flag => flag.feature_key === 'pilot_preview' && flag.enabled)
-
-  if (namedInternalHousehold || explicitlyFlaggedInternal) {
-    return { cohort: 'internal', prefix: 'I' }
-  }
-  return { cohort: 'pilot-1', prefix: 'P' }
-}
-
 function week2Value<T>(currentStudyDay: number, value: T) {
   return currentStudyDay > 7 ? value : null
 }
@@ -484,7 +471,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const days = daysSince(onboardingAt, now)
     const phase = studyPhase(days)
     const householdFeatureFlags = filteredFeatureFlags.filter(flag => flag.household_id === household.id)
-    const cohortInfo = cohortForHousehold(household, members, householdFeatureFlags)
+    const cohortInfo = cohortForHouseholdName(household.name)
     const nextSequence = (cohortSequences.get(cohortInfo.cohort) ?? 0) + 1
     cohortSequences.set(cohortInfo.cohort, nextSequence)
     const householdCalendarConnections = filteredCalendarConnections.filter(connection => connection.household_id === household.id)
@@ -523,6 +510,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       label: household.name,
       displayLabel: `${cohortInfo.prefix}${String(nextSequence).padStart(2, '0')} · ${household.name}`,
       name: household.name,
+      householdCreatedAt: household.created_at,
       timezone: mci?.timezone ?? cp?.timezone ?? 'America/New_York',
       onboardingAt,
       daysSinceOnboarding: days,

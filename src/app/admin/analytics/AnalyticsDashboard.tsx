@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 type AnalyticsData = Awaited<ReturnType<typeof import('@/lib/pilot-analytics').loadPilotAnalytics>>
 type Dyad = AnalyticsData['perDyad'][number]
@@ -78,6 +79,69 @@ function SilentDyadAlert({ dyads }: { dyads: Dyad[] }) {
           <span key={dyad.id}>{dyad.displayLabel}: {dyad.silentHours} hours</span>
         ))}
       </div>
+    </section>
+  )
+}
+
+const SEEN_HOUSEHOLDS_KEY = 'context-admin-seen-households-v1'
+const INITIAL_SIGNUP_LOOKBACK_DAYS = 7
+
+function NewHouseholdAlert({ dyads }: { dyads: Dyad[] }) {
+  const [newHouseholdIds, setNewHouseholdIds] = useState<string[]>([])
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    let seenIds: string[] | null = null
+    try {
+      const stored = window.localStorage.getItem(SEEN_HOUSEHOLDS_KEY)
+      if (stored) seenIds = JSON.parse(stored) as string[]
+    } catch {
+      seenIds = null
+    }
+
+    if (seenIds) {
+      const seen = new Set(seenIds)
+      setNewHouseholdIds(dyads.filter(dyad => !seen.has(dyad.id)).map(dyad => dyad.id))
+    } else {
+      const cutoff = Date.now() - INITIAL_SIGNUP_LOOKBACK_DAYS * 86_400_000
+      const recent = dyads.filter(dyad => new Date(dyad.householdCreatedAt).getTime() >= cutoff)
+      setNewHouseholdIds(recent.map(dyad => dyad.id))
+      if (recent.length === 0) {
+        window.localStorage.setItem(SEEN_HOUSEHOLDS_KEY, JSON.stringify(dyads.map(dyad => dyad.id)))
+      }
+    }
+    setReady(true)
+  }, [dyads])
+
+  const newHouseholds = dyads.filter(dyad => newHouseholdIds.includes(dyad.id))
+  if (!ready || newHouseholds.length === 0) return null
+
+  function markAsSeen() {
+    let storedIds: string[] = []
+    try {
+      storedIds = JSON.parse(window.localStorage.getItem(SEEN_HOUSEHOLDS_KEY) ?? '[]') as string[]
+    } catch {
+      storedIds = []
+    }
+    window.localStorage.setItem(SEEN_HOUSEHOLDS_KEY, JSON.stringify([...new Set([...storedIds, ...dyads.map(dyad => dyad.id)])]))
+    setNewHouseholdIds([])
+  }
+
+  return (
+    <section className="signup-alert" aria-live="polite">
+      <div>
+        <p>New household {newHouseholds.length === 1 ? 'signup' : 'signups'}</p>
+        <h2>{newHouseholds.length} new household{newHouseholds.length === 1 ? '' : 's'} joined Context</h2>
+        <div className="signup-list">
+          {newHouseholds.map(dyad => (
+            <span key={dyad.id}>
+              <strong>{dyad.name}</strong>
+              <small>{formatTime(dyad.householdCreatedAt)} · {dyad.cohort === 'internal' ? 'Internal preview' : 'Participant pilot'}</small>
+            </span>
+          ))}
+        </div>
+      </div>
+      <button type="button" onClick={markAsSeen}>Mark as seen</button>
     </section>
   )
 }
@@ -312,7 +376,7 @@ function ReadinessPanel({ data }: { data: AnalyticsData }) {
         ))}
       </div>
       <div className="privacy-note">
-        New features should stay with Bilau, Baru, and Davis until you approve rollout to participant households.
+        New features should stay with My Home, The Odu Household, and Baru Home until you approve rollout to participant households.
       </div>
     </section>
   )
@@ -333,6 +397,7 @@ function ExportsPanel({ data }: { data: AnalyticsData }) {
 }
 
 export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
+  const router = useRouter()
   const [tab, setTab] = useState<TabKey>('health')
   const [selectedCohort, setSelectedCohort] = useState('all')
   const [selectedHousehold, setSelectedHousehold] = useState(data.filters.householdId || 'all')
@@ -342,13 +407,19 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
   ), [data.perDyad, selectedCohort, selectedHousehold])
   const outcomeRows = data.outcomeRows.filter(row => dyads.some(dyad => dyad.id === row.householdId))
 
+  useEffect(() => {
+    const refresh = window.setInterval(() => router.refresh(), 60_000)
+    return () => window.clearInterval(refresh)
+  }, [router])
+
   return (
     <main className="admin-shell">
       <header className="admin-hero">
         <p>Context admin</p>
         <h1>Pilot monitoring</h1>
-        <span>Generated {formatTime(data.generatedAt)}</span>
+        <span>Generated {formatTime(data.generatedAt)} · Checking for new signups every minute</span>
       </header>
+      <NewHouseholdAlert dyads={data.perDyad} />
       <SilentDyadAlert dyads={dyads} />
       <ScopeBar data={data} selectedCohort={selectedCohort} setSelectedCohort={setSelectedCohort} selectedHousehold={selectedHousehold} setSelectedHousehold={setSelectedHousehold} />
       <nav className="admin-tabs" aria-label="Analytics sections">
@@ -363,7 +434,7 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
       {tab === 'exports' ? <ExportsPanel data={data} /> : null}
       <style jsx global>{`
         .admin-shell { min-height: 100vh; background: #f8f4ea; color: #27211a; padding: 32px; font-family: var(--font-sans, system-ui, sans-serif); }
-        .admin-hero, .panel, .scope-card, .silent-alert { max-width: 1180px; margin: 0 auto 22px; }
+        .admin-hero, .panel, .scope-card, .silent-alert, .signup-alert { max-width: 1180px; margin: 0 auto 22px; }
         .admin-hero p, .panel-heading p, .dyad-topline span { color: #4b7440; font-size: 0.78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
         .admin-hero h1 { font-family: var(--font-serif, Georgia, serif); font-size: clamp(2.3rem, 5vw, 4.4rem); line-height: 1; margin: 8px 0; }
         .admin-hero span { color: #817669; }
@@ -375,7 +446,13 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
         .admin-tabs button, .export-grid a { min-height: 48px; border-radius: 999px; border: 1px solid #ddceb8; background: #fffdfa; color: #463b2d; padding: 0 18px; font-weight: 800; text-decoration: none; display: inline-grid; place-items: center; }
         .admin-tabs button.active { background: #3f6b36; color: white; border-color: #3f6b36; }
         .silent-alert { background: #fff7ed; border-color: #c9763e; }
-        .silent-alert h2, .panel h2 { margin: 0; font-family: var(--font-serif, Georgia, serif); font-size: 1.8rem; }
+        .signup-alert { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; background: #edf3ea; border: 1px solid #8dae84; border-radius: 24px; box-shadow: 0 14px 36px rgba(44, 35, 24, .07); padding: 24px; }
+        .signup-alert p { margin: 0 0 5px; color: #4b7440; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+        .signup-alert h2, .silent-alert h2, .panel h2 { margin: 0; font-family: var(--font-serif, Georgia, serif); font-size: 1.8rem; }
+        .signup-alert button { min-height: 46px; flex: 0 0 auto; border: 0; border-radius: 999px; background: #3f6b36; color: white; padding: 0 18px; font: inherit; font-weight: 800; cursor: pointer; }
+        .signup-list { display: grid; gap: 8px; margin-top: 16px; }
+        .signup-list span { display: grid; gap: 2px; }
+        .signup-list small { color: #6f6558; }
         .alert-list, .feature-list, .readiness-list, .export-grid, .dyad-grid, .stats-grid { display: grid; gap: 14px; }
         .alert-list { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
         .alert-list span { background: white; border-radius: 14px; padding: 14px; font-weight: 800; color: #8b3d20; }
@@ -416,7 +493,7 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
         .readiness-list article.watch { border-left: 6px solid #c9763e; }
         .privacy-note { margin-top: 18px; border-radius: 16px; padding: 16px; background: #edf3ea; color: #3f6b36; font-weight: 800; }
         .export-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-        @media (max-width: 720px) { .admin-shell { padding: 18px; } .scope-card { grid-template-columns: 1fr; } dl { grid-template-columns: 1fr; } }
+        @media (max-width: 720px) { .admin-shell { padding: 18px; } .scope-card { grid-template-columns: 1fr; } .signup-alert { display: grid; } dl { grid-template-columns: 1fr; } }
       `}</style>
     </main>
   )
