@@ -424,6 +424,7 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
       <ScopeBar data={data} selectedCohort={selectedCohort} setSelectedCohort={setSelectedCohort} selectedHousehold={selectedHousehold} setSelectedHousehold={setSelectedHousehold} />
       <nav className="admin-tabs" aria-label="Analytics sections">
         {TABS.map(item => <button key={item.key} className={tab === item.key ? 'active' : ''} onClick={() => setTab(item.key)}>{item.label}</button>)}
+        <a className="standalone" href="/admin/pilot-interest">Pilot interest ↗</a>
       </nav>
       {tab === 'health' ? <DyadHealthPanel dyads={dyads} /> : null}
       {tab === 'outcomes' ? <OutcomeScoresPanel rows={outcomeRows} /> : null}
@@ -443,8 +444,9 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
         label { display: grid; gap: 7px; color: #6f6558; font-weight: 700; }
         select { min-height: 48px; border: 1px solid #ddceb8; border-radius: 12px; background: white; color: #27211a; padding: 0 14px; font: inherit; }
         .admin-tabs { max-width: 1180px; margin: 0 auto 22px; display: flex; gap: 10px; flex-wrap: wrap; }
-        .admin-tabs button, .export-grid a { min-height: 48px; border-radius: 999px; border: 1px solid #ddceb8; background: #fffdfa; color: #463b2d; padding: 0 18px; font-weight: 800; text-decoration: none; display: inline-grid; place-items: center; }
+        .admin-tabs button, .admin-tabs a, .export-grid a { min-height: 48px; border-radius: 999px; border: 1px solid #ddceb8; background: #fffdfa; color: #463b2d; padding: 0 18px; font-weight: 800; text-decoration: none; display: inline-grid; place-items: center; }
         .admin-tabs button.active { background: #3f6b36; color: white; border-color: #3f6b36; }
+        .admin-tabs a.standalone { border-style: dashed; }
         .silent-alert { background: #fff7ed; border-color: #c9763e; }
         .signup-alert { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; background: #edf3ea; border: 1px solid #8dae84; border-radius: 24px; box-shadow: 0 14px 36px rgba(44, 35, 24, .07); padding: 24px; }
         .signup-alert p { margin: 0 0 5px; color: #4b7440; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }

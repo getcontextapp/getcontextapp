@@ -41,10 +41,10 @@ async function getAdminAccess() {
   return { user, allowed: emailAllowed || profileAllowed }
 }
 
-export async function requireAnalyticsAdmin() {
+export async function requireAnalyticsAdmin(nextPath = '/admin/analytics') {
   const { user, allowed } = await getAdminAccess()
 
-  if (!user) redirect('/auth/login?next=/admin/analytics')
+  if (!user) redirect(`/auth/login?next=${encodeURIComponent(nextPath)}`)
   if (!allowed) redirect('/')
 
   return user

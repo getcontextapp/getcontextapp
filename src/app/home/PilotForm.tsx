@@ -33,6 +33,7 @@ export default function PilotForm() {
           email,
           role,
           phone: String(data.get('phone') || '').trim(),
+          website: String(data.get('website') || '').trim(),
           source: 'landing_home',
         }),
       })
@@ -52,6 +53,10 @@ export default function PilotForm() {
 
   return (
     <form onSubmit={submit} noValidate>
+      <div className="landing-honeypot" aria-hidden="true">
+        <label htmlFor="fWebsite">Website</label>
+        <input id="fWebsite" name="website" type="text" tabIndex={-1} autoComplete="off" />
+      </div>
       <div className="landing-f-grid">
         <div className="landing-field">
           <label htmlFor="fName">Your name</label>
@@ -81,6 +86,9 @@ export default function PilotForm() {
       <p className="landing-f-privacy">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
         Your information is private and never shared.
+      </p>
+      <p className="landing-account-link">
+        Already invited? <a href="/auth/login">Create your account or sign in</a>.
       </p>
       {status && (
         <p className={`landing-form-status ${status.type}`} role="status">
