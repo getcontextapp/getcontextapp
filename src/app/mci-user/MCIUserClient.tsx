@@ -15,6 +15,7 @@ import CalendarCard from '@/components/calendar/CalendarCard'
 import NotificationUpdates from '@/components/notifications/NotificationUpdates'
 import { addDaysToKey, formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 import { buildRecoveryAnswerText } from '@/lib/recovery-copy'
+import { isPlanForDisplayedDate } from '@/lib/calendar-plan'
 import type { ContinuityCard, RecoveryIntent, RecoverySession, ScoredCandidate } from '@/lib/context-rank'
 import type { CalendarDashboardData } from '@/lib/calendar-sync'
 
@@ -697,6 +698,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             setCalendarEvents(nextCalendar.events)
           }}
           onPlannedActivityAdded={activity => {
+            if (!isPlanForDisplayedDate(activity.planned_for, todayKey)) return
             setPlannedActivities(current => current.some(item => item.id === activity.id) ? current : [...current, activity])
           }}
         />

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { trackEvent } from '@/lib/analytics'
 import { getLocalDateKey } from '@/lib/dates'
+import { calendarPlanExistingMessage } from '@/lib/calendar-plan'
 import { getCalendarDashboardData, resolveCalendarOwnerProfile } from '@/lib/calendar-sync'
 import { periodForTime } from '@/lib/task-scheduling'
 import { createServerClient } from '@/lib/supabase-server'
@@ -70,7 +71,10 @@ export async function POST(request: NextRequest) {
     .limit(1)
 
   if (existingPlans && existingPlans.length > 0) {
-    return NextResponse.json({ error: "This is already in today's Context plan." }, { status: 409 })
+    const todayKey = getLocalDateKey(new Date(), ownerProfile.timezone)
+    return NextResponse.json({
+      error: calendarPlanExistingMessage(plannedFor, todayKey),
+    }, { status: 409 })
   }
 
   const { data: plannedActivity, error: insertError } = await supabase

@@ -7,6 +7,7 @@ import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import { formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 import CalendarCard from '@/components/calendar/CalendarCard'
+import { isPlanForDisplayedDate } from '@/lib/calendar-plan'
 import ReadOnlyDailyReflection from '@/components/mci/ReadOnlyDailyReflection'
 import NotificationUpdates from '@/components/notifications/NotificationUpdates'
 import { ACTIVITY_TILES } from '@/types'
@@ -308,6 +309,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
               setCalendarEvents(nextCalendar.events)
             }}
             onPlannedActivityAdded={activity => {
+              if (!isPlanForDisplayedDate(activity.planned_for, todayKey)) return
               setPlannedActivities(current => current.some(item => item.id === activity.id) ? current : [...current, activity])
             }}
           />

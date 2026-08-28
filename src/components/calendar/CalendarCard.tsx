@@ -1,6 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { calendarPlanAddedMessage } from '@/lib/calendar-plan'
+import { getLocalDateKey } from '@/lib/dates'
 import type { CalendarConnectionSummary, CalendarEvent, PlannedActivity } from '@/types'
 import type { CalendarDashboardData } from '@/lib/calendar-sync'
 
@@ -200,8 +202,15 @@ export default function CalendarCard({
       return
     }
     onCalendarUpdated?.(result.calendar)
-    if (result.plannedActivity) onPlannedActivityAdded?.(result.plannedActivity)
-    setMessage('Added to Context.')
+    if (result.plannedActivity) {
+      onPlannedActivityAdded?.(result.plannedActivity)
+      setMessage(calendarPlanAddedMessage(
+        result.plannedActivity.planned_for,
+        getLocalDateKey(new Date(), timeZone),
+      ))
+    } else {
+      setMessage('Added to Context for the calendar event date.')
+    }
   }
 
   async function disconnectCalendar() {
