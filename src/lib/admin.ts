@@ -53,3 +53,8 @@ export async function requireAnalyticsAdmin(nextPath = '/admin/analytics') {
 export async function isAnalyticsAdmin() {
   return (await getAdminAccess()).allowed
 }
+
+export async function getAnalyticsAdminUser() {
+  const { user, allowed } = await getAdminAccess()
+  return allowed ? user : null
+}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { buildResearchFollowupMessage, isResearchFollowupDay } from '@/lib/research-followup'
 
 type AnalyticsData = Awaited<ReturnType<typeof import('@/lib/pilot-analytics').loadPilotAnalytics>>
 type Dyad = AnalyticsData['perDyad'][number]
@@ -276,26 +277,100 @@ function OutcomeScoresPanel({ rows }: { rows: OutcomeRow[] }) {
 
 function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) {
   const rows = data.studyArc.filter(row => dyads.some(dyad => dyad.id === row.householdId))
+  const [selection, setSelection] = useState<{ dyad: Dyad; day: number } | null>(null)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
+  const [sentKeys, setSentKeys] = useState<string[]>([])
+
+  const sendFollowup = async () => {
+    if (!selection) return
+    setSending(true)
+    setError('')
+    const response = await fetch('/api/admin/research-followup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ householdId: selection.dyad.id, milestoneDay: selection.day }),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      setError(result.error ?? 'The follow-up could not be sent.')
+      setSending(false)
+      return
+    }
+    setSentKeys(keys => [...keys, `${selection.dyad.id}:${selection.day}`])
+    setSending(false)
+    setSelection(null)
+  }
+
   return (
     <section className="panel">
       <div className="panel-heading">
         <p>Study arc timeline</p>
         <h2>Day-by-day signal across 28 days</h2>
       </div>
-      <div className="markers">Check-ins: day 2, 5, 10, 14. Quiet period starts day 15.</div>
+      <div className="markers">Research follow-ups: days 2, 5, 10, 14. Select a reached day to prepare a CP text. Quiet period starts day 15.</div>
       <div className="arc-list">
-        {rows.map(row => (
-          <article key={row.householdId} className="arc-row">
-            <h3>{row.householdName}</h3>
-            <div className="arc-days">
-              {row.days.map(day => {
-                const total = day.planLogged + day.planCompleted + day.smsReplied + day.contextViewed + (day.calendarItem ?? 0)
-                return <span key={day.day} className={`arc-day ${total > 0 ? 'active' : ''} marker-${[2, 5, 10, 14, 15].includes(day.day)}`} title={`Day ${day.day}: ${total} signals`}>{day.day}</span>
-              })}
-            </div>
-          </article>
-        ))}
+        {rows.map(row => {
+          const dyad = dyads.find(candidate => candidate.id === row.householdId)
+          if (!dyad) return null
+          return (
+            <article key={row.householdId} className="arc-row">
+              <h3>{row.householdName}</h3>
+              <div className="arc-days">
+                {row.days.map(day => {
+                  const total = day.planLogged + day.planCompleted + day.smsReplied + day.contextViewed + (day.calendarItem ?? 0)
+                  const followupDay = isResearchFollowupDay(day.day)
+                  const sent = dyad.researchFollowupDays.includes(day.day) || sentKeys.includes(`${dyad.id}:${day.day}`)
+                  const reached = day.day <= dyad.currentStudyDay
+                  const available = followupDay && reached && Boolean(dyad.cpProfileId && dyad.cpPhoneLast4) && !sent
+                  const className = `arc-day ${total > 0 ? 'active' : ''} marker-${[2, 5, 10, 14, 15].includes(day.day)} ${available ? 'followup-ready' : ''} ${sent ? 'followup-sent' : ''}`
+                  const signalTitle = `Day ${day.day}: ${total} signals`
+                  if (!followupDay) return <span key={day.day} className={className} title={signalTitle}>{day.day}</span>
+                  const reason = sent
+                    ? 'follow-up sent'
+                    : !reached
+                      ? 'not reached yet'
+                      : !dyad.cpPhoneLast4
+                        ? 'CP phone unavailable'
+                        : 'prepare CP research follow-up'
+                  return (
+                    <button
+                      key={day.day}
+                      type="button"
+                      className={className}
+                      disabled={!available}
+                      title={`${signalTitle}; ${reason}`}
+                      aria-label={`${row.householdName}, Day ${day.day}: ${reason}`}
+                      onClick={() => {
+                        setError('')
+                        setSelection({ dyad, day: day.day })
+                      }}
+                    >
+                      {sent ? '✓' : day.day}
+                    </button>
+                  )
+                })}
+              </div>
+            </article>
+          )
+        })}
       </div>
+      {selection ? (
+        <div className="followup-confirm" role="dialog" aria-labelledby="followup-title">
+          <div>
+            <p>Manual researcher contact</p>
+            <h3 id="followup-title">Send Day {selection.day} follow-up?</h3>
+            <span>To {selection.dyad.cpName} · phone ending {selection.dyad.cpPhoneLast4}</span>
+          </div>
+          <blockquote>{buildResearchFollowupMessage(selection.dyad.cpName, selection.day)}</blockquote>
+          <small>This is a research check-in only. It does not ask the care partner to remind or supervise the MCI participant.</small>
+          {error ? <div className="followup-error" role="alert">{error}</div> : null}
+          <div className="followup-actions">
+            <button type="button" className="primary-action" disabled={sending} onClick={sendFollowup}>{sending ? 'Sending…' : 'Send text'}</button>
+            <button type="button" className="secondary-action" disabled={sending} onClick={() => setSelection(null)}>Cancel</button>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -481,9 +556,24 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
         .arc-row { margin-bottom: 18px; }
         .arc-row h3 { margin: 0 0 10px; }
         .arc-days { display: grid; grid-template-columns: repeat(28, minmax(22px, 1fr)); gap: 5px; }
-        .arc-day { min-height: 28px; border-radius: 8px; background: #f0eadf; color: #817669; display: grid; place-items: center; font-size: .72rem; font-weight: 800; }
+        .arc-day { min-height: 28px; border: 0; padding: 0; border-radius: 8px; background: #f0eadf; color: #817669; display: grid; place-items: center; font: inherit; font-size: .72rem; font-weight: 800; }
         .arc-day.active { background: #3f6b36; color: white; }
         .arc-day.marker-true { outline: 2px solid #c9763e; outline-offset: 1px; }
+        button.arc-day:disabled { opacity: .58; }
+        .arc-day.followup-ready { cursor: pointer; box-shadow: 0 0 0 3px rgba(201, 118, 62, .18); }
+        .arc-day.followup-ready:hover, .arc-day.followup-ready:focus-visible { transform: translateY(-2px); outline-width: 3px; }
+        .arc-day.followup-sent { background: #e3eee0; color: #31582a; outline-color: #4b7440; }
+        .followup-confirm { margin-top: 22px; padding: 20px; border-radius: 18px; border: 1px solid #dfd1bd; background: #faf7f0; display: grid; gap: 14px; }
+        .followup-confirm p { margin: 0 0 4px; color: #c05f28; font-size: .76rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+        .followup-confirm h3 { margin: 0 0 5px; }
+        .followup-confirm span, .followup-confirm small { color: #6f6558; }
+        .followup-confirm blockquote { margin: 0; padding: 16px; border-left: 4px solid #c9763e; border-radius: 8px; background: white; line-height: 1.55; }
+        .followup-error { padding: 12px; border-radius: 10px; background: #f9e2df; color: #8d2f27; font-weight: 800; }
+        .followup-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .followup-actions button { border: 0; border-radius: 999px; padding: 11px 18px; font-weight: 900; cursor: pointer; }
+        .followup-actions button:disabled { cursor: wait; opacity: .6; }
+        .primary-action { background: #3f6b36; color: white; }
+        .secondary-action { background: #e9e0d3; color: #554c42; }
         .stats-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 18px; }
         .admin-stat, .feature-list article, .readiness-list article { background: #faf7f0; border-radius: 16px; padding: 16px; }
         .admin-stat span, .feature-list span { color: #817669; font-weight: 800; }

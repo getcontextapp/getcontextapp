@@ -962,6 +962,19 @@ export async function POST(request: NextRequest) {
   }
 
   const promptingReminderLogId = await getPromptingReminderLogId(supabase, profile.id)
+  const researchReplySince = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+  const { data: recentResearchFollowup } = profile.role === 'care_partner'
+    ? await supabase
+      .from('sms_messages')
+      .select('id,metadata,created_at')
+      .eq('profile_id', profile.id)
+      .eq('direction', 'outbound')
+      .eq('purpose', 'research_followup')
+      .gte('created_at', researchReplySince)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    : { data: null }
 
   await logSmsMessage(supabase, {
     householdId: profile.household_id,
@@ -973,9 +986,16 @@ export async function POST(request: NextRequest) {
     twilioSid: messageSid,
     reminderLogId: promptingReminderLogId,
     status: 'received',
+    metadata: recentResearchFollowup ? {
+      research_followup_reply: true,
+      milestone_day: recentResearchFollowup.metadata?.milestone_day,
+      research_followup_id: recentResearchFollowup.id,
+    } : undefined,
   })
 
   if (profile.role !== 'mci_user') {
+    if (recentResearchFollowup) return emptyXmlResponse()
+
     await logSmsMessage(supabase, {
       householdId: profile.household_id,
       profileId: profile.id,

@@ -14,6 +14,7 @@ type ProfileRow = {
   user_id: string
   role: string
   display_name: string
+  phone_e164: string | null
   household_id: string | null
   timezone: string | null
   created_at: string
@@ -358,7 +359,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     calendarConnections,
     calendarEvents,
   ] = await Promise.all([
-    service.from('profiles').select('id,user_id,role,display_name,household_id,timezone,created_at').order('created_at'),
+    service.from('profiles').select('id,user_id,role,display_name,phone_e164,household_id,timezone,created_at').order('created_at'),
     service.from('households').select('id,name,created_at').order('created_at'),
     service.from('analytics_events').select('id,profile_id,household_id,role,event_name,properties,created_at')
       .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
@@ -524,6 +525,17 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       cpUserId: cp?.user_id ?? null,
       mciName: mci?.display_name ?? 'No MCI participant',
       cpName: cp?.display_name ?? 'No care partner',
+      cpPhoneLast4: cp?.phone_e164?.slice(-4) ?? null,
+      researchFollowupDays: sms
+        .filter(message =>
+          message.household_id === household.id &&
+          message.profile_id === cp?.id &&
+          message.direction === 'outbound' &&
+          message.purpose === 'research_followup' &&
+          message.status !== 'failed'
+        )
+        .map(message => Number(message.metadata?.milestone_day))
+        .filter(day => Number.isInteger(day)),
       mciLastActive,
       cpLastActive,
       lastActive,

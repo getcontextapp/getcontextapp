@@ -140,6 +140,7 @@ export type SmsPurpose =
   | 'inbound_reflection'
   | 'weekly_summary'
   | 'carry_over'
+  | 'research_followup'
   | 'inbound_plan_reply'
   | 'inbound_confirmation'
   | 'inbound_other'
