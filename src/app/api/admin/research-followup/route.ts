@@ -5,9 +5,7 @@ import {
   isResearchFollowupDay,
   researchStudyDay,
 } from '@/lib/research-followup'
-import { logSmsMessage } from '@/lib/sms'
 import { createServiceClient } from '@/lib/supabase-server'
-import { sendSMS } from '@/lib/twilio'
 
 export async function POST(request: NextRequest) {
   const admin = await getAnalyticsAdminUser()
@@ -16,6 +14,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}))
   const householdId = typeof body.householdId === 'string' ? body.householdId : ''
   const milestoneDay = Number(body.milestoneDay)
+  const action = body.action === 'mark_contacted' ? 'mark_contacted' : 'compose'
   if (!householdId || !Number.isInteger(milestoneDay) || !isResearchFollowupDay(milestoneDay)) {
     return NextResponse.json({ error: 'Choose a valid research follow-up day.' }, { status: 400 })
   }
@@ -42,7 +41,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Day ${milestoneDay} has not been reached yet.` }, { status: 409 })
   }
 
-  const [{ data: preference }, { data: priorMessages, error: priorError }] = await Promise.all([
+  const [
+    { data: preference },
+    { data: priorMessages, error: priorError },
+    { data: priorContacts, error: contactError },
+  ] = await Promise.all([
     service.from('notification_preferences').select('sms_enabled').eq('profile_id', carePartner.id).maybeSingle(),
     service.from('sms_messages')
       .select('id,created_at,metadata,status')
@@ -52,36 +55,53 @@ export async function POST(request: NextRequest) {
       .eq('purpose', 'research_followup')
       .order('created_at', { ascending: false })
       .limit(20),
+    service.from('analytics_events')
+      .select('id,created_at,properties')
+      .eq('household_id', householdId)
+      .eq('profile_id', carePartner.id)
+      .eq('event_name', 'research_followup_contacted')
+      .order('created_at', { ascending: false })
+      .limit(20),
   ])
 
   if (preference?.sms_enabled === false) {
     return NextResponse.json({ error: 'SMS is turned off for this care partner.' }, { status: 409 })
   }
-  if (priorError) return NextResponse.json({ error: priorError.message }, { status: 500 })
-  const duplicate = priorMessages?.find(message => message.status !== 'failed' && Number(message.metadata?.milestone_day) === milestoneDay)
+  const lookupError = priorError || contactError
+  if (lookupError) return NextResponse.json({ error: lookupError.message }, { status: 500 })
+  const duplicateMessage = priorMessages?.find(message => message.status !== 'failed' && Number(message.metadata?.milestone_day) === milestoneDay)
+  const duplicateContact = priorContacts?.find(event => Number(event.properties?.milestone_day) === milestoneDay)
+  const duplicate = duplicateMessage ?? duplicateContact
   if (duplicate) {
-    return NextResponse.json({ error: `The Day ${milestoneDay} follow-up was already sent.`, sentAt: duplicate.created_at }, { status: 409 })
+    return NextResponse.json({ error: `The Day ${milestoneDay} follow-up is already marked as contacted.`, contactedAt: duplicate.created_at }, { status: 409 })
   }
 
   const message = buildResearchFollowupMessage(carePartner.display_name, milestoneDay)
-  const result = await sendSMS(carePartner.phone_e164, message)
-  await logSmsMessage(service, {
-    householdId,
-    profileId: carePartner.id,
-    direction: 'outbound',
-    purpose: 'research_followup',
-    phoneE164: carePartner.phone_e164,
-    body: message,
-    twilioSid: result.sid,
-    status: result.status,
-    metadata: {
+  const eventName = action === 'mark_contacted'
+    ? 'research_followup_contacted'
+    : 'research_followup_compose_opened'
+  const { error: trackingError } = await service.from('analytics_events').insert({
+    user_id: admin.id,
+    profile_id: carePartner.id,
+    household_id: householdId,
+    role: 'care_partner',
+    event_name: eventName,
+    properties: {
       milestone_day: milestoneDay,
       admin_user_id: admin.id,
-      research_contact: true,
+      contact_method: 'personal_sms',
       automated: false,
     },
   })
+  if (trackingError) return NextResponse.json({ error: trackingError.message }, { status: 500 })
 
-  if (result.error) return NextResponse.json({ error: `Text could not be sent: ${result.error}` }, { status: 502 })
-  return NextResponse.json({ ok: true, sentAt: new Date().toISOString(), status: result.status })
+  if (action === 'mark_contacted') {
+    return NextResponse.json({ ok: true, contactedAt: new Date().toISOString() })
+  }
+
+  return NextResponse.json({
+    ok: true,
+    phone: carePartner.phone_e164,
+    message,
+  })
 }

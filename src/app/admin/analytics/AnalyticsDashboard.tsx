@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { buildResearchFollowupMessage, isResearchFollowupDay } from '@/lib/research-followup'
+import { buildResearchFollowupMessage, buildSmsComposeHref, isResearchFollowupDay } from '@/lib/research-followup'
 
 type AnalyticsData = Awaited<ReturnType<typeof import('@/lib/pilot-analytics').loadPilotAnalytics>>
 type Dyad = AnalyticsData['perDyad'][number]
@@ -278,27 +278,51 @@ function OutcomeScoresPanel({ rows }: { rows: OutcomeRow[] }) {
 function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) {
   const rows = data.studyArc.filter(row => dyads.some(dyad => dyad.id === row.householdId))
   const [selection, setSelection] = useState<{ dyad: Dyad; day: number } | null>(null)
-  const [sending, setSending] = useState(false)
+  const [openingMessages, setOpeningMessages] = useState(false)
+  const [markingContacted, setMarkingContacted] = useState(false)
+  const [composeOpened, setComposeOpened] = useState(false)
   const [error, setError] = useState('')
-  const [sentKeys, setSentKeys] = useState<string[]>([])
+  const [contactedKeys, setContactedKeys] = useState<string[]>([])
 
-  const sendFollowup = async () => {
+  const openPersonalMessages = async () => {
     if (!selection) return
-    setSending(true)
+    setOpeningMessages(true)
     setError('')
     const response = await fetch('/api/admin/research-followup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ householdId: selection.dyad.id, milestoneDay: selection.day }),
+      body: JSON.stringify({ householdId: selection.dyad.id, milestoneDay: selection.day, action: 'compose' }),
     })
-    const result = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      setError(result.error ?? 'The follow-up could not be sent.')
-      setSending(false)
+    const result = await response.json().catch(() => ({})) as { phone?: string; message?: string; error?: string }
+    if (!response.ok || !result.phone || !result.message) {
+      setError(result.error ?? 'Messages could not be opened.')
+      setOpeningMessages(false)
       return
     }
-    setSentKeys(keys => [...keys, `${selection.dyad.id}:${selection.day}`])
-    setSending(false)
+    setComposeOpened(true)
+    setOpeningMessages(false)
+    const appleDevice = /(iPhone|iPad|iPod|Macintosh)/i.test(window.navigator.userAgent)
+    window.location.href = buildSmsComposeHref(result.phone, result.message, appleDevice)
+  }
+
+  const markContacted = async () => {
+    if (!selection) return
+    setMarkingContacted(true)
+    setError('')
+    const response = await fetch('/api/admin/research-followup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ householdId: selection.dyad.id, milestoneDay: selection.day, action: 'mark_contacted' }),
+    })
+    const result = await response.json().catch(() => ({})) as { error?: string }
+    if (!response.ok) {
+      setError(result.error ?? 'The contact could not be recorded.')
+      setMarkingContacted(false)
+      return
+    }
+    setContactedKeys(keys => [...keys, `${selection.dyad.id}:${selection.day}`])
+    setMarkingContacted(false)
+    setComposeOpened(false)
     setSelection(null)
   }
 
@@ -320,14 +344,14 @@ function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) 
                 {row.days.map(day => {
                   const total = day.planLogged + day.planCompleted + day.smsReplied + day.contextViewed + (day.calendarItem ?? 0)
                   const followupDay = isResearchFollowupDay(day.day)
-                  const sent = dyad.researchFollowupDays.includes(day.day) || sentKeys.includes(`${dyad.id}:${day.day}`)
+                  const contacted = dyad.researchFollowupDays.includes(day.day) || contactedKeys.includes(`${dyad.id}:${day.day}`)
                   const reached = day.day <= dyad.currentStudyDay
-                  const available = followupDay && reached && Boolean(dyad.cpProfileId && dyad.cpPhoneLast4) && !sent
-                  const className = `arc-day ${total > 0 ? 'active' : ''} marker-${[2, 5, 10, 14, 15].includes(day.day)} ${available ? 'followup-ready' : ''} ${sent ? 'followup-sent' : ''}`
+                  const available = followupDay && reached && Boolean(dyad.cpProfileId && dyad.cpPhoneLast4) && !contacted
+                  const className = `arc-day ${total > 0 ? 'active' : ''} marker-${[2, 5, 10, 14, 15].includes(day.day)} ${available ? 'followup-ready' : ''} ${contacted ? 'followup-sent' : ''}`
                   const signalTitle = `Day ${day.day}: ${total} signals`
                   if (!followupDay) return <span key={day.day} className={className} title={signalTitle}>{day.day}</span>
-                  const reason = sent
-                    ? 'follow-up sent'
+                  const reason = contacted
+                    ? 'care partner contacted'
                     : !reached
                       ? 'not reached yet'
                       : !dyad.cpPhoneLast4
@@ -343,10 +367,11 @@ function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) 
                       aria-label={`${row.householdName}, Day ${day.day}: ${reason}`}
                       onClick={() => {
                         setError('')
+                        setComposeOpened(false)
                         setSelection({ dyad, day: day.day })
                       }}
                     >
-                      {sent ? '✓' : day.day}
+                      {contacted ? '✓' : day.day}
                     </button>
                   )
                 })}
@@ -359,15 +384,20 @@ function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) 
         <div className="followup-confirm" role="dialog" aria-labelledby="followup-title">
           <div>
             <p>Manual researcher contact</p>
-            <h3 id="followup-title">Send Day {selection.day} follow-up?</h3>
+            <h3 id="followup-title">Prepare Day {selection.day} follow-up</h3>
             <span>To {selection.dyad.cpName} · phone ending {selection.dyad.cpPhoneLast4}</span>
           </div>
           <blockquote>{buildResearchFollowupMessage(selection.dyad.cpName, selection.day)}</blockquote>
-          <small>This is a research check-in only. It does not ask the care partner to remind or supervise the MCI participant.</small>
+          <small>This opens your Messages app. You review and send it from your personal number; Context will not send it automatically.</small>
+          {composeOpened ? <div className="privacy-note">After sending the text in Messages, return here and mark the care partner as contacted.</div> : null}
           {error ? <div className="followup-error" role="alert">{error}</div> : null}
           <div className="followup-actions">
-            <button type="button" className="primary-action" disabled={sending} onClick={sendFollowup}>{sending ? 'Sending…' : 'Send text'}</button>
-            <button type="button" className="secondary-action" disabled={sending} onClick={() => setSelection(null)}>Cancel</button>
+            <button type="button" className="primary-action" disabled={openingMessages || markingContacted} onClick={openPersonalMessages}>{openingMessages ? 'Opening…' : 'Open in Messages'}</button>
+            {composeOpened ? <button type="button" className="primary-action" disabled={markingContacted || openingMessages} onClick={markContacted}>{markingContacted ? 'Saving…' : 'Mark as contacted'}</button> : null}
+            <button type="button" className="secondary-action" disabled={openingMessages || markingContacted} onClick={() => {
+              setComposeOpened(false)
+              setSelection(null)
+            }}>Cancel</button>
           </div>
         </div>
       ) : null}

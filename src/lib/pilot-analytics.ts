@@ -526,16 +526,24 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       mciName: mci?.display_name ?? 'No MCI participant',
       cpName: cp?.display_name ?? 'No care partner',
       cpPhoneLast4: cp?.phone_e164?.slice(-4) ?? null,
-      researchFollowupDays: sms
-        .filter(message =>
-          message.household_id === household.id &&
-          message.profile_id === cp?.id &&
-          message.direction === 'outbound' &&
-          message.purpose === 'research_followup' &&
-          message.status !== 'failed'
-        )
-        .map(message => Number(message.metadata?.milestone_day))
-        .filter(day => Number.isInteger(day)),
+      researchFollowupDays: [...new Set([
+        ...sms
+          .filter(message =>
+            message.household_id === household.id &&
+            message.profile_id === cp?.id &&
+            message.direction === 'outbound' &&
+            message.purpose === 'research_followup' &&
+            message.status !== 'failed'
+          )
+          .map(message => Number(message.metadata?.milestone_day)),
+        ...events
+          .filter(event =>
+            event.household_id === household.id &&
+            event.profile_id === cp?.id &&
+            event.event_name === 'research_followup_contacted'
+          )
+          .map(event => Number(event.properties?.milestone_day)),
+      ])].filter(day => Number.isInteger(day)),
       mciLastActive,
       cpLastActive,
       lastActive,

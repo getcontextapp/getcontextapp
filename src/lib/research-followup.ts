@@ -19,3 +19,8 @@ export function researchStudyDay(onboardingAt: string | Date, now: string | Date
 export function buildResearchFollowupMessage(carePartnerName: string, day: number) {
   return `Hi ${firstName(carePartnerName)}, this is Ibrahim from the Context memory-support app research team. You’ve reached Day ${day} of the pilot, and I’d like to briefly check how things are going. Would you be available for a quick text chat or short phone call at a convenient time today? Reply with what works best for you.`
 }
+
+export function buildSmsComposeHref(phone: string, message: string, appleDevice: boolean) {
+  const separator = appleDevice ? '&' : '?'
+  return `sms:${phone}${separator}body=${encodeURIComponent(message)}`
+}

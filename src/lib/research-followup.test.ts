@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   buildResearchFollowupMessage,
+  buildSmsComposeHref,
   firstName,
   isResearchFollowupDay,
   researchStudyDay,
@@ -30,4 +31,16 @@ test('falls back safely when the display name is blank', () => {
 test('matches the dashboard study day at UTC date boundaries', () => {
   assert.equal(researchStudyDay('2026-08-24T23:50:00Z', '2026-08-28T00:01:00Z'), 5)
   assert.equal(researchStudyDay('2026-08-28T00:01:00Z', '2026-08-28T23:59:00Z'), 1)
+})
+
+test('builds personal Messages links for iPhone and Android', () => {
+  const message = 'Hi Linda, quick text chat?'
+  assert.equal(
+    buildSmsComposeHref('+15551234567', message, true),
+    'sms:+15551234567&body=Hi%20Linda%2C%20quick%20text%20chat%3F',
+  )
+  assert.equal(
+    buildSmsComposeHref('+15551234567', message, false),
+    'sms:+15551234567?body=Hi%20Linda%2C%20quick%20text%20chat%3F',
+  )
 })
