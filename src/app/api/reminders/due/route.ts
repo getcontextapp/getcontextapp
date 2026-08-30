@@ -5,6 +5,7 @@ import { sendPushNotification } from '@/lib/push-notifications'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 import { buildDueReminderMessage, sendSMS } from '@/lib/twilio'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
+import { loadCalendarLinkedPlanIds, nudgeRankCalendarDecision } from '@/lib/nudge-rank'
 
 const CRON_SECRET = process.env.CRON_SECRET
 const DEFAULT_CATEGORIES = { due: true }
@@ -86,6 +87,17 @@ export async function GET(request: NextRequest) {
   if (lookupError) return NextResponse.json({ error: lookupError.message }, { status: 500 })
 
   const tasks = (taskRows ?? []) as DueTask[]
+  const calendarLinkedByHousehold = new Map<string, Set<string>>()
+  try {
+    await Promise.all(householdIds.map(async householdId => {
+      calendarLinkedByHousehold.set(householdId, await loadCalendarLinkedPlanIds(service, householdId))
+    }))
+  } catch (error) {
+    return NextResponse.json({
+      error: 'nudge_rank_calendar_policy_lookup_failed',
+      details: error instanceof Error ? error.message : 'Unknown calendar policy error',
+    }, { status: 500 })
+  }
   const preferences = new Map((preferenceRows ?? []).map(row => [row.profile_id, row as DuePreference]))
   const profilesByHousehold = new Map<string, DueProfile[]>()
   for (const profile of profiles) {
@@ -111,6 +123,15 @@ export async function GET(request: NextRequest) {
     const timing = localContext.get(recipient.id)
     if (!timing || timing.dateKey !== task.planned_for ||
       !isDueReminderWindow(task.expected_time, timing.minuteOfDay)) continue
+
+    const calendarDecision = nudgeRankCalendarDecision({
+      calendarLinked: calendarLinkedByHousehold.get(task.household_id)?.has(task.id) ?? false,
+      distinctCognitiveValue: false,
+    })
+    if (calendarDecision === 'suppress_source_calendar_duplicate') {
+      results.push({ task_id: task.id, profile_id: recipient.id, outcome: calendarDecision })
+      continue
+    }
 
     const preference = preferences.get(recipient.id)
     const categories = preference?.categories ?? DEFAULT_CATEGORIES

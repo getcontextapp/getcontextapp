@@ -75,6 +75,17 @@ test('skips exact-time, deferred, completed, and differently assigned tasks', ()
   assert.equal(chooseRankedNudge(candidates, tasks, 'profile-1')?.task.id, 'eligible')
 })
 
+test('skips source-calendar tasks suppressed by NudgeRank', () => {
+  const candidates = [candidate('calendar'), candidate('context-only')]
+  const result = chooseRankedNudge(
+    candidates,
+    [task('calendar'), task('context-only')],
+    'profile-1',
+    new Set(['calendar']),
+  )
+  assert.equal(result?.task.id, 'context-only')
+})
+
 test('keeps lock-screen detail private while retaining a useful in-app history', () => {
   const privateCopy = rankedNudgeCopy('Call the pharmacy', false)
   assert.equal(privateCopy.pushBody, 'Context has one gentle next-step suggestion.')

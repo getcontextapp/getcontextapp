@@ -32,6 +32,7 @@ export function chooseRankedNudge(
   candidates: ScoredCandidate[],
   tasks: PlannedActivity[],
   profileId: string,
+  suppressedTaskIds: ReadonlySet<string> = new Set(),
 ): RankedNudgeChoice | null {
   const tasksById = new Map(tasks.map(task => [task.id, task]))
 
@@ -39,6 +40,7 @@ export function chooseRankedNudge(
     for (const taskId of plannedActivityIds(candidate)) {
       const task = tasksById.get(taskId)
       if (!task || task.status !== 'planned' || task.expected_time) continue
+      if (suppressedTaskIds.has(task.id)) continue
       if (task.assigned_to && task.assigned_to !== profileId) continue
       const detail = task.note?.trim() || task.label.trim()
       if (detail) return { candidate, task, detail }

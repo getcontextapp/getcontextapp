@@ -67,4 +67,11 @@ Open Context in a supported browser, enable notifications from Updates, send a t
 - Lock-screen detail remains private unless the profile enables it. The signed-in Recent updates history retains the selected task name.
 - Push and SMS follow the profile’s existing delivery toggles. **Personalized check-ins** have a separate on/off control.
 - If ContextRank abstains or cannot find an eligible untimed task, the existing pending-plan SMS remains the fallback so the scheduled check-in is not silently lost.
+
+## NudgeRank calendar channel coordination
+
+- A calendar event copied into Context remains visible for orientation, retrieval, and planning.
+- NudgeRank suppresses ordinary Context push and SMS nudges for that event because the source calendar may already notify the participant.
+- Context may notify only when the message adds distinct cognitive value beyond repeating the calendar alert, such as preparation guidance, recovery after a missed event, or a context-aware next step.
+- The current alpha implementation does not claim distinct cognitive value for copied calendar events, so both exact-time reminders and scheduled pending-plan nudges exclude them by default.
 - Forced QA calls can target one profile, preventing a test from messaging the broader pilot cohort.

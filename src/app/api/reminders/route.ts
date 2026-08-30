@@ -8,6 +8,7 @@ import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { getMciProfilesForSms } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
+import { loadCalendarLinkedPlanIds } from '@/lib/nudge-rank'
 import { buildContextRankInput } from '@/lib/context-rank-adapter'
 import { runContextRank } from '@/lib/context-rank'
 import {
@@ -142,7 +143,24 @@ async function sendRankedNudge(
     error: taskError.message,
   }
 
-  const choice = chooseRankedNudge(ranked.card.candidates, (taskRows ?? []) as PlannedActivity[], profile.id)
+  let calendarLinkedPlanIds: Set<string>
+  try {
+    calendarLinkedPlanIds = await loadCalendarLinkedPlanIds(supabase, profile.household_id)
+  } catch (error) {
+    return {
+      sent: 0,
+      failed: 1,
+      outcome: 'nudge_rank_calendar_policy_lookup_failed',
+      error: error instanceof Error ? error.message : 'Unknown calendar policy error',
+    }
+  }
+
+  const choice = chooseRankedNudge(
+    ranked.card.candidates,
+    (taskRows ?? []) as PlannedActivity[],
+    profile.id,
+    calendarLinkedPlanIds,
+  )
   if (!choice) return {
     sent: 0,
     failed: 0,
@@ -395,6 +413,25 @@ export async function GET(request: NextRequest) {
       continue
     }
 
+    let calendarLinkedPlanIds: Set<string>
+    try {
+      calendarLinkedPlanIds = await loadCalendarLinkedPlanIds(supabase, profile.household_id)
+    } catch (error) {
+      failed++
+      results.push({
+        profile_id: profile.id,
+        local_hour: localHour,
+        outcome: 'nudge_rank_calendar_policy_lookup_failed',
+        error: error instanceof Error ? error.message : 'Unknown calendar policy error',
+      })
+      continue
+    }
+    const nudgeablePendingItems = pendingItems.filter(item => !calendarLinkedPlanIds.has(item.id))
+    if (nudgeablePendingItems.length === 0) {
+      results.push({ profile_id: profile.id, local_hour: localHour, outcome: 'suppressed_source_calendar_duplicates' })
+      continue
+    }
+
     const duplicateSince = isFixedSlot
       ? getUtcRangeForLocalDay(new Date(), profile.timezone).start
       : checkFrom
@@ -420,7 +457,7 @@ export async function GET(request: NextRequest) {
       continue
     }
 
-    const pendingForSms = pendingItems.map(item => {
+    const pendingForSms = nudgeablePendingItems.map(item => {
       const tile = ACTIVITY_TILES.find(t => t.category === item.category)
       return {
         icon: tile?.icon ?? '📌',
