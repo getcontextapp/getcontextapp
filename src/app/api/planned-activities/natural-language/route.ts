@@ -8,6 +8,15 @@ import { ensureNextOccurrence, findMatchingRepeatOccurrence, retireRepeatFamily 
 import { getLocalDateKey } from '@/lib/dates'
 import { isRecallRequest } from '@/lib/recall-intent'
 import { findPlanUpdateIntent, isPlanTimeUpdateMessage } from '@/lib/plan-update-intent'
+import {
+  ambiguousTimeRangeClarification,
+  countPlanWords,
+  detectSafeTimelineCapture,
+  PLAN_PRESERVATION_LIMIT,
+  PLAN_PROCESSING_WORD_LIMIT,
+  plannedDateForText,
+  splitPlanClauses,
+} from '@/lib/natural-language-input'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
 const VALID_CATEGORIES = new Set(ACTIVITY_TILES.map(tile => tile.category))
@@ -50,37 +59,8 @@ function cleanFallbackPlan(note: string) {
     .slice(0, 160)
 }
 
-function detectTimelineCapture(message: string): { type: 'doing_now' | 'did'; text: string } | null {
-  const text = message.trim().replace(/[—–]/g, ',').replace(/\s+/g, ' ')
-  const lower = text.toLowerCase()
-  const nowMatch = lower.match(/^(?:i am|i'm|im|i’m|we are|we're|currently|right now i am|right now i'm|right now im)\s+(.+)$/)
-  if (nowMatch) {
-    return { type: 'doing_now', text: cleanCaptureText(text.replace(/^(?:i am|i'm|im|i’m|we are|we're|currently|right now i am|right now i'm|right now im)\s+/i, '')) }
-  }
-  if (/\b(right now|currently|at the moment)\b/i.test(text) && !/\b(at|around)\s+\d{1,2}/i.test(text)) {
-    return { type: 'doing_now', text: cleanCaptureText(text.replace(/\b(right now|currently|at the moment)\b/gi, '')) }
-  }
-  if (/^(?:i just|just|i already|already|i did|i finished|i completed|i had|i took|i went|i called|i made|i ate|i walked|i visited)\b/i.test(text)) {
-    return { type: 'did', text: cleanCaptureText(text.replace(/^(?:i just|just|i already|already)\s+/i, '')) }
-  }
-  if (/\b(just did|just finished|just completed|just had|just took|just went|just called|just made|just ate|just walked|just visited)\b/i.test(text)) {
-    return { type: 'did', text: cleanCaptureText(text) }
-  }
-  return null
-}
-
-function cleanCaptureText(text: string) {
-  return text
-    .trim()
-    .replace(/^i\s+(?:am|was|did)\s+/i, '')
-    .replace(/[.]+$/, '')
-    .trim()
-    .slice(0, 160)
-}
-
-function buildFallbackPlans(message: string) {
-  return message
-    .split(/[,;\n]+/)
+function buildFallbackPlans(message: string, todayKey: string) {
+  return splitPlanClauses(message)
     .map(cleanFallbackPlan)
     .filter(note => note.length > 1)
     .slice(0, 12)
@@ -92,6 +72,7 @@ function buildFallbackPlans(message: string) {
         expected_period: expectedTime ? periodForTime(expectedTime) : inferFallbackPeriod(note),
         expected_time: expectedTime,
         repeat_rule: requestedRepeat(note) ?? 'none',
+        planned_for: plannedDateForText(note, todayKey),
         confidence: 'medium' as const,
       }
     })
@@ -138,7 +119,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body: {
-    action?: 'parse' | 'save' | 'modify'
+    action?: 'parse' | 'save' | 'modify' | 'save_exact'
     message?: string
     planned_for?: string
     items?: Array<{
@@ -147,6 +128,7 @@ export async function POST(request: NextRequest) {
       expected_period?: ExpectedPeriod
       expected_time?: string | null
       repeat_rule?: RepeatRule
+      planned_for?: string
     }>
     modification?: {
       id?: string
@@ -159,8 +141,21 @@ export async function POST(request: NextRequest) {
   } = await request.json()
 
   if (body.action === 'parse') {
-    const message = body.message?.trim().slice(0, 1000)
+    const message = body.message?.trim() ?? ''
     if (!message) return NextResponse.json({ error: 'Tell Context what you plan to do.' }, { status: 400 })
+    const wordCount = countPlanWords(message)
+    if (wordCount > PLAN_PROCESSING_WORD_LIMIT || message.length > PLAN_PRESERVATION_LIMIT) {
+      await trackEvent(supabase, {
+        eventName: 'natural_language_processing_limit_reached',
+        profile,
+        userId: user.id,
+        properties: { raw_length: message.length, word_count: wordCount, preserved: true },
+      })
+      return NextResponse.json({
+        error: 'That is over 1,000 words. Everything is still here. Shorten it for plan-making, or save your words exactly as a note.',
+        preserved: true,
+      }, { status: 413 })
+    }
 
     if (isRecallRequest(message)) {
       await trackEvent(supabase, {
@@ -218,7 +213,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: matches.length > 1 ? 'I found more than one matching task. Please name it more specifically.' : 'I could not find that waiting task today.' }, { status: 422 })
     }
 
-    const capture = detectTimelineCapture(message)
+    const todayKey = getLocalDateKey(new Date(), profile.timezone)
+    const clarification = ambiguousTimeRangeClarification(message)
+    if (clarification) {
+      await trackEvent(supabase, {
+        eventName: 'natural_language_clarification_requested',
+        profile,
+        userId: user.id,
+        properties: { kind: 'ambiguous_time_range', raw_length: message.length },
+      })
+      return NextResponse.json({ clarification })
+    }
+
+    const capture = detectSafeTimelineCapture(message)
     if (capture?.text) {
       await trackEvent(supabase, {
         eventName: 'natural_language_timeline_parsed',
@@ -229,10 +236,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ capture })
     }
 
-    const parsed = await parseSmsPlanReply(message, profile.display_name, profile.timezone)
+    const parsed = await parseSmsPlanReply(message, profile.display_name, profile.timezone, {
+      todayKey,
+      allowFutureDates: true,
+    })
     const items = parsed.intent === 'plan' && parsed.items.length > 0
       ? parsed.items
-      : buildFallbackPlans(message)
+      : buildFallbackPlans(message, todayKey)
     if (items.length === 0) {
       return NextResponse.json({ error: 'Tell Context one thing you want to do today.' }, { status: 422 })
     }
@@ -249,6 +259,36 @@ export async function POST(request: NextRequest) {
     })
 
     return NextResponse.json({ items })
+  }
+
+  if (body.action === 'save_exact') {
+    const message = body.message?.trim() ?? ''
+    if (!message) return NextResponse.json({ error: 'There are no words to save.' }, { status: 400 })
+    if (message.length > PLAN_PRESERVATION_LIMIT) {
+      return NextResponse.json({
+        error: 'This draft is exceptionally long. It is still on this screen; please save it in two parts.',
+        preserved: true,
+      }, { status: 413 })
+    }
+    const { data: event, error } = await supabase.from('timeline_events').insert({
+      household_id: profile.household_id,
+      user_id: user.id,
+      profile_id: profile.id,
+      text: message,
+      type: 'plan',
+      source: 'user-stated',
+      confidence: 'low',
+    }).select().single()
+    if (error || !event) {
+      return NextResponse.json({ error: error?.message ?? 'Context could not save your exact words.' }, { status: 500 })
+    }
+    await trackEvent(supabase, {
+      eventName: 'natural_language_exact_note_saved',
+      profile,
+      userId: user.id,
+      properties: { timeline_event_id: event.id, raw_length: message.length },
+    })
+    return NextResponse.json({ event })
   }
 
   if (body.action === 'modify') {
@@ -336,10 +376,11 @@ export async function POST(request: NextRequest) {
           : 'anytime' as ExpectedPeriod,
         expected_time: /^\d{2}:\d{2}$/.test(item.expected_time ?? '') ? item.expected_time! : null,
         repeat_rule: VALID_REPEAT_RULES.has(item.repeat_rule as RepeatRule) ? item.repeat_rule as RepeatRule : 'none' as RepeatRule,
+        planned_for: /^\d{4}-\d{2}-\d{2}$/.test(item.planned_for ?? '') ? item.planned_for! : body.planned_for ?? '',
       }))
       .filter(item => item.note.length > 0)
 
-    if (items.length === 0 || !body.planned_for) {
+    if (items.length === 0 || items.some(item => !item.planned_for)) {
       return NextResponse.json({ error: 'Keep at least one plan before saving.' }, { status: 400 })
     }
 
@@ -352,7 +393,7 @@ export async function POST(request: NextRequest) {
       note: item.note,
       expected_period: item.expected_period,
       expected_time: item.expected_time,
-      planned_for: body.planned_for,
+      planned_for: item.planned_for,
       repeat_rule: item.repeat_rule,
       source: 'manual',
     }))
@@ -360,7 +401,7 @@ export async function POST(request: NextRequest) {
     const plannedItems: PlannedActivity[] = []
     for (const row of rows) {
       if (row.repeat_rule !== 'none') {
-        const existingRepeat = await findMatchingRepeatOccurrence(supabase, row as PlannedActivity, body.planned_for)
+        const existingRepeat = await findMatchingRepeatOccurrence(supabase, row as PlannedActivity, row.planned_for)
         if (existingRepeat) {
           plannedItems.push(existingRepeat as PlannedActivity)
           continue
@@ -397,6 +438,7 @@ export async function POST(request: NextRequest) {
       properties: {
         item_count: plannedItems.length,
         planned_activity_ids: plannedItems.map(item => item.id),
+        planned_for_dates: Array.from(new Set(plannedItems.map(item => item.planned_for))),
       },
     })
 

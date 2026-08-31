@@ -82,6 +82,8 @@ export interface SmsInterpreterContext {
     direction: 'inbound' | 'outbound'
     body: string
   }>
+  todayKey?: string
+  allowFutureDates?: boolean
 }
 
 const VALID_CATEGORIES: ActivityCategory[] = ['morning', 'meal', 'movement', 'social', 'rest', 'medication', 'custom']
@@ -417,6 +419,8 @@ export async function parseSmsPlanReply(
   const pendingItems = (context.pendingItems ?? []).slice(0, 10)
   const todaysItems = (context.todaysItems ?? []).slice(0, 12)
   const recentMessages = (context.recentMessages ?? []).slice(-8)
+  const todayKey = context.todayKey ?? ''
+  const allowFutureDates = context.allowFutureDates ?? false
   const pendingList = pendingItems.length > 0
     ? pendingItems.map((item, index) => `${index + 1}. ${item.note?.trim() || item.label}`).join('\n')
     : 'None'
@@ -433,6 +437,7 @@ Understand ordinary, natural conversation without requiring special commands. Th
 
 User name: ${displayName}
 User timezone: ${timeZone ?? 'America/New_York'}
+Local date: ${todayKey || 'Use the current local date'}
 Today's waiting items:
 ${pendingList}
 
@@ -485,6 +490,7 @@ Rules:
 - Examples of completed activity language: "Called my daughter", "I walked outside", "I had lunch", "Went to club", "Took my pills".
 - If the message expresses a future intention, set intent to "plan".
 - Extract an exact local time as HH:MM when the user states one. Otherwise return null.
+- For a time range, keep the full range in the note and set expected_time to the start time.
 - Use repeat_rule "daily" for every day, "weekdays" for Monday through Friday, and "weekly" for every week.
 - Examples of plan language: "I want to go to club", "I need to call my daughter", "I will have lunch", "Plan to walk".
 - If the message is too vague, set intent to "unclear" and return an empty items array.
@@ -493,14 +499,16 @@ Rules:
 - Good planned notes: "Take morning pills", "Call daughter", "Walk outside", "Eat lunch", "Go to eye appointment".
 - Bad planned notes: "Took pills", "Called daughter", "Walked outside", "Ate lunch".
 - Keep each note short and natural, using the user's words when possible but converting to plan language.
-- If the user mentions tomorrow or another future day, explain briefly that Context currently saves SMS plans for today and return "unclear" unless the message also includes tasks for today.
+- ${allowFutureDates
+    ? 'For every planned item, set planned_for to its local YYYY-MM-DD date. Resolve “today” and “tomorrow” from the Local date. Different items may have different dates.'
+    : 'If the user mentions tomorrow or another future day, explain briefly that Context currently saves SMS plans for today and return "unclear" unless the message also includes tasks for today.'}
 - Use confidence "high", "medium", or "low".
 
 Return exactly this shape:
 {
   "intent": "plan" | "completed" | "confirmation" | "pending_status" | "pending_action" | "undo_request" | "delete_request" | "unclear",
   "items": [
-    { "category": "meal", "note": "Lunch", "expected_period": "afternoon", "expected_time": "13:00", "repeat_rule": "none", "confidence": "high" }
+    { "category": "meal", "note": "Lunch", "expected_period": "afternoon", "expected_time": "13:00", "repeat_rule": "none", "planned_for": ${allowFutureDates ? `"${todayKey}"` : 'null'}, "confidence": "high" }
   ],
   "confirmation": "yes" | "not_now" | "skip" | null,
   "selected_numbers": [1, 2] | "all",
@@ -547,6 +555,9 @@ Return exactly this shape:
           expected_period: safePeriod(item.expected_period),
           expected_time: safeTime(item.expected_time),
           repeat_rule: safeRepeatRule(item.repeat_rule),
+          planned_for: allowFutureDates && /^\d{4}-\d{2}-\d{2}$/.test(String(item.planned_for ?? ''))
+            ? String(item.planned_for)
+            : undefined,
           confidence: ['high', 'medium', 'low'].includes(item.confidence) ? item.confidence : 'medium',
         }))
         .filter((item: any) => item.note && item.confidence !== 'low')

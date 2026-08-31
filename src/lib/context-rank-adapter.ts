@@ -425,7 +425,9 @@ export async function buildContextRankInput({
     evidence.push(makeEvidence({
       id: `timeline_event:${event.id}`,
       userId: profile.user_id,
-      content: event.text,
+      // Preserve the full participant note in storage, but keep ranking evidence
+      // bounded so a long dictation cannot crowd out the rest of their context.
+      content: event.text.slice(0, 1_000),
       source,
       time: dateWindow(point, 30 * 60 * 1000, 30 * 60 * 1000),
       provenance: `timeline_events:${event.id}`,

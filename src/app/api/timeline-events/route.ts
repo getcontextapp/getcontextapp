@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { trackEvent } from '@/lib/analytics'
+import { TIMELINE_CAPTURE_LIMIT } from '@/lib/natural-language-input'
 import type { TimelineEventConfidence, TimelineEventSource, TimelineEventType } from '@/types'
 
 const VALID_TYPES = new Set<TimelineEventType>(['plan', 'doing_now', 'did', 'completion', 'sms_reply'])
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
     confidence?: TimelineEventConfidence
   } = await request.json()
 
-  const text = body.text?.trim().replace(/[—–]/g, ',').slice(0, 240)
+  const text = body.text?.trim().replace(/[—–]/g, ',')
   const type = VALID_TYPES.has(body.type as TimelineEventType) ? body.type as TimelineEventType : 'doing_now'
   const source = VALID_SOURCES.has(body.source as TimelineEventSource) ? body.source as TimelineEventSource : 'user-stated'
   const confidence = VALID_CONFIDENCE.has(body.confidence as TimelineEventConfidence)
@@ -63,6 +64,9 @@ export async function POST(request: NextRequest) {
     : 'high'
 
   if (!text) return NextResponse.json({ error: 'Tell Context what happened.' }, { status: 400 })
+  if (text.length > TIMELINE_CAPTURE_LIMIT) {
+    return NextResponse.json({ error: 'That note is too long. Your words are still on the screen; please shorten it.' }, { status: 413 })
+  }
 
   const { data, error } = await supabase
     .from('timeline_events')

@@ -43,6 +43,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: profileError?.message ?? 'Failed to link household.' }, { status: 500 })
   }
 
+  const { error: featureFlagError } = await service
+    .from('household_feature_flags')
+    .upsert(
+      [
+        { household_id: household.id, feature_key: 'pilot_preview', enabled: true },
+        { household_id: household.id, feature_key: 'calendar_sync', enabled: true },
+      ],
+      { onConflict: 'household_id,feature_key' },
+    )
+
+  // Do not strand a participant after their household has already been made.
+  // Calendar also defaults on when the legacy flag is absent.
+  if (featureFlagError) {
+    console.error('[Onboarding] Could not seed pilot feature flags:', featureFlagError.message)
+  }
+
   await sendOnboardingWelcome(updatedProfile as Profile).catch(error => {
     console.error('[Onboarding] Welcome SMS failed:', error)
   })

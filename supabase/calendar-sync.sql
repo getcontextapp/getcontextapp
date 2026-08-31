@@ -129,12 +129,9 @@ create policy "household calendar events"
 grant select on calendar_events to authenticated;
 grant all on calendar_events to service_role;
 
--- Internal preview cohort for current non-participant households.
+-- Calendar is a baseline pilot feature for every current household.
 insert into household_feature_flags (household_id, feature_key, enabled)
 select id, 'calendar_sync', true
 from households
-where lower(name) like '%bilau%'
-   or lower(name) like '%baru%'
-   or lower(name) like '%davis%'
 on conflict (household_id, feature_key)
 do update set enabled = excluded.enabled, updated_at = now();

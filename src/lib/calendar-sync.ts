@@ -179,7 +179,10 @@ export async function isCalendarEnabledForHousehold(supabase: SupabaseClient, ho
     console.error('[Calendar] Feature flag lookup failed:', error.message)
     return false
   }
-  return Boolean(data?.enabled)
+  // Calendar is part of the pilot baseline. An explicit false still supports a
+  // household-level safety rollback, while households without a legacy flag
+  // receive the same experience as new participants.
+  return data?.enabled ?? true
 }
 
 export async function resolveCalendarOwnerProfile(

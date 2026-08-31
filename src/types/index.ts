@@ -222,6 +222,7 @@ export interface ParsedSmsPlanItem {
   expected_period: ExpectedPeriod
   expected_time?: string | null
   repeat_rule?: RepeatRule
+  planned_for?: string
   confidence: 'high' | 'medium' | 'low'
 }
 
