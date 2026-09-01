@@ -157,6 +157,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         .from('input_captures')
         .select('*')
         .eq('profile_id', profile.id)
+        .neq('status', 'cancelled')
         .order('created_at', { ascending: false })
         .limit(10),
     ])

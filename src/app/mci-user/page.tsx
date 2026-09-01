@@ -69,6 +69,7 @@ export default async function MCIUserPage({
     .from('input_captures')
     .select('*')
     .eq('profile_id', profile.id)
+    .neq('status', 'cancelled')
     .order('created_at', { ascending: false })
     .limit(10)
 
