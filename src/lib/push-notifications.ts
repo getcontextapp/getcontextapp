@@ -1,5 +1,6 @@
 import webpush from 'web-push'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { stagingPushAllowed } from '@/lib/environment-safety'
 
 export type NotificationCategory =
   | 'test' | 'morning' | 'due' | 'reentry' | 'summary' | 'calendar' | 'care_partner' | 'admin'
@@ -42,6 +43,9 @@ export function isAllowedPushEndpoint(value: string) {
 }
 
 export async function sendPushNotification(supabase: SupabaseClient, input: PushNotificationInput) {
+  if (!stagingPushAllowed(input.userId)) {
+    return { sent: 0, failed: 0, blockedStaging: true }
+  }
   const config = pushConfiguration()
   if (!config.configured) return { sent: 0, failed: 0, unavailable: true }
 

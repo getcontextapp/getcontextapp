@@ -1,5 +1,6 @@
 import twilio from 'twilio'
 import { getAppUrl } from '@/lib/sms'
+import { isStagingEnvironment, stagingSmsAllowed } from '@/lib/environment-safety'
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID!
 const authToken  = process.env.TWILIO_AUTH_TOKEN!
@@ -17,6 +18,13 @@ function getClient() {
 }
 
 export async function sendSMS(to: string, body: string) {
+  if (!stagingSmsAllowed(to)) {
+    console.warn('[Twilio] Blocked non-allowlisted staging recipient.')
+    return { sid: null, status: 'blocked_staging', error: 'Recipient is not allowlisted for staging.' }
+  }
+  if (isStagingEnvironment() && !accountSid) {
+    return { sid: null, status: 'blocked_staging', error: 'Twilio is not configured for staging.' }
+  }
   const client = getClient()
   try {
     const message = await client.messages.create({

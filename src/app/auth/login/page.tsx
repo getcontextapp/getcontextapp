@@ -7,6 +7,7 @@ import type { EmailOtpType } from '@supabase/supabase-js'
 
 type AuthMode = 'signin' | 'signup'
 type DeliveryMethod = 'email' | 'phone'
+type DemoAccount = 'solo' | 'shared' | 'care_partner'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -19,6 +20,7 @@ export default function LoginPage() {
   const [verifying, setVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [demoLoading, setDemoLoading] = useState<DemoAccount | null>(null)
 
   const supabase = createClient()
 
@@ -147,6 +149,33 @@ export default function LoginPage() {
 
     setError(lastError?.message || 'That code did not work. Please check the email and try again.')
     setVerifying(false)
+  }
+
+  async function handleDemoLogin(account: DemoAccount) {
+    setDemoLoading(account)
+    setError(null)
+    const response = await fetch('/api/auth/staging-demo', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ account }),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok || !result.access_token || !result.refresh_token) {
+      setError(result.error || 'The staging demo account could not be opened.')
+      setDemoLoading(null)
+      return
+    }
+    const { error } = await supabase.auth.setSession({
+      access_token: result.access_token,
+      refresh_token: result.refresh_token,
+    })
+    if (error) {
+      setError(error.message)
+      setDemoLoading(null)
+      return
+    }
+    router.push(getNextPath())
+    router.refresh()
   }
 
   return (
@@ -294,6 +323,31 @@ export default function LoginPage() {
               {mode === 'signup' ? 'Use a different email' : 'Use a different number or email'}
             </button>
           </form>
+        )}
+
+        {process.env.NEXT_PUBLIC_CONTEXT_ENV === 'staging' && !sent && (
+          <section className="card p-6 mt-4" aria-label="Staging demo accounts">
+            <p className="text-xs font-semibold uppercase tracking-wide text-sage-700">Staging only</p>
+            <h2 className="font-serif text-lg font-semibold text-warm-900 mt-1">Demo accounts</h2>
+            <p className="text-warm-400 text-sm mt-1 mb-4">Choose a role to enter the reusable sample household.</p>
+            <div className="grid gap-2">
+              {([
+                ['solo', 'Solo participant'],
+                ['shared', 'Shared participant'],
+                ['care_partner', 'Care partner'],
+              ] as Array<[DemoAccount, string]>).map(([account, label]) => (
+                <button
+                  key={account}
+                  type="button"
+                  onClick={() => handleDemoLogin(account)}
+                  disabled={demoLoading !== null}
+                  className="w-full min-h-12 rounded-xl border border-cream-300 bg-white px-4 text-left text-warm-700 font-medium hover:bg-cream-50 disabled:opacity-50"
+                >
+                  {demoLoading === account ? 'Opening...' : label}
+                </button>
+              ))}
+            </div>
+          </section>
         )}
       </div>
 
