@@ -10,6 +10,7 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}))
   const name = String(body.name ?? '').trim()
+  const supportMode = body.support_mode === 'shared' ? 'shared' : 'solo'
   if (!name) return NextResponse.json({ error: 'Enter a household name.' }, { status: 400 })
 
   const service = createServiceClient()
@@ -49,6 +50,7 @@ export async function POST(request: NextRequest) {
       [
         { household_id: household.id, feature_key: 'pilot_preview', enabled: true },
         { household_id: household.id, feature_key: 'calendar_sync', enabled: true },
+        { household_id: household.id, feature_key: 'solo_account', enabled: supportMode === 'solo' },
       ],
       { onConflict: 'household_id,feature_key' },
     )
@@ -63,5 +65,5 @@ export async function POST(request: NextRequest) {
     console.error('[Onboarding] Welcome SMS failed:', error)
   })
 
-  return NextResponse.json({ household })
+  return NextResponse.json({ household, account_mode: supportMode })
 }

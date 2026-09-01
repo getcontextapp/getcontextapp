@@ -3,10 +3,11 @@ import { useState } from 'react'
 
 interface Props {
   household: { join_code: string; name: string }
+  carePartner: { display_name: string } | null
   onClose: () => void
 }
 
-export default function HouseholdCode({ household, onClose }: Props) {
+export default function HouseholdCode({ household, carePartner, onClose }: Props) {
   const [copied, setCopied] = useState(false)
 
   async function copyCode() {
@@ -27,9 +28,14 @@ export default function HouseholdCode({ household, onClose }: Props) {
         </div>
 
         <p className="text-warm-600 text-sm mb-2">{household.name}</p>
+        <p className="mb-4 rounded-xl bg-sage-50 px-4 py-3 text-sm font-medium text-sage-700">
+          {carePartner
+            ? `Shared with ${carePartner.display_name.split(/\s+/)[0]}.`
+            : 'You are currently using Context by yourself.'}
+        </p>
 
         <div className="card p-6 text-center space-y-3 mb-4">
-          <p className="text-warm-500 text-sm">Share this code with your care partner</p>
+          <p className="text-warm-500 text-sm">{carePartner ? 'Your household code' : 'Invite someone you trust with this code'}</p>
           <div className="text-4xl font-mono font-bold tracking-[0.3em] text-warm-900 select-all">
             {household.join_code}
           </div>
@@ -42,7 +48,7 @@ export default function HouseholdCode({ household, onClose }: Props) {
         </div>
 
         <p className="text-warm-400 text-xs text-center">
-          Your care partner can enter this code during their onboarding to link your accounts.
+          They can choose “Someone I support” during signup and enter this code. Your existing plans and settings will stay the same.
         </p>
       </div>
     </div>

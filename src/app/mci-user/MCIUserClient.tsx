@@ -719,15 +719,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               <span aria-hidden="true">☎</span>
               Call {carePartnerFirstName}
             </a>
-          ) : (
-            <button
-              type="button"
-              disabled
-              className="w-full min-h-[60px] rounded-[18px] border-2 border-cream-300 bg-cream-100 px-5 text-lg font-semibold text-warm-400"
-            >
-              Call care partner
-            </button>
-          )}
+          ) : null}
         </div>
 
         {/* Today's Plan */}
@@ -1024,6 +1016,11 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       {showSettings && (
         <ReminderSettings
           profile={profile}
+          carePartner={carePartner}
+          onOpenHousehold={() => {
+            setShowSettings(false)
+            setShowHousehold(true)
+          }}
           onClose={() => setShowSettings(false)}
           onSignOut={handleSignOut}
         />
@@ -1033,6 +1030,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       {showHousehold && household && (
         <HouseholdCode
           household={household}
+          carePartner={carePartner}
           onClose={() => setShowHousehold(false)}
         />
       )}

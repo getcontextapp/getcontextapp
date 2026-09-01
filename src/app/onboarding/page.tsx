@@ -6,7 +6,8 @@ import { trackClientEvent } from '@/lib/client-analytics'
 import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import type { UserRole } from '@/types'
 
-type Step = 'role' | 'profile'
+type Step = 'role' | 'support' | 'profile'
+type SupportMode = 'solo' | 'shared'
 
 export default function OnboardingPage() {
   const router = useRouter()
@@ -14,6 +15,7 @@ export default function OnboardingPage() {
 
   const [step, setStep] = useState<Step>('role')
   const [role, setRole] = useState<UserRole | null>(null)
+  const [supportMode, setSupportMode] = useState<SupportMode | null>(null)
   const [displayName, setDisplayName] = useState('')
   const [email, setEmail] = useState('')
   const [userHasEmail, setUserHasEmail] = useState(false)
@@ -91,10 +93,16 @@ export default function OnboardingPage() {
       role,
       has_phone: Boolean(phoneE164),
       timezone,
+      support_mode: role === 'mci_user' ? supportMode : 'care_partner',
     })
 
-    router.push('/onboarding/household')
+    const setup = role === 'care_partner' ? 'care-partner' : supportMode ?? 'solo'
+    window.sessionStorage.setItem('context-onboarding-setup', setup)
+    router.push(`/onboarding/household?setup=${setup}`)
   }
+
+  const visibleSteps: Step[] = role === 'care_partner' ? ['role', 'profile'] : ['role', 'support', 'profile']
+  const currentStepIndex = Math.max(0, visibleSteps.indexOf(step))
 
   return (
     <div className="min-h-svh bg-cream-50 flex flex-col px-6 py-12">
@@ -108,27 +116,30 @@ export default function OnboardingPage() {
         </div>
 
         {/* Step indicator */}
-        <div className="flex gap-2 animate-fade-up delay-100">
-          {(['role', 'profile'] as Step[]).map((s, i) => (
+        <div className="animate-fade-up delay-100">
+          <p className="mb-2 text-xs font-medium text-warm-400">Step {currentStepIndex + 1} of {visibleSteps.length}</p>
+          <div className="flex gap-2">
+          {visibleSteps.map((s, i) => (
             <div key={s} className={`h-1 flex-1 rounded-pill transition-colors ${
-              s === step || (step === 'profile' && i === 0) ? 'bg-warm-700' : 'bg-cream-300'
+              i <= currentStepIndex ? 'bg-warm-700' : 'bg-cream-300'
             }`} />
           ))}
+          </div>
         </div>
 
         {step === 'role' && (
           <div className="space-y-4 animate-fade-up delay-200">
-            <p className="font-serif text-lg text-warm-800">Who are you in this household?</p>
+            <p className="font-serif text-lg text-warm-800">Who are you setting up Context for?</p>
 
             <button
-              onClick={() => { setRole('mci_user'); setStep('profile') }}
+              onClick={() => { setRole('mci_user'); setSupportMode(null); setStep('support') }}
               className="w-full card p-5 text-left hover:shadow-float active:scale-[0.98] transition-all border-2 border-transparent hover:border-sage-300"
             >
               <div className="flex items-center gap-4">
                 <span className="text-3xl">🧑‍🦳</span>
                 <div>
-                  <p className="font-medium text-warm-900">I&apos;m the primary member</p>
-                  <p className="text-sm text-warm-400 mt-0.5">I&apos;ll log my own activities and use re-entry cards</p>
+                  <p className="font-medium text-warm-900">Myself</p>
+                  <p className="text-sm text-warm-400 mt-0.5">I&apos;ll use Context for my own day</p>
                 </div>
               </div>
             </button>
@@ -140,10 +151,45 @@ export default function OnboardingPage() {
               <div className="flex items-center gap-4">
                 <span className="text-3xl">🤝</span>
                 <div>
-                  <p className="font-medium text-warm-900">I&apos;m a care partner</p>
-                  <p className="text-sm text-warm-400 mt-0.5">I&apos;ll receive daily summaries and monitor activity</p>
+                  <p className="font-medium text-warm-900">Someone I support</p>
+                  <p className="text-sm text-warm-400 mt-0.5">I&apos;m joining as their support person</p>
                 </div>
               </div>
+            </button>
+          </div>
+        )}
+
+        {step === 'support' && (
+          <div className="space-y-4 animate-fade-up">
+            <div>
+              <p className="font-serif text-lg text-warm-800">Will someone support you in Context?</p>
+              <p className="mt-1 text-sm leading-5 text-warm-400">This only asks whether another person will use Context with you.</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => { setSupportMode('shared'); setStep('profile') }}
+              className="w-full card p-5 text-left hover:shadow-float active:scale-[0.98] transition-all border-2 border-transparent hover:border-sage-300"
+            >
+              <p className="font-medium text-warm-900">Yes</p>
+              <p className="text-sm text-warm-400 mt-1">You and your support person will use Context together.</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setSupportMode('solo'); setStep('profile') }}
+              className="w-full card p-5 text-left hover:shadow-float active:scale-[0.98] transition-all border-2 border-transparent hover:border-sage-300"
+            >
+              <p className="font-medium text-warm-900">No</p>
+              <p className="text-sm text-warm-400 mt-1">You&apos;ll use Context by yourself. You can invite someone later.</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setRole(null); setSupportMode(null); setStep('role') }}
+              className="min-h-11 w-full text-sm font-medium text-warm-500"
+            >
+              Back
             </button>
           </div>
         )}
@@ -244,7 +290,7 @@ export default function OnboardingPage() {
             <div className="flex gap-3">
               <button
                 type="button"
-                onClick={() => setStep('role')}
+                onClick={() => setStep(role === 'mci_user' ? 'support' : 'role')}
                 className="px-4 py-3 rounded-xl border border-cream-300 text-warm-500 font-medium text-sm hover:bg-cream-100 transition-colors"
               >
                 Back

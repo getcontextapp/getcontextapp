@@ -6,6 +6,8 @@ import type { Profile } from '@/types'
 
 interface Props {
   profile: Profile
+  carePartner: Profile | null
+  onOpenHousehold: () => void
   onClose: () => void
   onSignOut: () => void
 }
@@ -21,7 +23,7 @@ const GAP_OPTIONS = [
 
 const DEFAULT_SUMMARY_TIME = '20:00'
 
-export default function ReminderSettings({ profile, onClose, onSignOut }: Props) {
+export default function ReminderSettings({ profile, carePartner, onOpenHousehold, onClose, onSignOut }: Props) {
   const supabase = createClient()
   const [firstName, setFirstName] = useState(profile.display_name)
   const [gap, setGap] = useState(profile.reminder_gap_minutes)
@@ -88,6 +90,25 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
         </div>
 
         <div className="space-y-6">
+          <div>
+            <p className="block text-sm font-medium text-warm-700 mb-1">People using Context</p>
+            <div className="mt-3 rounded-2xl border border-cream-300 bg-white p-4">
+              <p className="font-medium text-warm-900">
+                {carePartner ? `You and ${carePartner.display_name.split(/\s+/)[0]} use Context together.` : 'You are using Context by yourself.'}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-warm-400">
+                {carePartner ? 'You can view the household connection and invite details.' : 'You can invite someone you trust whenever you are ready.'}
+              </p>
+              <button
+                type="button"
+                onClick={onOpenHousehold}
+                className="mt-3 min-h-11 w-full rounded-xl border border-sage-300 bg-sage-50 px-4 text-sm font-semibold text-sage-700"
+              >
+                {carePartner ? 'View shared household' : 'Invite someone to support me'}
+              </button>
+            </div>
+          </div>
+
           <div>
             <label htmlFor="mci-first-name" className="block text-sm font-medium text-warm-700 mb-1">
               First name
@@ -180,12 +201,12 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
             </div>
           </div>
 
-          <div>
+          {carePartner && <div>
             <label htmlFor="summary-time" className="block text-sm font-medium text-warm-700 mb-1">
               Daily summary time
             </label>
             <p className="text-xs text-warm-400 mb-3">
-              When you and your care partner receive the end-of-day SMS summary.
+              When your support person receives the end-of-day SMS summary.
             </p>
             <input
               id="summary-time"
@@ -195,7 +216,7 @@ export default function ReminderSettings({ profile, onClose, onSignOut }: Props)
               className="w-full px-4 py-3 rounded-xl border border-cream-300 bg-cream-50 text-warm-900
                          focus:outline-none focus:border-terracotta-400 focus:ring-2 focus:ring-terracotta-100"
             />
-          </div>
+          </div>}
 
           {error && (
             <p className="text-terracotta-500 text-sm bg-terracotta-50 px-3 py-2 rounded-lg">{error}</p>

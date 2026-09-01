@@ -11,7 +11,7 @@ type OutcomeScore = OutcomeRow['scores'][number]
 type TabKey = 'health' | 'outcomes' | 'arc' | 'behavior' | 'sms' | 'readiness' | 'exports'
 
 const TABS: Array<{ key: TabKey; label: string }> = [
-  { key: 'health', label: 'Dyad health' },
+  { key: 'health', label: 'Household health' },
   { key: 'outcomes', label: 'Outcomes' },
   { key: 'arc', label: 'Study arc' },
   { key: 'behavior', label: 'Behavior' },
@@ -21,7 +21,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 ]
 
 const EXPORTS = [
-  ['dyads', 'Dyad health'],
+  ['dyads', 'Household health'],
   ['outcome_rows', 'Outcome scores'],
   ['study_arc', 'Study arc'],
   ['events', 'Analytics events'],
@@ -73,8 +73,8 @@ function SilentDyadAlert({ dyads }: { dyads: Dyad[] }) {
   if (silent.length === 0) return null
   return (
     <section className="silent-alert">
-      <h2>Silent dyad alert</h2>
-      <p>{silent.length} dyad{silent.length === 1 ? '' : 's'} had no activity in the past 48 hours.</p>
+      <h2>Silent household alert</h2>
+      <p>{silent.length} household{silent.length === 1 ? '' : 's'} had no activity in the past 48 hours.</p>
       <div className="alert-list">
         {silent.map(dyad => (
           <span key={dyad.id}>{dyad.displayLabel}: {dyad.silentHours} hours</span>
@@ -137,7 +137,7 @@ function NewHouseholdAlert({ dyads }: { dyads: Dyad[] }) {
           {newHouseholds.map(dyad => (
             <span key={dyad.id}>
               <strong>{dyad.name}</strong>
-              <small>{formatTime(dyad.householdCreatedAt)} · {dyad.cohort === 'internal' ? 'Internal preview' : 'Participant pilot'}</small>
+              <small>{formatTime(dyad.householdCreatedAt)} · {dyad.accountMode === 'solo' ? 'Solo' : 'Shared'} · {dyad.cohort === 'internal' ? 'Internal preview' : 'Participant pilot'}</small>
             </span>
           ))}
         </div>
@@ -147,14 +147,19 @@ function NewHouseholdAlert({ dyads }: { dyads: Dyad[] }) {
   )
 }
 
-function ScopeBar({ data, selectedCohort, setSelectedCohort, selectedHousehold, setSelectedHousehold }: {
+function ScopeBar({ data, selectedCohort, setSelectedCohort, selectedMode, setSelectedMode, selectedHousehold, setSelectedHousehold }: {
   data: AnalyticsData
   selectedCohort: string
   setSelectedCohort: (value: string) => void
+  selectedMode: string
+  setSelectedMode: (value: string) => void
   selectedHousehold: string
   setSelectedHousehold: (value: string) => void
 }) {
-  const dyads = data.perDyad.filter(dyad => selectedCohort === 'all' || dyad.cohort === selectedCohort)
+  const dyads = data.perDyad.filter(dyad =>
+    (selectedCohort === 'all' || dyad.cohort === selectedCohort) &&
+    (selectedMode === 'all' || dyad.accountMode === selectedMode)
+  )
   return (
     <section className="scope-card">
       <div>
@@ -165,9 +170,17 @@ function ScopeBar({ data, selectedCohort, setSelectedCohort, selectedHousehold, 
         </select>
       </div>
       <div>
-        <label htmlFor="dyad">Dyad</label>
+        <label htmlFor="account-mode">Account</label>
+        <select id="account-mode" value={selectedMode} onChange={event => { setSelectedMode(event.target.value); setSelectedHousehold('all') }}>
+          <option value="all">Solo and shared</option>
+          <option value="solo">Solo</option>
+          <option value="shared">Shared</option>
+        </select>
+      </div>
+      <div>
+        <label htmlFor="dyad">Household</label>
         <select id="dyad" value={selectedHousehold} onChange={event => setSelectedHousehold(event.target.value)}>
-          <option value="all">All dyads</option>
+          <option value="all">All households</option>
           {dyads.map(dyad => <option key={dyad.id} value={dyad.id}>{dyad.displayLabel}</option>)}
         </select>
       </div>
@@ -179,7 +192,7 @@ function DyadHealthPanel({ dyads }: { dyads: Dyad[] }) {
   return (
     <section className="panel">
       <div className="panel-heading">
-        <p>Dyad health panel</p>
+        <p>Household health panel</p>
         <h2>Who needs attention first?</h2>
       </div>
       <div className="dyad-grid">
@@ -189,16 +202,17 @@ function DyadHealthPanel({ dyads }: { dyads: Dyad[] }) {
               <div>
                 <span>{dyad.code}</span>
                 <h3>{dyad.name}</h3>
+                <small className="account-badge">{dyad.accountMode === 'solo' ? 'Solo' : 'Shared'}</small>
               </div>
               <strong>{flagLabel(dyad.statusFlag)}</strong>
             </div>
             <dl>
               <div><dt>MCI</dt><dd>{dyad.mciName}</dd></div>
-              <div><dt>Care partner</dt><dd>{dyad.cpName}</dd></div>
+              <div><dt>Support person</dt><dd>{dyad.accountMode === 'solo' ? 'Not linked' : dyad.cpName}</dd></div>
               <div><dt>Study day</dt><dd>{dyad.currentStudyDay} of 28</dd></div>
               <div><dt>Phase</dt><dd>{phaseLabel(dyad.studyPhase)}</dd></div>
               <div><dt>MCI last active</dt><dd>{formatTime(dyad.mciLastActive)}</dd></div>
-              <div><dt>CP last active</dt><dd>{formatTime(dyad.cpLastActive)}</dd></div>
+              {dyad.accountMode === 'shared' ? <div><dt>Support last active</dt><dd>{formatTime(dyad.cpLastActive)}</dd></div> : null}
               <div><dt>MCI SMS response</dt><dd>{dyad.mciSmsResponseRate}%</dd></div>
               <div><dt>Calendar</dt><dd>{dyad.calendarConnected ? `Connected${dyad.nextCalendarTitle ? `, next: ${dyad.nextCalendarTitle}` : ''}` : 'Not connected'}</dd></div>
             </dl>
@@ -505,11 +519,13 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
   const router = useRouter()
   const [tab, setTab] = useState<TabKey>('health')
   const [selectedCohort, setSelectedCohort] = useState('all')
+  const [selectedMode, setSelectedMode] = useState('all')
   const [selectedHousehold, setSelectedHousehold] = useState(data.filters.householdId || 'all')
   const dyads = useMemo(() => data.perDyad.filter(dyad =>
     (selectedCohort === 'all' || dyad.cohort === selectedCohort) &&
+    (selectedMode === 'all' || dyad.accountMode === selectedMode) &&
     (selectedHousehold === 'all' || dyad.id === selectedHousehold)
-  ), [data.perDyad, selectedCohort, selectedHousehold])
+  ), [data.perDyad, selectedCohort, selectedMode, selectedHousehold])
   const outcomeRows = data.outcomeRows.filter(row => dyads.some(dyad => dyad.id === row.householdId))
 
   useEffect(() => {
@@ -526,7 +542,7 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
       </header>
       <NewHouseholdAlert dyads={data.perDyad} />
       <SilentDyadAlert dyads={dyads} />
-      <ScopeBar data={data} selectedCohort={selectedCohort} setSelectedCohort={setSelectedCohort} selectedHousehold={selectedHousehold} setSelectedHousehold={setSelectedHousehold} />
+      <ScopeBar data={data} selectedCohort={selectedCohort} setSelectedCohort={setSelectedCohort} selectedMode={selectedMode} setSelectedMode={setSelectedMode} selectedHousehold={selectedHousehold} setSelectedHousehold={setSelectedHousehold} />
       <nav className="admin-tabs" aria-label="Analytics sections">
         {TABS.map(item => <button key={item.key} className={tab === item.key ? 'active' : ''} onClick={() => setTab(item.key)}>{item.label}</button>)}
         <a className="standalone" href="/admin/pilot-interest">Pilot interest ↗</a>
@@ -545,7 +561,7 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
         .admin-hero h1 { font-family: var(--font-serif, Georgia, serif); font-size: clamp(2.3rem, 5vw, 4.4rem); line-height: 1; margin: 8px 0; }
         .admin-hero span { color: #817669; }
         .scope-card, .panel, .silent-alert { background: #fffdfa; border: 1px solid #ead8b6; border-radius: 24px; box-shadow: 0 14px 36px rgba(44, 35, 24, .07); padding: 24px; }
-        .scope-card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+        .scope-card { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
         label { display: grid; gap: 7px; color: #6f6558; font-weight: 700; }
         select { min-height: 48px; border: 1px solid #ddceb8; border-radius: 12px; background: white; color: #27211a; padding: 0 14px; font: inherit; }
         .admin-tabs { max-width: 1180px; margin: 0 auto 22px; display: flex; gap: 10px; flex-wrap: wrap; }
@@ -570,6 +586,7 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
         .dyad-card.flag-amber { border-color: #d9b96e; }
         .dyad-topline { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
         .dyad-topline h3 { margin: 5px 0 0; font-size: 1.3rem; }
+        .account-badge { display: inline-block; margin-top: 8px; border-radius: 999px; background: #f1eadf; color: #6f6558; padding: 5px 9px; font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
         .dyad-topline strong { background: #edf3ea; color: #3f6b36; padding: 8px 12px; border-radius: 999px; }
         .flag-red .dyad-topline strong { background: #fff0e7; color: #8b3d20; }
         .flag-amber .dyad-topline strong { background: #fbf0d9; color: #7b5a15; }

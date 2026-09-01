@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/lib/supabase-server'
 import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { accountModeForMembers } from '@/lib/account-mode'
 
 export interface AnalyticsFilters {
   days: number
@@ -526,6 +527,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       mciName: mci?.display_name ?? 'No MCI participant',
       cpName: cp?.display_name ?? 'No care partner',
       cpPhoneLast4: cp?.phone_e164?.slice(-4) ?? null,
+      accountMode: accountModeForMembers(members),
       researchFollowupDays: [...new Set([
         ...sms
           .filter(message =>
@@ -923,13 +925,16 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     silentDyads: perDyad.filter(dyad => dyad.silentHours > 48).length,
     missingMci: perDyad.filter(dyad => !dyad.mciProfileId).length,
     missingCp: perDyad.filter(dyad => !dyad.cpProfileId).length,
+    soloHouseholds: perDyad.filter(dyad => dyad.accountMode === 'solo').length,
+    sharedHouseholds: perDyad.filter(dyad => dyad.accountMode === 'shared').length,
     outcomesStarted: outcomeRows.filter(row => row.scores.some(score => score.pre !== null || score.post !== null)).length,
   }
-  const exportDyads = perDyad.map(({ id, code, cohort, name, mciName, cpName, studyPhase, active, currentStudyDay, daysDark, flagCount, attempts, resumed, nothingHeld, captured, completed, unresolved, smsSent, smsDelivered, smsReplied, pilotPreviewEnabled, calendarConnected, calendarUpcomingCount, nextCalendarAt }) => ({
+  const exportDyads = perDyad.map(({ id, code, cohort, name, accountMode, mciName, cpName, studyPhase, active, currentStudyDay, daysDark, flagCount, attempts, resumed, nothingHeld, captured, completed, unresolved, smsSent, smsDelivered, smsReplied, pilotPreviewEnabled, calendarConnected, calendarUpcomingCount, nextCalendarAt }) => ({
     id,
     code,
     cohort,
     name,
+    accountMode,
     mciName,
     cpName,
     studyPhase,

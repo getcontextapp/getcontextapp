@@ -1,25 +1,38 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
 
 type Mode = 'choose' | 'create' | 'join'
+type Setup = 'solo' | 'shared' | 'care-partner' | 'legacy'
 
 export default function HouseholdPage() {
   const router = useRouter()
   const supabase = createClient()
 
   const [mode, setMode] = useState<Mode>('choose')
+  const [setup, setSetup] = useState<Setup>('legacy')
+  const [ready, setReady] = useState(false)
   const [householdName, setHouseholdName] = useState('')
   const [joinCode, setJoinCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useEffect(() => {
+    const querySetup = new URLSearchParams(window.location.search).get('setup')
+    const savedSetup = window.sessionStorage.getItem('context-onboarding-setup')
+    const nextSetup = [querySetup, savedSetup].find(value => ['solo', 'shared', 'care-partner'].includes(value ?? '')) as Setup | undefined
+    const resolved = nextSetup ?? 'legacy'
+    setSetup(resolved)
+    setMode(resolved === 'care-partner' ? 'join' : resolved === 'solo' || resolved === 'shared' ? 'create' : 'choose')
+    setReady(true)
+  }, [])
+
   async function getMyProfile() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) throw new Error('Not logged in')
-    const { data } = await supabase.from('profiles').select('id').eq('user_id', user.id).single()
+    const { data } = await supabase.from('profiles').select('id, role').eq('user_id', user.id).single()
     return data
   }
 
@@ -33,15 +46,17 @@ export default function HouseholdPage() {
       const response = await fetch('/api/households/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: householdName.trim() }),
+        body: JSON.stringify({ name: householdName.trim(), support_mode: setup }),
       })
       const result = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(result.error || 'Failed to create household')
 
       trackClientEvent('household_created', {
         household_id: result.household?.id,
+        support_mode: setup,
       })
 
+      window.sessionStorage.removeItem('context-onboarding-setup')
       router.push('/')
     } catch (err: any) {
       setError(err.message)
@@ -70,6 +85,7 @@ export default function HouseholdPage() {
         household_id: result.household_id,
       })
 
+      window.sessionStorage.removeItem('context-onboarding-setup')
       router.push('/')
     } catch (err: any) {
       setError(err.message)
@@ -84,12 +100,25 @@ export default function HouseholdPage() {
 
         <div className="animate-fade-up">
           <div className="text-3xl mb-3">🏡</div>
-          <h1 className="font-serif text-2xl font-semibold text-warm-900">Your household</h1>
-          <p className="text-warm-400 text-sm mt-1">Connect with the people who share your day.</p>
+          <h1 className="font-serif text-2xl font-semibold text-warm-900">
+            {setup === 'care-partner' ? 'Join their Context' : 'Your Context space'}
+          </h1>
+          <p className="text-warm-400 text-sm mt-1">
+            {setup === 'solo'
+              ? 'This is your private starting place. You can invite someone later.'
+              : setup === 'shared'
+              ? 'Create your space now, then invite your support person.'
+              : setup === 'care-partner'
+              ? 'Enter the code shared by the person you support.'
+              : 'Choose how to connect your account.'}
+          </p>
         </div>
 
-        {mode === 'choose' && (
+        {!ready && <p className="text-sm text-warm-400">Getting your setup ready…</p>}
+
+        {ready && mode === 'choose' && (
           <div className="space-y-4 animate-fade-up delay-100">
+            {setup !== 'care-partner' && (
             <button
               onClick={() => setMode('create')}
               className="w-full card p-5 text-left hover:shadow-float active:scale-[0.98] transition-all border-2 border-transparent hover:border-sage-300"
@@ -98,10 +127,11 @@ export default function HouseholdPage() {
                 <span className="text-2xl">✨</span>
                 <div>
                   <p className="font-medium text-warm-900">Create a new household</p>
-                  <p className="text-sm text-warm-400 mt-0.5">Get a code to share with your care partner</p>
+                  <p className="text-sm text-warm-400 mt-0.5">You can invite a support person whenever you choose</p>
                 </div>
               </div>
             </button>
+            )}
 
             <button
               onClick={() => setMode('join')}
@@ -118,9 +148,9 @@ export default function HouseholdPage() {
           </div>
         )}
 
-        {mode === 'create' && (
+        {ready && mode === 'create' && (
           <form onSubmit={handleCreate} className="space-y-5 animate-fade-up">
-            <p className="text-warm-600 text-sm">Give your household a name. This is just for you to recognize it.</p>
+            <p className="text-warm-600 text-sm">Give your Context space a familiar name. This is only to help you recognize it.</p>
             <div>
               <label className="block text-sm font-medium text-warm-600 mb-1.5">Household name</label>
               <input
@@ -149,7 +179,7 @@ export default function HouseholdPage() {
           </form>
         )}
 
-        {mode === 'join' && (
+        {ready && mode === 'join' && (
           <form onSubmit={handleJoin} className="space-y-5 animate-fade-up">
             <p className="text-warm-600 text-sm">Ask your household member for their 6-character join code and enter it below.</p>
             <div>

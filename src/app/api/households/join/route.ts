@@ -38,6 +38,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error?.message ?? 'Could not update household.' }, { status: 500 })
   }
 
+  if (profile.role === 'care_partner') {
+    const { error: modeError } = await service.from('household_feature_flags').upsert({
+      household_id: household.id,
+      feature_key: 'solo_account',
+      enabled: false,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'household_id,feature_key' })
+    if (modeError) console.error('[Onboarding] Could not update household account mode:', modeError.message)
+  }
+
   await sendOnboardingWelcome(profile as Profile).catch(welcomeError => {
     console.error('[Onboarding] Welcome SMS failed:', welcomeError)
   })
