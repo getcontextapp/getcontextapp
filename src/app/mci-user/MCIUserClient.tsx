@@ -5,7 +5,7 @@ import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { ACTIVITY_TILES } from '@/types'
-import type { Profile, ActivityLog, PlannedActivity, TimelineEvent, Reflection } from '@/types'
+import type { Profile, ActivityLog, InputCapture, PlannedActivity, TimelineEvent, Reflection } from '@/types'
 import HouseholdCode from '@/components/mci/HouseholdCode'
 import ReminderSettings from '@/components/mci/ReminderSettings'
 import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanComposer'
@@ -24,6 +24,7 @@ interface Props {
   initialActivities: ActivityLog[]
   initialPlannedActivities: PlannedActivity[]
   initialTimelineEvents: TimelineEvent[]
+  initialInputCaptures: InputCapture[]
   initialReflection: Reflection | null
   carePartner: Profile | null
   household: { join_code: string; name: string } | null
@@ -61,12 +62,14 @@ const VISIBLE_PLAN_STATUSES = new Set(['planned', 'not_now', 'confirmed'])
 type PlanAction = 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'remove_today' | 'stop_repeating'
 type TaskRemovalAction = 'remove_today' | 'stop_repeating' | 'delete'
 
-export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource }: Props) {
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialInputCaptures, initialReflection, carePartner, household, calendar, dashboardSource }: Props) {
   const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>(initialTimelineEvents)
+  const [inputCaptures, setInputCaptures] = useState<InputCapture[]>(initialInputCaptures)
+  const [viewCapture, setViewCapture] = useState<InputCapture | null>(null)
   const [calendarConnection, setCalendarConnection] = useState(calendar.connection)
   const [calendarEvents, setCalendarEvents] = useState(calendar.events)
   const [showSettings, setShowSettings] = useState(false)
@@ -126,7 +129,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   const refreshDashboardData = useCallback(async () => {
     const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
-    const [activityResult, plannedResult, timelineResult] = await Promise.all([
+    const [activityResult, plannedResult, timelineResult, captureResult] = await Promise.all([
       supabase
         .from('activity_logs')
         .select('*')
@@ -150,12 +153,19 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         .lt('created_at', todayRange.end)
         .order('created_at', { ascending: false })
         .limit(20),
+      supabase
+        .from('input_captures')
+        .select('*')
+        .eq('profile_id', profile.id)
+        .order('created_at', { ascending: false })
+        .limit(10),
     ])
 
     if (activityResult.data) setActivities(activityResult.data as ActivityLog[])
     if (plannedResult.data) setPlannedActivities(plannedResult.data as PlannedActivity[])
     if (timelineResult.data) setTimelineEvents(timelineResult.data as TimelineEvent[])
-  }, [profile.household_id, profile.timezone, supabase])
+    if (captureResult.data) setInputCaptures(captureResult.data as InputCapture[])
+  }, [profile.household_id, profile.id, profile.timezone, supabase])
 
   // Subscribe to realtime activity updates
   useEffect(() => {
@@ -278,6 +288,12 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   const handleTimelineSaved = useCallback((event: TimelineEvent) => {
     setTimelineEvents(prev => prev.some(item => item.id === event.id) ? prev : [event, ...prev])
+  }, [])
+
+  const handleInputCaptured = useCallback((capture: InputCapture) => {
+    setInputCaptures(current => capture.status === 'cancelled'
+      ? current.filter(item => item.id !== capture.id)
+      : [capture, ...current.filter(item => item.id !== capture.id)].slice(0, 10))
   }, [])
 
   function openRecovery() {
@@ -483,10 +499,15 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   )
   const openPlannedCount = sortedPlannedActivities.filter(a => a.status === 'planned' || a.status === 'not_now').length
   const recentTimeline = timelineEvents.find(event => event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply')
-  const recentActivity = recentTimeline?.text
+  const recentInputCapture = inputCaptures[0] ?? null
+  const recentActivity = recentInputCapture?.raw_text
+    ? recentInputCapture.raw_text
+    : recentTimeline?.text
     ? recentTimeline.text
     : displayActivities[0]?.note?.trim() || displayActivities[0]?.label || 'No recent note yet'
-  const recentActivityTime = recentTimeline
+  const recentActivityTime = recentInputCapture
+    ? recentInputCapture.status === 'confirmed' ? 'added' : 'saved'
+    : recentTimeline
     ? (recentTimeline.type === 'doing_now' ? 'now' : 'earlier')
     : displayActivities[0]
     ? 'earlier'
@@ -669,14 +690,20 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           plannedFor={todayKey}
           onSaved={handleNaturalPlansSaved}
           onTimelineSaved={handleTimelineSaved}
+          onCaptured={handleInputCaptured}
           onRecallRequested={openRecovery}
         />
 
         <div className="rounded-[20px] border-2 border-cream-300 bg-white px-5 shadow-card">
           <div className="flex items-center gap-3 py-4">
-            <span className="w-8 h-8 shrink-0 rounded-full bg-sage-100 text-sage-600 flex items-center justify-center font-semibold" aria-hidden="true">✓</span>
-            <p className="min-w-0 flex-1 text-base font-semibold leading-5 text-warm-900 break-words">{recentActivity}</p>
-            {recentActivityTime && <span className="text-sm font-semibold text-warm-400">{recentActivityTime}</span>}
+            <span className="w-8 h-8 shrink-0 rounded-full bg-sage-100 text-sage-600 flex items-center justify-center font-semibold" aria-hidden="true">{recentInputCapture?.status === 'confirmed' ? '✓' : '✎'}</span>
+            <div className="min-w-0 flex-1">
+              {recentInputCapture && <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-sage-600">Just captured</p>}
+              <p className="line-clamp-3 text-base font-semibold leading-5 text-warm-900 break-words">{recentActivity}</p>
+            </div>
+            {recentInputCapture ? (
+              <button type="button" onClick={() => setViewCapture(recentInputCapture)} className="min-h-11 rounded-xl px-3 text-sm font-semibold text-sage-600">View</button>
+            ) : recentActivityTime ? <span className="text-sm font-semibold text-warm-400">{recentActivityTime}</span> : null}
           </div>
           <div className="flex items-center gap-3 border-t border-cream-200 py-4">
             <span className="w-8 h-8 shrink-0 rounded-full bg-cream-200 text-terracotta-600 flex items-center justify-center font-semibold" aria-hidden="true">→</span>
@@ -1033,6 +1060,26 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           carePartner={carePartner}
           onClose={() => setShowHousehold(false)}
         />
+      )}
+
+      {viewCapture && (
+        <div className="fixed inset-0 z-50 flex items-end bg-warm-900/35" role="dialog" aria-modal="true" aria-labelledby="captured-words-title">
+          <div className="mx-auto w-full max-w-lg rounded-t-3xl bg-cream-50 px-5 pb-8 pt-3 shadow-float safe-bottom">
+            <div className="mx-auto mb-4 h-1 w-10 rounded-pill bg-warm-300/40" />
+            <h2 id="captured-words-title" className="font-serif text-xl font-semibold text-warm-900">Your saved words</h2>
+            <p className="mt-1 text-sm text-warm-500">
+              {viewCapture.status === 'confirmed'
+                ? 'Context added the confirmed details.'
+                : 'These words are safe. The suggested details have not been confirmed.'}
+            </p>
+            <div className="mt-5 max-h-[50svh] overflow-y-auto rounded-2xl border border-cream-200 bg-white p-4 text-lg leading-7 text-warm-900">
+              {viewCapture.raw_text}
+            </div>
+            <button type="button" onClick={() => setViewCapture(null)} className="mt-5 min-h-14 w-full rounded-xl bg-warm-700 text-base font-semibold text-cream-50">
+              Close
+            </button>
+          </div>
+        </div>
       )}
 
       {deleteCandidate && (

@@ -4,8 +4,8 @@ import { useRef, useState } from 'react'
 import { ACTIVITY_TILES } from '@/types'
 import TaskScheduleFields from './TaskScheduleFields'
 import WebSpeechMicButton from './WebSpeechMicButton'
-import { countPlanWords, PLAN_PRESERVATION_LIMIT, PLAN_PROCESSING_WORD_LIMIT, TIMELINE_CAPTURE_LIMIT } from '@/lib/natural-language-input'
-import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule, TimelineEvent } from '@/types'
+import { countPlanWords, PLAN_PRESERVATION_LIMIT, TIMELINE_CAPTURE_LIMIT } from '@/lib/natural-language-input'
+import type { ActivityCategory, ExpectedPeriod, InputCapture, PlannedActivity, RepeatRule, TimelineEvent } from '@/types'
 
 interface DraftPlan {
   category: ActivityCategory
@@ -31,10 +31,11 @@ interface Props {
   plannedFor: string
   onSaved: (items: PlannedActivity[]) => void
   onTimelineSaved?: (event: TimelineEvent) => void
+  onCaptured?: (capture: InputCapture) => void
   onRecallRequested?: () => void
 }
 
-export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTimelineSaved, onRecallRequested }: Props) {
+export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTimelineSaved, onCaptured, onRecallRequested }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [message, setMessage] = useState('')
   const [drafts, setDrafts] = useState<DraftPlan[]>([])
@@ -47,8 +48,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null)
   const [clarification, setClarification] = useState<Clarification | null>(null)
   const [cancelPrompt, setCancelPrompt] = useState(false)
-  const [savingExact, setSavingExact] = useState(false)
-  const [exactSaved, setExactSaved] = useState(false)
+  const [inputCapture, setInputCapture] = useState<InputCapture | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const wordCount = countPlanWords(message)
 
@@ -69,10 +69,32 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
     setError(null)
     setSavedCapture(null)
     try {
+      let captureRecord = inputCapture && (messageOverride || inputCapture.raw_text === messageToInterpret)
+        ? inputCapture
+        : null
+      if (!captureRecord) {
+        const captureResponse = await fetch('/api/planned-activities/natural-language', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'capture', message: messageToInterpret }),
+        })
+        const captureResult = await captureResponse.json().catch(() => ({}))
+        if (!captureResponse.ok || !captureResult.capture) {
+          setError(captureResult.error ?? 'Context could not save your words yet. They are still here.')
+          return
+        }
+        captureRecord = captureResult.capture as InputCapture
+        setInputCapture(captureRecord)
+        onCaptured?.(captureRecord)
+      }
       const response = await fetch('/api/planned-activities/natural-language', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'parse', message: messageToInterpret }),
+        body: JSON.stringify({
+          action: 'interpret',
+          capture_id: captureRecord.id,
+          ...(messageOverride ? { message: messageToInterpret } : {}),
+        }),
       })
       const result = await response.json()
       if (!response.ok) {
@@ -113,39 +135,15 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
     }
   }
 
-  async function saveExactWords() {
-    if (!message.trim()) return
-    setSavingExact(true)
-    setError(null)
-    try {
-      const response = await fetch('/api/planned-activities/natural-language', {
+  async function discardDraft() {
+    if (inputCapture) {
+      void fetch('/api/planned-activities/natural-language', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'save_exact', message }),
+        body: JSON.stringify({ action: 'cancel', capture_id: inputCapture.id }),
       })
-      const result = await response.json().catch(() => ({}))
-      if (!response.ok || !result.event) {
-        setError(result.error ?? 'Context could not save your exact words.')
-        return
-      }
-      onTimelineSaved?.(result.event)
-      setMessage('')
-      setDrafts([])
-      setCapture(null)
-      setClarification(null)
-      setExactSaved(true)
-      window.setTimeout(() => {
-        setExactSaved(false)
-        setExpanded(false)
-      }, 2500)
-    } catch {
-      setError('Context could not connect. Your words are still here.')
-    } finally {
-      setSavingExact(false)
+      onCaptured?.({ ...inputCapture, status: 'cancelled' })
     }
-  }
-
-  function discardDraft() {
     setMessage('')
     setDrafts([])
     setCapture(null)
@@ -153,6 +151,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
     setClarification(null)
     setError(null)
     setCancelPrompt(false)
+    setInputCapture(null)
     setExpanded(false)
   }
 
@@ -161,13 +160,14 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
     setSaving(true); setError(null)
     const response = await fetch('/api/planned-activities/natural-language', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'modify', modification }),
+      body: JSON.stringify({ action: 'modify', modification, capture_id: inputCapture?.id }),
     })
     const result = await response.json()
     setSaving(false)
     if (!response.ok) return setError(result.error ?? 'Context could not change that task.')
     onSaved([result.item, result.previous].filter(Boolean))
-    setModification(null); setMessage(''); setExpanded(false)
+    if (inputCapture) onCaptured?.({ ...inputCapture, status: 'confirmed', confirmed_at: new Date().toISOString() })
+    setInputCapture(null); setModification(null); setMessage(''); setExpanded(false)
   }
 
   async function savePlans() {
@@ -185,6 +185,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'save',
+          capture_id: inputCapture?.id,
           planned_for: plannedFor,
           items: validDrafts.map(item => ({ ...item, planned_for: item.planned_for ?? plannedFor })),
         }),
@@ -196,6 +197,8 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
       }
 
       onSaved(result.items)
+      if (inputCapture) onCaptured?.({ ...inputCapture, status: 'confirmed', confirmed_at: new Date().toISOString() })
+      setInputCapture(null)
       setMessage('')
       setDrafts([])
       setClarification(null)
@@ -220,6 +223,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
           type: capture.type,
           source: 'user-stated',
           confidence: 'high',
+          capture_id: inputCapture?.id,
         }),
       })
       const result = await response.json()
@@ -229,6 +233,8 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
       }
       setSavedCapture(result.event)
       onTimelineSaved?.(result.event)
+      if (inputCapture) onCaptured?.({ ...inputCapture, status: 'confirmed', confirmed_at: new Date().toISOString(), timeline_event_id: result.event.id })
+      setInputCapture(null)
       setMessage('')
       setCapture(null)
       window.setTimeout(() => {
@@ -293,12 +299,11 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
               />
             </div>
             <div className="mt-2 flex items-start justify-between gap-3 text-xs text-warm-400">
-              <span>{wordCount > PLAN_PROCESSING_WORD_LIMIT ? 'Everything is preserved. Shorten it to make plans, or save the exact note.' : 'Long messages are kept while Context works.'}</span>
-              <span className="shrink-0">{wordCount.toLocaleString()} / {PLAN_PROCESSING_WORD_LIMIT.toLocaleString()} words</span>
+              <span>Your words are saved before Context works out the details.</span>
+              <span className="shrink-0">{wordCount.toLocaleString()} words</span>
             </div>
             {voiceNotice && <p className="text-sm text-warm-400 mt-2">{voiceNotice}</p>}
             {error && drafts.length === 0 && <p className="text-sm text-terracotta-600 mt-2">{error}</p>}
-            {exactSaved && <p className="mt-3 rounded-xl bg-sage-50 px-4 py-3 text-sm font-medium text-sage-700">Your exact words were saved as a note.</p>}
             <div className="grid grid-cols-[1fr_2fr] gap-2 mt-4">
               <button
                 type="button"
@@ -314,22 +319,12 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
               <button
                 type="button"
                 onClick={() => interpretPlans()}
-                disabled={parsing || wordCount > PLAN_PROCESSING_WORD_LIMIT}
+                disabled={parsing || !message.trim()}
                 className="rounded-xl bg-warm-700 py-3 text-sm font-medium text-cream-50 disabled:opacity-50"
               >
-                {parsing ? 'Understanding...' : 'Continue'}
+                {parsing ? (inputCapture ? 'Working out the details…' : 'Saving your words…') : 'Continue'}
               </button>
             </div>
-            {message.trim() && (
-              <button
-                type="button"
-                onClick={saveExactWords}
-                disabled={savingExact || message.length > PLAN_PRESERVATION_LIMIT}
-                className="mt-2 min-h-12 w-full rounded-xl border border-cream-300 bg-white px-3 text-sm font-medium text-warm-600 disabled:opacity-50"
-              >
-                {savingExact ? 'Saving your words…' : 'Save my exact words as a note (no reminder)'}
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -341,8 +336,8 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
             <div className="w-10 h-1 bg-warm-300/40 rounded-pill mx-auto mb-4" />
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 id="plan-preview-title" className="font-serif text-xl font-semibold text-warm-900">Please check what Context heard</h2>
-                <p className="text-sm text-warm-500 mt-1">Nothing is saved until you confirm each plan.</p>
+                <h2 id="plan-preview-title" className="font-serif text-xl font-semibold text-warm-900">I think you mean</h2>
+                <p className="text-sm text-warm-500 mt-1">Your words are saved. Check these plans before any reminders begin.</p>
               </div>
               <button
                 type="button"
@@ -429,8 +424,8 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
           <div className="absolute inset-0 bg-warm-900/30 backdrop-blur-sm" />
           <div className="relative w-full max-w-lg mx-auto rounded-t-3xl bg-cream-50 px-5 pt-3 pb-8 shadow-float animate-fade-up safe-bottom">
             <div className="w-10 h-1 bg-warm-300/40 rounded-pill mx-auto mb-4" />
-            <h2 id="capture-preview-title" className="font-serif text-xl font-semibold text-warm-900">Please check what Context heard</h2>
-            <p className="text-sm text-warm-500 mt-1">Nothing is saved yet. This note can help Context support recall later.</p>
+            <h2 id="capture-preview-title" className="font-serif text-xl font-semibold text-warm-900">I think you mean</h2>
+            <p className="text-sm text-warm-500 mt-1">Your exact words are saved. Confirm this interpretation for easier recall.</p>
             <div className="mt-5 rounded-2xl border border-cream-200 bg-white p-4 shadow-sm">
               <span className="inline-flex rounded-pill bg-sage-100 px-3 py-1 text-xs font-semibold text-sage-600">
                 Please confirm
@@ -453,7 +448,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
               disabled={saving || !capture.text.trim()}
               className="w-full rounded-xl bg-warm-700 py-3.5 mt-5 text-base font-medium text-cream-50 disabled:opacity-50"
             >
-              {saving ? 'Saving...' : 'Save note'}
+              {saving ? 'Confirming...' : 'Yes, that is right'}
             </button>
             <button
               type="button"
@@ -473,8 +468,9 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
           <div className="absolute inset-0 bg-warm-900/35 backdrop-blur-sm" />
           <div className="relative mx-auto w-full max-w-lg rounded-t-3xl bg-cream-50 px-5 pb-8 pt-5 shadow-float safe-bottom">
             <h2 id="clarification-title" className="font-serif text-xl font-semibold text-warm-900">One quick check</h2>
+            <p className="mt-1 text-sm text-warm-500">Your exact words are already saved.</p>
             <p className="mt-3 text-base leading-relaxed text-warm-700">{clarification.question}</p>
-            <p className="mt-2 text-sm text-warm-500">Context will not save anything until you confirm it.</p>
+            <p className="mt-2 text-sm text-warm-500">No reminders will begin until you confirm the details.</p>
             <button
               type="button"
               onClick={() => {

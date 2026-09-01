@@ -85,6 +85,29 @@ export interface TimelineEvent {
   created_at: string
 }
 
+export type InputCaptureStatus =
+  | 'captured'
+  | 'interpreting'
+  | 'needs_confirmation'
+  | 'confirmed'
+  | 'failed'
+  | 'cancelled'
+
+export interface InputCapture {
+  id: string
+  household_id: string
+  user_id: string
+  profile_id: string
+  raw_text: string
+  status: InputCaptureStatus
+  interpretation: Record<string, unknown>
+  linked_planned_activity_ids: string[]
+  timeline_event_id: string | null
+  confirmed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface ReflectionNodes {
   activities: string[]
   people: string[]

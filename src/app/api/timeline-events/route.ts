@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
     type?: TimelineEventType
     source?: TimelineEventSource
     confidence?: TimelineEventConfidence
+    capture_id?: string
   } = await request.json()
 
   const text = body.text?.trim().replace(/[—–]/g, ',')
@@ -92,6 +93,16 @@ export async function POST(request: NextRequest) {
     userId: user.id,
     properties: { timeline_event_id: data.id, type, source, confidence },
   })
+
+  if (body.capture_id) {
+    await supabase.from('input_captures').update({
+      status: 'confirmed',
+      timeline_event_id: data.id,
+      confirmed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      interpretation: { kind: 'timeline', event: data },
+    }).eq('id', body.capture_id).eq('user_id', user.id)
+  }
 
   return NextResponse.json({ event: data })
 }

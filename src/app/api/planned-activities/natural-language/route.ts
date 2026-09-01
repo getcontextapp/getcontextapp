@@ -13,7 +13,6 @@ import {
   countPlanWords,
   detectSafeTimelineCapture,
   PLAN_PRESERVATION_LIMIT,
-  PLAN_PROCESSING_WORD_LIMIT,
   plannedDateForText,
   splitPlanClauses,
 } from '@/lib/natural-language-input'
@@ -117,9 +116,11 @@ export async function POST(request: NextRequest) {
   if (!profile?.household_id || profile.role !== 'mci_user') {
     return NextResponse.json({ error: 'MCI profile required' }, { status: 403 })
   }
+  const currentUserId = user.id
 
   const body: {
-    action?: 'parse' | 'save' | 'modify' | 'save_exact'
+    action?: 'capture' | 'interpret' | 'cancel' | 'parse' | 'save' | 'modify' | 'save_exact'
+    capture_id?: string
     message?: string
     planned_for?: string
     items?: Array<{
@@ -140,11 +141,63 @@ export async function POST(request: NextRequest) {
     }
   } = await request.json()
 
-  if (body.action === 'parse') {
+  async function updateCapture(status: string, interpretation?: Record<string, unknown>, extra?: Record<string, unknown>) {
+    if (!body.capture_id) return
+    await supabase.from('input_captures').update({
+      status,
+      ...(interpretation ? { interpretation } : {}),
+      ...(extra ?? {}),
+      updated_at: new Date().toISOString(),
+    }).eq('id', body.capture_id).eq('user_id', currentUserId)
+  }
+
+  if (body.action === 'capture') {
     const message = body.message?.trim() ?? ''
+    if (!message) return NextResponse.json({ error: 'Tell Context what you want to remember.' }, { status: 400 })
+    if (message.length > PLAN_PRESERVATION_LIMIT) {
+      return NextResponse.json({
+        error: 'That is too long to send at once. Your words are still here; please save it in two parts.',
+        preserved: true,
+      }, { status: 413 })
+    }
+    const { data: capture, error } = await supabase.from('input_captures').insert({
+      household_id: profile.household_id,
+      user_id: user.id,
+      profile_id: profile.id,
+      raw_text: message,
+      status: 'captured',
+    }).select().single()
+    if (error || !capture) {
+      return NextResponse.json({ error: error?.message ?? 'Context could not save your words.' }, { status: 500 })
+    }
+    await trackEvent(supabase, {
+      eventName: 'natural_language_input_captured',
+      profile,
+      userId: user.id,
+      properties: { capture_id: capture.id, raw_length: message.length, word_count: countPlanWords(message) },
+    })
+    return NextResponse.json({ capture })
+  }
+
+  if (body.action === 'cancel') {
+    if (!body.capture_id) return NextResponse.json({ ok: true })
+    await updateCapture('cancelled')
+    return NextResponse.json({ ok: true })
+  }
+
+  if (body.action === 'parse' || body.action === 'interpret') {
+    let message = body.message?.trim() ?? ''
+    if (body.action === 'interpret') {
+      if (!body.capture_id) return NextResponse.json({ error: 'No saved capture was provided.' }, { status: 400 })
+      const { data: savedCapture } = await supabase.from('input_captures').select('raw_text')
+        .eq('id', body.capture_id).eq('user_id', user.id).maybeSingle()
+      if (!savedCapture) return NextResponse.json({ error: 'That saved capture could not be found.' }, { status: 404 })
+      message = body.message?.trim() || savedCapture.raw_text.trim()
+      await updateCapture('interpreting')
+    }
     if (!message) return NextResponse.json({ error: 'Tell Context what you plan to do.' }, { status: 400 })
     const wordCount = countPlanWords(message)
-    if (wordCount > PLAN_PROCESSING_WORD_LIMIT || message.length > PLAN_PRESERVATION_LIMIT) {
+    if (message.length > PLAN_PRESERVATION_LIMIT) {
       await trackEvent(supabase, {
         eventName: 'natural_language_processing_limit_reached',
         profile,
@@ -152,7 +205,7 @@ export async function POST(request: NextRequest) {
         properties: { raw_length: message.length, word_count: wordCount, preserved: true },
       })
       return NextResponse.json({
-        error: 'That is over 1,000 words. Everything is still here. Shorten it for plan-making, or save your words exactly as a note.',
+        error: 'That is too long to process at once. Your saved words are safe; please split it into two parts.',
         preserved: true,
       }, { status: 413 })
     }
@@ -164,7 +217,8 @@ export async function POST(request: NextRequest) {
         userId: user.id,
         properties: { raw_length: message.length },
       })
-      return NextResponse.json({ recall_request: true })
+      await updateCapture('confirmed', { kind: 'recall_request' }, { confirmed_at: new Date().toISOString() })
+      return NextResponse.json({ recall_request: true, capture_id: body.capture_id })
     }
 
     if (isPlanTimeUpdateMessage(message) || /\b(change|move|rename|edit|repeat|stop repeating)\b/i.test(message)) {
@@ -174,6 +228,7 @@ export async function POST(request: NextRequest) {
         .in('status', ['planned', 'not_now'])
       const planUpdate = findPlanUpdateIntent(message, (waiting ?? []) as PlannedActivity[])
       if (planUpdate) {
+        await updateCapture('needs_confirmation', { kind: 'modification', modification: planUpdate })
         return NextResponse.json({
           modification: {
             id: planUpdate.activity.id,
@@ -183,7 +238,7 @@ export async function POST(request: NextRequest) {
             expected_time: planUpdate.expected_time,
             repeat_rule: planUpdate.repeat_rule,
             planned_for: planUpdate.activity.planned_for,
-          },
+          }, capture_id: body.capture_id,
         })
       }
       if (isPlanTimeUpdateMessage(message)) {
@@ -198,16 +253,19 @@ export async function POST(request: NextRequest) {
         const repeat = requestedRepeat(message)
         const rename = message.match(/\brename\b.+?\bto\s+(.+)$/i)?.[1]?.trim()
         const requestedDay = /\btomorrow\b/i.test(message) ? addDaysToKey(todayKey, 1) : undefined
+        const modification = {
+          id: matches[0].id,
+          current_note: matches[0].note || matches[0].label,
+          note: rename || matches[0].note || matches[0].label,
+          expected_period: time ? periodForTime(time) : explicitPeriod(message) ?? matches[0].expected_period,
+          expected_time: time ?? matches[0].expected_time,
+          repeat_rule: repeat ?? matches[0].repeat_rule ?? 'none',
+          planned_for: requestedDay ?? matches[0].planned_for,
+        }
+        await updateCapture('needs_confirmation', { kind: 'modification', modification })
         return NextResponse.json({
-          modification: {
-            id: matches[0].id,
-            current_note: matches[0].note || matches[0].label,
-            note: rename || matches[0].note || matches[0].label,
-            expected_period: time ? periodForTime(time) : explicitPeriod(message) ?? matches[0].expected_period,
-            expected_time: time ?? matches[0].expected_time,
-            repeat_rule: repeat ?? matches[0].repeat_rule ?? 'none',
-            planned_for: requestedDay ?? matches[0].planned_for,
-          },
+          modification,
+          capture_id: body.capture_id,
         })
       }
       return NextResponse.json({ error: matches.length > 1 ? 'I found more than one matching task. Please name it more specifically.' : 'I could not find that waiting task today.' }, { status: 422 })
@@ -222,7 +280,8 @@ export async function POST(request: NextRequest) {
         userId: user.id,
         properties: { kind: 'ambiguous_time_range', raw_length: message.length },
       })
-      return NextResponse.json({ clarification })
+      await updateCapture('needs_confirmation', { kind: 'clarification', clarification })
+      return NextResponse.json({ clarification, capture_id: body.capture_id })
     }
 
     const capture = detectSafeTimelineCapture(message)
@@ -233,7 +292,8 @@ export async function POST(request: NextRequest) {
         userId: user.id,
         properties: { type: capture.type, raw_length: message.length },
       })
-      return NextResponse.json({ capture })
+      await updateCapture('needs_confirmation', { kind: 'timeline', capture })
+      return NextResponse.json({ capture, capture_id: body.capture_id })
     }
 
     const parsed = await parseSmsPlanReply(message, profile.display_name, profile.timezone, {
@@ -258,7 +318,8 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    return NextResponse.json({ items })
+    await updateCapture('needs_confirmation', { kind: 'plans', items })
+    return NextResponse.json({ items, capture_id: body.capture_id })
   }
 
   if (body.action === 'save_exact') {
@@ -302,6 +363,10 @@ export async function POST(request: NextRequest) {
     if (!current) return NextResponse.json({ error: 'That task is no longer waiting.' }, { status: 404 })
     if (repeatRule === 'none' && current.repeat_rule !== 'none') {
       const { hiddenIds } = await retireRepeatFamily(supabase, current as PlannedActivity)
+      await updateCapture('confirmed', { kind: 'modification', item_id: current.id }, {
+        linked_planned_activity_ids: [current.id],
+        confirmed_at: new Date().toISOString(),
+      })
       return NextResponse.json({
         item: {
           ...current,
@@ -324,6 +389,10 @@ export async function POST(request: NextRequest) {
         const { data: previous } = await supabase.from('planned_activities')
           .update({ status: 'skipped', updated_at: new Date().toISOString() })
           .eq('id', current.id).select().single()
+        await updateCapture('confirmed', { kind: 'modification', item: existingOccurrence }, {
+          linked_planned_activity_ids: [existingOccurrence.id],
+          confirmed_at: new Date().toISOString(),
+        })
         return NextResponse.json({ item: existingOccurrence, previous })
       }
       const { data: moved, error: moveError } = await supabase.from('planned_activities').insert({
@@ -346,6 +415,10 @@ export async function POST(request: NextRequest) {
         .update({ status: 'skipped', updated_at: new Date().toISOString() })
         .eq('id', current.id).select().single()
       await ensureNextOccurrence(supabase, moved as PlannedActivity)
+      await updateCapture('confirmed', { kind: 'modification', item: moved }, {
+        linked_planned_activity_ids: [moved.id],
+        confirmed_at: new Date().toISOString(),
+      })
       return NextResponse.json({ item: moved, previous })
     }
 
@@ -360,6 +433,10 @@ export async function POST(request: NextRequest) {
     }).eq('id', item.id).eq('household_id', profile.household_id).in('status', ['planned', 'not_now']).select().single()
     if (error || !updated) return NextResponse.json({ error: error?.message ?? 'Could not change that task.' }, { status: 500 })
     if (repeatRule !== 'none') await ensureNextOccurrence(supabase, updated as PlannedActivity)
+    await updateCapture('confirmed', { kind: 'modification', item: updated }, {
+      linked_planned_activity_ids: [updated.id],
+      confirmed_at: new Date().toISOString(),
+    })
     return NextResponse.json({ item: updated })
   }
 
@@ -440,6 +517,11 @@ export async function POST(request: NextRequest) {
         planned_activity_ids: plannedItems.map(item => item.id),
         planned_for_dates: Array.from(new Set(plannedItems.map(item => item.planned_for))),
       },
+    })
+
+    await updateCapture('confirmed', { kind: 'plans', items: plannedItems }, {
+      linked_planned_activity_ids: plannedItems.map(item => item.id),
+      confirmed_at: new Date().toISOString(),
     })
 
     return NextResponse.json({ items: plannedItems })

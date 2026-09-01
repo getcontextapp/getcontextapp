@@ -65,6 +65,13 @@ export default async function MCIUserPage({
     .order('created_at', { ascending: false })
     .limit(20)
 
+  const { data: inputCaptures } = await supabase
+    .from('input_captures')
+    .select('*')
+    .eq('profile_id', profile.id)
+    .order('created_at', { ascending: false })
+    .limit(10)
+
   const { data: reflection } = await supabase
     .from('reflections')
     .select('*')
@@ -89,6 +96,7 @@ export default async function MCIUserPage({
       initialActivities={activities ?? []}
       initialPlannedActivities={plannedActivities ?? []}
       initialTimelineEvents={timelineEvents ?? []}
+      initialInputCaptures={inputCaptures ?? []}
       initialReflection={reflection ? reflectionToClient(reflection) : null}
       carePartner={carePartner}
       household={household ?? null}
