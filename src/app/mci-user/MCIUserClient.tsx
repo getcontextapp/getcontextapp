@@ -696,7 +696,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
         <div className="rounded-[20px] border-2 border-cream-300 bg-white px-5 shadow-card">
           <div className="flex items-center gap-3 py-4">
-            <span className="w-8 h-8 shrink-0 rounded-full bg-sage-100 text-sage-600 flex items-center justify-center font-semibold" aria-hidden="true">{recentInputCapture?.status === 'confirmed' ? '✓' : '✎'}</span>
+            <span className="w-8 h-8 shrink-0 rounded-full bg-sage-100 text-sage-600 flex items-center justify-center font-semibold" aria-hidden="true">{recentInputCapture && recentInputCapture.status !== 'confirmed' ? '✎' : '✓'}</span>
             <div className="min-w-0 flex-1">
               {recentInputCapture && <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-sage-600">Just captured</p>}
               <p className="line-clamp-3 text-base font-semibold leading-5 text-warm-900 break-words">{recentActivity}</p>
