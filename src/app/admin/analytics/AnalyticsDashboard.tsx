@@ -346,7 +346,7 @@ function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) 
         <p>Study arc timeline</p>
         <h2>Day-by-day signal across 28 days</h2>
       </div>
-      <div className="markers">Research follow-ups: days 2, 5, 10, 14. Select a reached day to prepare a CP text. Quiet period starts day 15.</div>
+      <div className="markers">Research follow-ups: days 2, 5, 10, 14. Select a reached day to prepare a personal text. Quiet period starts day 15.</div>
       <div className="arc-list">
         {rows.map(row => {
           const dyad = dyads.find(candidate => candidate.id === row.householdId)
@@ -360,17 +360,17 @@ function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) 
                   const followupDay = isResearchFollowupDay(day.day)
                   const contacted = dyad.researchFollowupDays.includes(day.day) || contactedKeys.includes(`${dyad.id}:${day.day}`)
                   const reached = day.day <= dyad.currentStudyDay
-                  const available = followupDay && reached && Boolean(dyad.cpProfileId && dyad.cpPhoneLast4) && !contacted
+                  const available = followupDay && reached && Boolean(dyad.followupProfileId && dyad.followupPhoneLast4) && !contacted
                   const className = `arc-day ${total > 0 ? 'active' : ''} marker-${[2, 5, 10, 14, 15].includes(day.day)} ${available ? 'followup-ready' : ''} ${contacted ? 'followup-sent' : ''}`
                   const signalTitle = `Day ${day.day}: ${total} signals`
                   if (!followupDay) return <span key={day.day} className={className} title={signalTitle}>{day.day}</span>
                   const reason = contacted
-                    ? 'care partner contacted'
+                    ? `${dyad.followupRole === 'care_partner' ? 'care partner' : 'participant'} contacted`
                     : !reached
                       ? 'not reached yet'
-                      : !dyad.cpPhoneLast4
-                        ? 'CP phone unavailable'
-                        : 'prepare CP research follow-up'
+                      : !dyad.followupPhoneLast4
+                        ? `${dyad.followupRole === 'care_partner' ? 'Care partner' : 'Participant'} phone unavailable`
+                        : `prepare ${dyad.followupRole === 'care_partner' ? 'care partner' : 'participant'} research follow-up`
                   return (
                     <button
                       key={day.day}
@@ -399,11 +399,11 @@ function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) 
           <div>
             <p>Manual researcher contact</p>
             <h3 id="followup-title">Prepare Day {selection.day} follow-up</h3>
-            <span>To {selection.dyad.cpName} · phone ending {selection.dyad.cpPhoneLast4}</span>
+            <span>To {selection.dyad.followupName} ({selection.dyad.followupRole === 'care_partner' ? 'care partner' : 'participant'}) · phone ending {selection.dyad.followupPhoneLast4}</span>
           </div>
-          <blockquote>{buildResearchFollowupMessage(selection.dyad.cpName, selection.day)}</blockquote>
+          <blockquote>{buildResearchFollowupMessage(selection.dyad.followupName, selection.day)}</blockquote>
           <small>This opens your Messages app. You review and send it from your personal number; Context will not send it automatically.</small>
-          {composeOpened ? <div className="privacy-note">After sending the text in Messages, return here and mark the care partner as contacted.</div> : null}
+          {composeOpened ? <div className="privacy-note">After sending the text in Messages, return here and mark the recipient as contacted.</div> : null}
           {error ? <div className="followup-error" role="alert">{error}</div> : null}
           <div className="followup-actions">
             <button type="button" className="primary-action" disabled={openingMessages || markingContacted} onClick={openPersonalMessages}>{openingMessages ? 'Opening…' : 'Open in Messages'}</button>

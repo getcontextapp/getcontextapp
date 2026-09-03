@@ -3,13 +3,22 @@ import test from 'node:test'
 import {
   buildResearchFollowupMessage,
   buildSmsComposeHref,
+  chooseResearchFollowupRecipient,
   firstName,
   isResearchFollowupDay,
   researchStudyDay,
   RESEARCH_FOLLOWUP_DAYS,
 } from './research-followup'
 
-test('uses only the care partner first name in the fixed research message', () => {
+test('uses the participant for a solo household and the care partner for a shared household', () => {
+  const participant = { id: 'mci', role: 'mci_user' }
+  const carePartner = { id: 'cp', role: 'care_partner' }
+  assert.equal(chooseResearchFollowupRecipient([participant]), participant)
+  assert.equal(chooseResearchFollowupRecipient([participant, carePartner]), carePartner)
+  assert.equal(chooseResearchFollowupRecipient([]), null)
+})
+
+test('uses only the recipient first name in the fixed research message', () => {
   const message = buildResearchFollowupMessage('Linda Example', 5)
   assert.match(message, /^Hi Linda, this is Ibrahim from the Context memory-support app research team\./)
   assert.match(message, /Day 5 of the pilot/)

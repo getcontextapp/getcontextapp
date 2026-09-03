@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase-server'
 import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 import { accountModeForMembers } from '@/lib/account-mode'
+import { chooseResearchFollowupRecipient } from '@/lib/research-followup'
 
 export interface AnalyticsFilters {
   days: number
@@ -469,6 +470,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const members = profilesByHousehold.get(household.id) ?? []
     const mci = members.find(member => member.role === 'mci_user') ?? null
     const cp = members.find(member => member.role === 'care_partner') ?? null
+    const followupRecipient = chooseResearchFollowupRecipient(members)
     const onboardingAt = firstDate([household.created_at, ...members.map(member => member.created_at)]) ?? household.created_at
     const days = daysSince(onboardingAt, now)
     const phase = studyPhase(days)
@@ -527,12 +529,16 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       mciName: mci?.display_name ?? 'No MCI participant',
       cpName: cp?.display_name ?? 'No care partner',
       cpPhoneLast4: cp?.phone_e164?.slice(-4) ?? null,
+      followupProfileId: followupRecipient?.id ?? null,
+      followupName: followupRecipient?.display_name ?? 'No participant',
+      followupPhoneLast4: followupRecipient?.phone_e164?.slice(-4) ?? null,
+      followupRole: followupRecipient?.role ?? null,
       accountMode: accountModeForMembers(members),
       researchFollowupDays: [...new Set([
         ...sms
           .filter(message =>
             message.household_id === household.id &&
-            message.profile_id === cp?.id &&
+            message.profile_id === followupRecipient?.id &&
             message.direction === 'outbound' &&
             message.purpose === 'research_followup' &&
             message.status !== 'failed'
@@ -541,7 +547,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
         ...events
           .filter(event =>
             event.household_id === household.id &&
-            event.profile_id === cp?.id &&
+            event.profile_id === followupRecipient?.id &&
             event.event_name === 'research_followup_contacted'
           )
           .map(event => Number(event.properties?.milestone_day)),
