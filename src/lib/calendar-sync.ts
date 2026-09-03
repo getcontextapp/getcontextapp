@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient } from '@/lib/supabase-server'
 import { getLocalDateKey, getUtcRangeForLocalDateKey } from '@/lib/dates'
+import { calendarPlanTiming } from '@/lib/calendar-plan'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import type { CalendarConnectionSummary, CalendarEvent, Profile } from '@/types'
 
@@ -498,6 +499,52 @@ async function markMissingCalendarEventsCancelled({
   if (updateError) throw new Error(updateError.message)
 }
 
+async function syncCalendarLinkedPlans(
+  service: SupabaseClient,
+  ownerProfile: Profile,
+  events: Array<{ id: string; title: string; starts_at: string; all_day: boolean }>,
+) {
+  if (events.length === 0) return
+  const eventById = new Map(events.map(event => [event.id, event]))
+  const { data: links, error: linkError } = await service
+    .from('analytics_events')
+    .select('properties')
+    .eq('household_id', ownerProfile.household_id)
+    .eq('event_name', 'calendar_event_added_to_context')
+    .limit(500)
+  if (linkError) {
+    console.error('[Calendar] Could not load linked Context plans:', linkError.message)
+    return
+  }
+
+  const linkedPlans = new Map<string, string>()
+  for (const link of links ?? []) {
+    const eventId = link.properties?.calendar_event_id
+    const planId = link.properties?.planned_activity_id
+    if (typeof eventId === 'string' && typeof planId === 'string' && eventById.has(eventId)) {
+      linkedPlans.set(planId, eventId)
+    }
+  }
+
+  await Promise.all([...linkedPlans].map(async ([planId, eventId]) => {
+    const event = eventById.get(eventId)
+    if (!event) return
+    const timing = calendarPlanTiming(event.starts_at, event.all_day, ownerProfile.timezone)
+    const { error } = await service.from('planned_activities').update({
+      label: event.title,
+      note: null,
+      expected_period: timing.expectedPeriod,
+      expected_time: timing.expectedTime,
+      planned_for: timing.plannedFor,
+      updated_at: new Date().toISOString(),
+    })
+      .eq('id', planId)
+      .eq('assigned_to', ownerProfile.id)
+      .in('status', ['planned', 'not_now'])
+    if (error) console.error('[Calendar] Could not update a linked Context plan:', error.message)
+  }))
+}
+
 export async function syncGoogleCalendarConnection(ownerProfile: Profile, connection: CalendarConnectionSummary) {
   if (!googleCalendarConfigured()) return
   const service = createServiceClient()
@@ -572,10 +619,12 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
   }
 
   if (rows.length > 0) {
-    const { error } = await service
+    const { data: syncedEvents, error } = await service
       .from('calendar_events')
       .upsert(rows, { onConflict: 'connection_id,provider_event_id' })
+      .select('id,title,starts_at,all_day')
     if (error) throw new Error(error.message)
+    await syncCalendarLinkedPlans(service, ownerProfile, syncedEvents ?? [])
   }
 
   await markMissingCalendarEventsCancelled({
