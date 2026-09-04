@@ -68,8 +68,6 @@ export default function WebSpeechMicButton({
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const baseTextRef = useRef('')
   const finalTranscriptRef = useRef('')
-  const shouldKeepListeningRef = useRef(false)
-  const restartTimerRef = useRef<number | null>(null)
   const latestValueRef = useRef(value)
 
   useEffect(() => {
@@ -78,22 +76,11 @@ export default function WebSpeechMicButton({
 
   useEffect(() => {
     return () => {
-      shouldKeepListeningRef.current = false
-      if (restartTimerRef.current !== null) window.clearTimeout(restartTimerRef.current)
       recognitionRef.current?.stop()
     }
   }, [])
 
-  function clearRestartTimer() {
-    if (restartTimerRef.current !== null) {
-      window.clearTimeout(restartTimerRef.current)
-      restartTimerRef.current = null
-    }
-  }
-
   function stopListening() {
-    shouldKeepListeningRef.current = false
-    clearRestartTimer()
     recognitionRef.current?.stop()
     setListening(false)
   }
@@ -111,7 +98,6 @@ export default function WebSpeechMicButton({
     recognitionRef.current = recognition
     baseTextRef.current = baseText
     finalTranscriptRef.current = ''
-    shouldKeepListeningRef.current = true
     recognition.continuous = true
     recognition.interimResults = true
     recognition.lang = 'en-US'
@@ -133,7 +119,6 @@ export default function WebSpeechMicButton({
     recognition.onerror = event => {
       const errorName = event.error ?? ''
       if (errorName === 'not-allowed' || errorName === 'service-not-allowed') {
-        shouldKeepListeningRef.current = false
         onNotice?.('Voice permission was blocked. Please type instead.')
         window.setTimeout(() => onNotice?.(null), 3500)
         setListening(false)
@@ -145,20 +130,6 @@ export default function WebSpeechMicButton({
       const committedText = joinSpeech(baseTextRef.current, finalTranscriptRef.current)
       onChange(committedText)
       latestValueRef.current = committedText
-      if (shouldKeepListeningRef.current) {
-        restartTimerRef.current = window.setTimeout(() => {
-          restartTimerRef.current = null
-          try {
-            startRecognition(latestValueRef.current)
-            setListening(true)
-          } catch {
-            setListening(false)
-            recognitionRef.current = null
-            shouldKeepListeningRef.current = false
-          }
-        }, 150)
-        return
-      }
       setListening(false)
       recognitionRef.current = null
     }
@@ -169,12 +140,10 @@ export default function WebSpeechMicButton({
     } catch {
       setListening(false)
       recognitionRef.current = null
-      shouldKeepListeningRef.current = false
     }
   }
 
   function startListening() {
-    clearRestartTimer()
     startRecognition(latestValueRef.current)
   }
 
