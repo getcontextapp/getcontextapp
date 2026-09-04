@@ -2,6 +2,8 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 import { accountModeForMembers } from '@/lib/account-mode'
 import { chooseResearchFollowupRecipient } from '@/lib/research-followup'
+import { getLocalDateKey } from '@/lib/dates'
+import { ANALYTICS_PAGE_SIZE, matchPromptReplies, paginatedSelect, type AnalyticsQueryError } from '@/lib/pilot-analytics-helpers'
 
 export interface AnalyticsFilters {
   days: number
@@ -59,11 +61,13 @@ type PlanRow = {
   expected_period: string
   expected_time: string | null
   repeat_rule: string
+  series_id: string | null
   status: string
   source: string
   planned_for: string
   created_at: string
   confirmed_at: string | null
+  confirmed_activity_log_id: string | null
   updated_at: string | null
 }
 
@@ -172,6 +176,18 @@ type CalendarEventRow = {
   updated_at: string
 }
 
+type NotificationEventRow = {
+  id: string
+  profile_id: string
+  household_id: string | null
+  category: string
+  channels: string[] | null
+  delivery_status: Record<string, unknown> | null
+  metadata: Record<string, unknown> | null
+  sent_at: string | null
+  created_at: string
+}
+
 export type OutcomeRole = 'mci' | 'cp'
 export type OutcomeSession = 'pre' | 'post'
 
@@ -196,6 +212,10 @@ export const OUTCOME_MEASURES = [
 ] as const
 
 const PROMPT_PURPOSES = new Set(['welcome', 'morning_prompt', 'morning_followup', 'pending_reminder', 'carry_over'])
+const NUDGE_PURPOSES = new Set([
+  'morning_prompt', 'morning_followup', 'pending_reminder', 'due_reminder',
+  'carry_over', 'daily_summary', 'weekly_summary',
+])
 const SUBSTANTIVE_EVENTS = new Set([
   'planned_activity_created',
   'planned_activity_confirmed',
@@ -284,7 +304,11 @@ function outcomeKey(role: OutcomeRole, session: OutcomeSession, measureKey: stri
 
 function isMissingTableError(error: { code?: string; message?: string } | null, tableName = '') {
   const message = error?.message?.toLowerCase() ?? ''
-  return Boolean(error && (error.code === '42P01' || error.code === 'PGRST205' || (tableName && message.includes(tableName))))
+  return Boolean(error && (
+    error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    (tableName && message.includes('could not find the table') && message.includes(tableName.toLowerCase()))
+  ))
 }
 
 function eventLabel(name: string) {
@@ -326,17 +350,30 @@ function eventMode(event: EventRow): string {
 }
 
 function planMode(plan: PlanRow): string {
-  return plan.source === 'sms_ai' ? 'sms' : 'typed'
+  return plan.source === 'sms_ai' ? 'sms' : 'unknown'
 }
 
 function isDashboardEvent(event: EventRow) {
   return event.event_name.endsWith('dashboard_viewed') || event.event_name === 'context_card_viewed'
 }
 
-async function optionalSelect<T>(query: PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>, tableName: string) {
-  const result = await query
-  if (result.error && !isMissingTableError(result.error, tableName)) throw new Error(result.error.message)
-  return (result.error ? [] : result.data ?? []) as T[]
+type DataIssue = { dataset: string; code: string; message: string }
+
+async function optionalPaginatedSelect<T>(
+  queryPage: (from: number, to: number) => PromiseLike<{ data: unknown; error: AnalyticsQueryError | null }>,
+  tableName: string,
+  issues: DataIssue[],
+) {
+  const result = await paginatedSelect<T>(queryPage)
+  if (result.error) {
+    issues.push({
+      dataset: tableName,
+      code: result.error.code ?? 'unknown',
+      message: isMissingTableError(result.error, tableName) ? 'Dataset is not installed.' : result.error.message,
+    })
+    return []
+  }
+  return result.data ?? []
 }
 
 export async function loadPilotAnalytics(filters: AnalyticsFilters) {
@@ -344,6 +381,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const now = new Date()
   const filterStart = new Date(now.getTime() - filters.days * 86_400_000)
   const historyStart = new Date(now.getTime() - 120 * 86_400_000)
+  const dataIssues: DataIssue[] = []
 
   const [
     profilesResult,
@@ -360,53 +398,59 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     featureFlags,
     calendarConnections,
     calendarEvents,
+    notificationEvents,
   ] = await Promise.all([
-    service.from('profiles').select('id,user_id,role,display_name,phone_e164,household_id,timezone,created_at').order('created_at'),
-    service.from('households').select('id,name,created_at').order('created_at'),
-    service.from('analytics_events').select('id,profile_id,household_id,role,event_name,properties,created_at')
-      .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
-    service.from('sms_messages').select('id,profile_id,household_id,direction,purpose,status,metadata,created_at')
-      .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
-    service.from('planned_activities').select('id,household_id,created_by,assigned_to,category,label,expected_period,expected_time,repeat_rule,status,source,planned_for,created_at,confirmed_at,updated_at')
-      .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
-    service.from('activity_logs').select('id,household_id,logged_by,category,label,created_at,occurred_at')
-      .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
-    service.from('study_outcomes').select('id,household_id,profile_id,role,session,measure_key,score,recorded_at')
-      .order('recorded_at', { ascending: false }),
-    optionalSelect<TimelineRow>(
-      service.from('timeline_events').select('id,household_id,user_id,profile_id,text,type,source,confidence,created_at')
-        .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
-      'timeline_events',
+    paginatedSelect<ProfileRow>((from, to) => service.from('profiles').select('id,user_id,role,display_name,phone_e164,household_id,timezone,created_at').order('created_at').order('id').range(from, to)),
+    paginatedSelect<HouseholdRow>((from, to) => service.from('households').select('id,name,created_at').order('created_at').order('id').range(from, to)),
+    paginatedSelect<EventRow>((from, to) => service.from('analytics_events').select('id,profile_id,household_id,role,event_name,properties,created_at')
+      .gte('created_at', historyStart.toISOString()).order('created_at').order('id').range(from, to)),
+    paginatedSelect<SmsRow>((from, to) => service.from('sms_messages').select('id,profile_id,household_id,direction,purpose,status,metadata,created_at')
+      .gte('created_at', historyStart.toISOString()).order('created_at').order('id').range(from, to)),
+    paginatedSelect<PlanRow>((from, to) => service.from('planned_activities').select('id,household_id,created_by,assigned_to,category,label,expected_period,expected_time,repeat_rule,series_id,status,source,planned_for,created_at,confirmed_at,confirmed_activity_log_id,updated_at')
+      .gte('created_at', historyStart.toISOString()).order('created_at').order('id').range(from, to)),
+    paginatedSelect<ActivityRow>((from, to) => service.from('activity_logs').select('id,household_id,logged_by,category,label,created_at,occurred_at')
+      .gte('created_at', historyStart.toISOString()).order('created_at').order('id').range(from, to)),
+    paginatedSelect<OutcomeRow>((from, to) => service.from('study_outcomes').select('id,household_id,profile_id,role,session,measure_key,score,recorded_at')
+      .order('recorded_at', { ascending: false }).order('id').range(from, to)),
+    optionalPaginatedSelect<TimelineRow>(
+      (from, to) => service.from('timeline_events').select('id,household_id,user_id,profile_id,text,type,source,confidence,created_at')
+        .gte('created_at', historyStart.toISOString()).order('created_at').order('id').range(from, to),
+      'timeline_events', dataIssues,
     ),
-    optionalSelect<RecoverySessionRow>(
-      service.from('recovery_sessions').select('id,user_id,household_id,profile_id,session_date,started_at,completed_at,last_confirmed_text,last_confirmed_at,status,created_at')
-        .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
-      'recovery_sessions',
+    optionalPaginatedSelect<RecoverySessionRow>(
+      (from, to) => service.from('recovery_sessions').select('id,user_id,household_id,profile_id,session_date,started_at,completed_at,last_confirmed_text,last_confirmed_at,status,created_at')
+        .gte('created_at', historyStart.toISOString()).order('created_at').order('id').range(from, to),
+      'recovery_sessions', dataIssues,
     ),
-    optionalSelect<RecoveryMomentRow>(
-      service.from('recovery_session_moments').select('id,session_id,user_id,household_id,profile_id,session_date,moment_key,answer_text,confidence,status,shown_at,responded_at,created_at,updated_at')
-        .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
-      'recovery_session_moments',
+    optionalPaginatedSelect<RecoveryMomentRow>(
+      (from, to) => service.from('recovery_session_moments').select('id,session_id,user_id,household_id,profile_id,session_date,moment_key,answer_text,confidence,status,shown_at,responded_at,created_at,updated_at')
+        .gte('created_at', historyStart.toISOString()).order('created_at').order('id').range(from, to),
+      'recovery_session_moments', dataIssues,
     ),
-    optionalSelect<ReflectionRow>(
-      service.from('reflections').select('id,user_id,household_id,raw_input,ai_summary,source,reflection_date,created_at,updated_at')
-        .gte('created_at', historyStart.toISOString()).order('created_at').limit(20000),
-      'reflections',
+    optionalPaginatedSelect<ReflectionRow>(
+      (from, to) => service.from('reflections').select('id,user_id,household_id,raw_input,ai_summary,source,reflection_date,created_at,updated_at')
+        .gte('created_at', historyStart.toISOString()).order('created_at').order('id').range(from, to),
+      'reflections', dataIssues,
     ),
-    optionalSelect<FeatureFlagRow>(
-      service.from('household_feature_flags').select('id,household_id,feature_key,enabled,created_at,updated_at')
-        .order('created_at').limit(20000),
-      'household_feature_flags',
+    optionalPaginatedSelect<FeatureFlagRow>(
+      (from, to) => service.from('household_feature_flags').select('id,household_id,feature_key,enabled,created_at,updated_at')
+        .order('created_at').order('id').range(from, to),
+      'household_feature_flags', dataIssues,
     ),
-    optionalSelect<CalendarConnectionRow>(
-      service.from('calendar_connections').select('id,household_id,owner_profile_id,connected_by_profile_id,provider,provider_account_email,status,last_synced_at,created_at,updated_at')
-        .order('created_at').limit(20000),
-      'calendar_connections',
+    optionalPaginatedSelect<CalendarConnectionRow>(
+      (from, to) => service.from('calendar_connections').select('id,household_id,owner_profile_id,connected_by_profile_id,provider,provider_account_email,status,last_synced_at,created_at,updated_at')
+        .order('created_at').order('id').range(from, to),
+      'calendar_connections', dataIssues,
     ),
-    optionalSelect<CalendarEventRow>(
-      service.from('calendar_events').select('id,household_id,owner_profile_id,connection_id,provider,provider_event_id,title,starts_at,ends_at,all_day,status,hidden_at,synced_at,created_at,updated_at')
-        .gte('starts_at', historyStart.toISOString()).order('starts_at').limit(20000),
-      'calendar_events',
+    optionalPaginatedSelect<CalendarEventRow>(
+      (from, to) => service.from('calendar_events').select('id,household_id,owner_profile_id,connection_id,provider,provider_event_id,title,starts_at,ends_at,all_day,status,hidden_at,synced_at,created_at,updated_at')
+        .gte('starts_at', historyStart.toISOString()).order('starts_at').order('id').range(from, to),
+      'calendar_events', dataIssues,
+    ),
+    optionalPaginatedSelect<NotificationEventRow>(
+      (from, to) => service.from('notification_events').select('id,profile_id,household_id,category,channels,delivery_status,metadata,sent_at,created_at')
+        .gte('created_at', historyStart.toISOString()).order('created_at').order('id').range(from, to),
+      'notification_events', dataIssues,
     ),
   ])
 
@@ -432,7 +476,6 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const includedProfiles = profiles.filter(profile => profile.household_id && householdIds.has(profile.household_id))
   const householdNames = new Map(households.map(household => [household.id, household.name]))
   const profilesByHousehold = new Map<string, ProfileRow[]>()
-  const profilesById = new Map(profiles.map(profile => [profile.id, profile]))
   for (const profile of includedProfiles) {
     if (!profile.household_id) continue
     profilesByHousehold.set(profile.household_id, [...(profilesByHousehold.get(profile.household_id) ?? []), profile])
@@ -442,6 +485,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const filteredEvents = events.filter(row => inRange(row.created_at) && row.household_id && householdIds.has(row.household_id))
   const filteredSms = sms.filter(row => inRange(row.created_at) && row.household_id && householdIds.has(row.household_id))
   const filteredPlans = plans.filter(row => inRange(row.created_at) && householdIds.has(row.household_id))
+  const filteredPlanCompletions = plans.filter(row => row.confirmed_at && inRange(row.confirmed_at) && householdIds.has(row.household_id))
   const filteredActivities = activities.filter(row => inRange(row.created_at) && householdIds.has(row.household_id))
   const filteredTimeline = timelineRows.filter(row => inRange(row.created_at) && householdIds.has(row.household_id))
   const filteredRecoveryMoments = recoveryMoments.filter(row => inRange(row.created_at) && householdIds.has(row.household_id))
@@ -454,6 +498,9 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     row.status !== 'cancelled' &&
     !row.hidden_at
   )
+  const filteredNotificationEvents = notificationEvents.filter(row =>
+    inRange(row.created_at) && row.household_id && householdIds.has(row.household_id)
+  )
 
   const activityDatesForProfile = (profile: ProfileRow) => [
     ...events.filter(event => event.profile_id === profile.id).map(event => event.created_at),
@@ -462,7 +509,6 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     ...activities.filter(activity => activity.logged_by === profile.id).map(activity => activity.occurred_at),
     ...timelineRows.filter(event => event.profile_id === profile.id).map(event => event.created_at),
     ...recoveryMoments.filter(moment => moment.profile_id === profile.id).map(moment => moment.created_at),
-    ...calendarEvents.filter(event => event.owner_profile_id === profile.id && event.status !== 'cancelled' && !event.hidden_at).map(event => event.starts_at),
   ]
 
   const cohortSequences = new Map<string, number>()
@@ -493,17 +539,9 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       ...activities.filter(activity => activity.household_id === household.id).map(activity => activity.occurred_at),
       ...timelineRows.filter(event => event.household_id === household.id).map(event => event.created_at),
       ...recoveryMoments.filter(moment => moment.household_id === household.id).map(moment => moment.created_at),
-      ...calendarEvents.filter(event => event.household_id === household.id && event.status !== 'cancelled' && !event.hidden_at).map(event => event.starts_at),
     ]
     const lastActive = latestDate(householdActivityDates)
-    const mciPrompts = sms.filter(message => message.profile_id === mci?.id && message.direction === 'outbound' && PROMPT_PURPOSES.has(message.purpose))
-    const mciReplies = sms.filter(message => message.profile_id === mci?.id && message.direction === 'inbound')
-    const promptsWithReply = mciPrompts.filter(prompt =>
-      mciReplies.some(reply =>
-        new Date(reply.created_at) > new Date(prompt.created_at) &&
-        new Date(reply.created_at).getTime() - new Date(prompt.created_at).getTime() <= 86_400_000
-      )
-    ).length
+    const mciPromptMatches = matchPromptReplies(sms.filter(message => message.profile_id === mci?.id), PROMPT_PURPOSES)
     const mciHours = hoursSince(mciLastActive, now)
     const cpHours = cp ? hoursSince(cpLastActive, now) : 0
     const silentHours = hoursSince(lastActive ?? onboardingAt, now) ?? days * 24
@@ -555,7 +593,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       mciLastActive,
       cpLastActive,
       lastActive,
-      mciSmsResponseRate: percent(promptsWithReply, mciPrompts.length),
+      mciSmsResponseRate: percent(mciPromptMatches.answered, mciPromptMatches.prompts),
       pilotPreviewEnabled: householdFeatureFlags.find(flag => flag.feature_key === 'pilot_preview')?.enabled ?? true,
       calendarSyncEnabled: householdFeatureFlags.find(flag => flag.feature_key === 'calendar_sync')?.enabled ?? true,
       calendarConnected: householdCalendarConnections.some(connection => connection.status === 'active'),
@@ -577,7 +615,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const dyadByHousehold = new Map(dyads.map(dyad => [dyad.id, dyad]))
   const dyadCodes = new Map(dyads.map(dyad => [dyad.id, dyad.code]))
 
-  const recoveryEpisodes = filteredRecoveryMoments.map((moment, index) => {
+  const recoveryEpisodes = filteredRecoveryMoments.map((moment) => {
     const dyad = dyadByHousehold.get(moment.household_id)
     const shownAt = moment.shown_at ?? moment.created_at
     const relatedPlan = filteredPlans.find(plan => moment.moment_key.includes(plan.id) || moment.answer_text?.toLowerCase().includes(plan.label.toLowerCase()))
@@ -655,7 +693,10 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const unresolvedAfterResult = allRecoveryEpisodes.filter(episode => episode.outcome === 'unresolved_after_result')
 
   const startedUnresolved = filteredPlans
-    .filter(plan => plan.status === 'planned' && new Date(plan.planned_for) < now)
+    .filter(plan => {
+      const timezone = dyadByHousehold.get(plan.household_id)?.timezone ?? 'America/New_York'
+      return plan.status === 'planned' && plan.planned_for < getLocalDateKey(now, timezone)
+    })
     .map(plan => ({
       id: plan.id,
       code: dyadCodes.get(plan.household_id) ?? '--',
@@ -665,40 +706,39 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       title: plan.label,
     }))
 
-  const promptNoResponse = filteredSms.filter(message => message.direction === 'outbound' && PROMPT_PURPOSES.has(message.purpose)).filter(prompt =>
-    !filteredSms.some(reply =>
-      reply.direction === 'inbound' &&
-      reply.profile_id === prompt.profile_id &&
-      new Date(reply.created_at) > new Date(prompt.created_at) &&
-      new Date(reply.created_at).getTime() - new Date(prompt.created_at).getTime() <= 86_400_000
-    )
+  const promptMatches = matchPromptReplies(filteredSms, PROMPT_PURPOSES)
+  const promptNoResponse = filteredSms.filter(message =>
+    message.direction === 'outbound' &&
+    PROMPT_PURPOSES.has(message.purpose) &&
+    !promptMatches.matchedPromptIds.has(message.id)
   )
   const captured = filteredPlans.length + filteredTimeline.filter(row => ['doing_now', 'did', 'plan'].includes(row.type)).length
-  const completed = filteredPlans.filter(plan => plan.status === 'confirmed').length + filteredActivities.length
+  const linkedActivityIds = new Set(plans.map(plan => plan.confirmed_activity_log_id).filter((id): id is string => Boolean(id)))
+  const standaloneCompleted = filteredActivities.filter(activity => !linkedActivityIds.has(activity.id)).length
+  const completed = filteredPlanCompletions.length + standaloneCompleted
   const movedOrCancelled = filteredEvents.filter(event => ['planned_activity_moved', 'planned_activity_deleted'].includes(event.event_name)).length
   const captureAbandoned = filteredEvents.filter(event => event.event_name.includes('capture_abandoned') || event.event_name.includes('abandoned')).length
 
-  const captureModes = { voice: 0, typed: 0, tap: 0, sms: 0 }
+  const captureModes = { voice: 0, typed: 0, tap: 0, sms: 0, unknown: 0 }
   for (const plan of filteredPlans) captureModes[planMode(plan) as keyof typeof captureModes] += 1
   for (const row of filteredTimeline) captureModes[row.source === 'sms' ? 'sms' : 'typed'] += 1
-  for (const event of filteredEvents.filter(event => event.event_name.includes('capture') || event.event_name.includes('natural_language'))) {
-    const mode = eventMode(event)
-    if (mode in captureModes) captureModes[mode as keyof typeof captureModes] += 1
-  }
 
   const retrievalModes = { voice: 0, typed: 0, tap: 0 }
   for (const episode of allRecoveryEpisodes) {
     if (episode.mode in retrievalModes) retrievalModes[episode.mode as keyof typeof retrievalModes] += 1
     else retrievalModes.tap += 1
   }
-  const voiceStarted = filteredEvents.filter(event => eventMode(event) === 'voice' || event.event_name.includes('voice')).length
-  const voiceSaved = filteredEvents.filter(event => eventMode(event) === 'voice' && !event.event_name.includes('abandoned')).length
+  const voiceStarted = filteredEvents.filter(event => event.event_name === 'voice_input_started').length
+  const voiceSaved = filteredEvents.filter(event => event.event_name === 'voice_input_completed').length
   const reflectionStarted = filteredEvents.filter(event => event.event_name === 'reflection_started').length
-  const reflectionSaved = filteredReflections.length + filteredEvents.filter(event => event.event_name === 'reflection_saved').length
+  const reflectionSaved = filteredReflections.length
   const reflectionUsed = allRecoveryEpisodes.filter(episode => episode.selectedSource === 'reflection').length
 
   const smsSent = filteredSms.filter(message => message.direction === 'outbound').length
-  const smsDelivered = filteredSms.filter(message => message.direction === 'outbound' && ['delivered', 'sent'].includes(message.status)).length
+  const smsDelivered = filteredSms.filter(message => message.direction === 'outbound' && message.status === 'delivered').length
+  const smsFailed = filteredSms.filter(message => message.direction === 'outbound' && message.status === 'failed').length
+  const smsPending = filteredSms.filter(message => message.direction === 'outbound' && ['queued', 'sent'].includes(message.status)).length
+  const smsDeliveryUnconfirmed = filteredSms.filter(message => message.direction === 'outbound' && message.status === 'twiml_reply').length
   const smsReplied = filteredSms.filter(message => message.direction === 'inbound').length
   const smsParsed = filteredEvents.filter(event => event.event_name.includes('sms') && event.event_name.includes('parsed')).length
 
@@ -711,7 +751,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     ...recoveryMoments.map(moment => moment.updated_at),
     ...calendarEvents.map(event => event.updated_at ?? event.synced_at ?? event.starts_at),
   ])
-  const lastCronAt = latestDate(events.filter(event => event.event_name.includes('cron') || event.event_name.includes('sweep')).map(event => event.created_at))
+  const lastCronAt = latestDate(events.filter(event => event.event_name.includes('cron') || event.event_name.includes('sweep') || event.event_name.endsWith('_sms_attempted')).map(event => event.created_at))
   const lastCronHours = hoursSince(lastCronAt, now)
 
   const outcomeByDyad = new Map<string, Map<string, OutcomeRow>>()
@@ -798,7 +838,32 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const dyadEpisodes = allRecoveryEpisodes.filter(episode => episode.householdId === dyad.id)
     const dyadMoments = filteredRecoveryMoments.filter(moment => moment.household_id === dyad.id)
     const dyadReflections = filteredReflections.filter(reflection => reflection.household_id === dyad.id)
-    const dyadCalendarEvents = filteredCalendarEvents.filter(event => event.household_id === dyad.id)
+    const dyadNotifications = filteredNotificationEvents.filter(event => event.household_id === dyad.id)
+    const dyadPlanCompletions = filteredPlanCompletions.filter(plan => plan.household_id === dyad.id)
+    const dyadCapturedPlans = dyadPlans.filter(plan => !plan.series_id || plan.series_id === plan.id)
+    const dyadStandaloneActivities = filteredActivities.filter(activity => activity.household_id === dyad.id && !linkedActivityIds.has(activity.id))
+    const dyadNudges = dyadSms.filter(message => message.direction === 'outbound' && NUDGE_PURPOSES.has(message.purpose))
+    const promptMatches = matchPromptReplies(dyadSms, PROMPT_PURPOSES)
+    const nudgeResponsesWithin2h = dyadNudges.filter(nudge => {
+      const start = new Date(nudge.created_at).getTime()
+      const end = start + 2 * 60 * 60 * 1000
+      return dyadSms.some(message => message.direction === 'inbound' && message.profile_id === nudge.profile_id && new Date(message.created_at).getTime() > start && new Date(message.created_at).getTime() <= end) ||
+        dyadEvents.some(event => event.role === 'mci_user' && SUBSTANTIVE_EVENTS.has(event.event_name) && new Date(event.created_at).getTime() > start && new Date(event.created_at).getTime() <= end)
+    }).length
+    const pushSent = dyadNotifications.filter(event => event.sent_at && event.channels?.includes('push')).length
+    const notificationDays = new Set([
+      ...dyadNudges.map(message => dateKey(message.created_at)),
+      ...dyadNotifications.filter(event => event.sent_at && event.channels?.includes('push')).map(event => dateKey(event.sent_at!)),
+    ]).size
+    const featureCounts = new Map<string, number>()
+    for (const event of dyadEvents.filter(event => isStudyEvent(event.event_name))) {
+      featureCounts.set(event.event_name, (featureCounts.get(event.event_name) ?? 0) + 1)
+    }
+    const captureParsed = dyadEvents.filter(event => ['natural_language_plan_parsed', 'natural_language_timeline_parsed'].includes(event.event_name)).length
+    const captureSaved = dyadEvents.filter(event => ['natural_language_plan_saved', 'natural_language_exact_note_saved', 'reflection_saved'].includes(event.event_name)).length
+    const captureClarified = dyadEvents.filter(event => event.event_name === 'natural_language_clarification_requested').length
+    const captureFallback = dyadEvents.filter(event => event.event_name === 'natural_language_plan_parsed' && event.properties?.used_custom_fallback === true).length
+    const captureCorrected = dyadEvents.filter(event => event.event_name === 'natural_language_plan_saved' && event.properties?.was_corrected === true).length
     const w1Cp = dyadEvents.filter(event => event.event_name === 'care_partner_dashboard_viewed' && studyDay(dyad.onboardingAt, event.created_at) <= 7).length
     const w2Cp = dyadEvents.filter(event => event.event_name === 'care_partner_dashboard_viewed' && studyDay(dyad.onboardingAt, event.created_at) > 7).length
     const week1Days = Math.min(7, Math.max(1, dyad.currentStudyDay))
@@ -808,14 +873,13 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       ...dyadEvents.filter(event => SUBSTANTIVE_EVENTS.has(event.event_name)).map(event => studyDay(dyad.onboardingAt, event.created_at)),
       ...dyadSms.filter(message => message.direction === 'inbound').map(message => studyDay(dyad.onboardingAt, message.created_at)),
       ...dyadReflections.map(reflection => studyDay(dyad.onboardingAt, reflection.created_at)),
-      ...dyadCalendarEvents.map(event => studyDay(dyad.onboardingAt, event.starts_at)),
     ])
     return {
       ...dyad,
       captured: dyadPlans.length + filteredTimeline.filter(row => row.household_id === dyad.id).length,
       abandoned: dyadEvents.filter(event => event.event_name.includes('abandoned')).length,
-      completed: dyadPlans.filter(plan => plan.status === 'confirmed').length,
-      unresolved: dyadPlans.filter(plan => plan.status === 'planned' && new Date(plan.planned_for) < now).length,
+      completed: dyadPlanCompletions.length + dyadStandaloneActivities.length,
+      unresolved: dyadPlans.filter(plan => plan.status === 'planned' && plan.planned_for < getLocalDateKey(now, dyad.timezone)).length,
       attempts: dyadEpisodes.length,
       resumed: dyadEpisodes.filter(episode => episode.outcome === 'resolved').length,
       nothingHeld: dyadEpisodes.filter(episode => episode.outcome === 'no_context').length,
@@ -838,21 +902,37 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
         return dyadPlans.filter(plan => studyDay(dyad.onboardingAt, plan.created_at) === day).length +
           dyadEvents.filter(event => SUBSTANTIVE_EVENTS.has(event.event_name) && studyDay(dyad.onboardingAt, event.created_at) === day).length +
           dyadEpisodes.filter(episode => episode.day === day).length +
-          dyadReflections.filter(reflection => studyDay(dyad.onboardingAt, reflection.created_at) === day).length +
-          dyadCalendarEvents.filter(event => studyDay(dyad.onboardingAt, event.starts_at) === day).length
+          dyadReflections.filter(reflection => studyDay(dyad.onboardingAt, reflection.created_at) === day).length
       }),
       cpOpenTrend: Array.from({ length: Math.min(STUDY_DAYS, Math.max(1, dyad.currentStudyDay)) }, (_, index) => {
         const day = index + 1
         return dyadEvents.filter(event => event.event_name === 'care_partner_dashboard_viewed' && studyDay(dyad.onboardingAt, event.created_at) === day).length
       }),
       smsSent: dyadSms.filter(message => message.direction === 'outbound').length,
-      smsDelivered: dyadSms.filter(message => message.direction === 'outbound' && ['delivered', 'sent'].includes(message.status)).length,
+      smsDelivered: dyadSms.filter(message => message.direction === 'outbound' && message.status === 'delivered').length,
+      smsFailed: dyadSms.filter(message => message.direction === 'outbound' && message.status === 'failed').length,
+      smsPending: dyadSms.filter(message => message.direction === 'outbound' && ['queued', 'sent'].includes(message.status)).length,
+      smsDeliveryUnconfirmed: dyadSms.filter(message => message.direction === 'outbound' && message.status === 'twiml_reply').length,
       smsReplied: dyadSms.filter(message => message.direction === 'inbound').length,
       smsParsed: dyadEvents.filter(event => event.event_name.includes('sms') && event.event_name.includes('parsed')).length,
-      smsMedianLatency: median(dyadSms.filter(message => message.direction === 'inbound').map(message => {
-        const prior = dyadSms.filter(candidate => candidate.direction === 'outbound' && candidate.profile_id === message.profile_id && new Date(candidate.created_at) < new Date(message.created_at)).at(-1)
-        return prior ? Math.round((new Date(message.created_at).getTime() - new Date(prior.created_at).getTime()) / 60_000) : null
-      }).filter((value): value is number => value !== null)),
+      smsPromptSent: promptMatches.prompts,
+      smsPromptAnswered: promptMatches.answered,
+      smsMedianLatency: median(promptMatches.latencies),
+      features: [...featureCounts.entries()].map(([name, count]) => ({ name, label: eventLabel(name), count })),
+      captureParsed,
+      captureSaved,
+      captureClarified,
+      captureFallback,
+      captureCorrected,
+      mciPlansCreated: dyadCapturedPlans.filter(plan => plan.created_by === dyad.mciProfileId).length,
+      cpPlansCreated: dyadCapturedPlans.filter(plan => plan.created_by === dyad.cpProfileId).length,
+      mciCompletions: filteredActivities.filter(activity => activity.household_id === dyad.id && activity.logged_by === dyad.mciProfileId).length,
+      cpCompletions: filteredActivities.filter(activity => activity.household_id === dyad.id && activity.logged_by === dyad.cpProfileId).length,
+      nudgeSent: dyadNudges.length + pushSent,
+      nudgeResponsesWithin2h,
+      pushSent,
+      notificationDays,
+      notificationLoadPerActiveDay: notificationDays > 0 ? Math.round(((dyadNudges.length + pushSent) / notificationDays) * 10) / 10 : 0,
       recentEpisodes: dyadEpisodes.slice(0, 4),
       recentMoments: dyadMoments.slice(-4),
     }
@@ -863,7 +943,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const noContext = dyadEpisodes.filter(episode => episode.outcome === 'no_context')
     const rankFailures = dyadEpisodes.filter(episode => episode.outcome === 'rank_failure')
     const unresolved = dyadEpisodes.filter(episode => episode.outcome === 'unresolved_after_result')
-    const undelivered = dyad.smsSent - dyad.smsDelivered
+    const undelivered = dyad.smsFailed
     const flags: Array<{ question: string; evidence: string; source: string }> = []
     if (noContext.length >= 2) flags.push({
       question: 'What were you looking for that Context did not have?',
@@ -880,9 +960,9 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       evidence: `${unresolved.length} retrievals with a result and no resumption in the window.`,
       source: 'Recovery',
     })
-    if (dyad.smsDelivered > 0 && dyad.smsReplied / dyad.smsDelivered < 0.3) flags.push({
+    if (dyad.smsPromptSent > 0 && dyad.smsPromptAnswered / dyad.smsPromptSent < 0.3) flags.push({
       question: 'Tell me about the morning texts.',
-      evidence: `${dyad.smsReplied} replies to ${dyad.smsDelivered} delivered messages.`,
+      evidence: `${dyad.smsPromptAnswered} answered prompts out of ${dyad.smsPromptSent}.`,
       source: 'SMS',
     })
     if (undelivered > 0) flags.push({
@@ -930,7 +1010,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     calendarConnected: perDyad.filter(dyad => dyad.calendarConnected).length,
     silentDyads: perDyad.filter(dyad => dyad.silentHours > 48).length,
     missingMci: perDyad.filter(dyad => !dyad.mciProfileId).length,
-    missingCp: perDyad.filter(dyad => !dyad.cpProfileId).length,
+    missingCp: perDyad.filter(dyad => dyad.accountMode === 'shared' && !dyad.cpProfileId).length,
     soloHouseholds: perDyad.filter(dyad => dyad.accountMode === 'solo').length,
     sharedHouseholds: perDyad.filter(dyad => dyad.accountMode === 'shared').length,
     outcomesStarted: outcomeRows.filter(row => row.scores.some(score => score.pre !== null || score.post !== null)).length,
@@ -1047,7 +1127,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       voiceAbandoned: Math.max(0, voiceStarted - voiceSaved),
       reflectionStarted,
       reflectionSaved,
-      reflectionReturned: Math.max(reflectionUsed, Math.round(reflectionUsed * 1.5)),
+      reflectionReturned: reflectionUsed,
       reflectionUsed,
       switches: allRecoveryEpisodes.filter(episode => episode.switched).length,
     },
@@ -1066,10 +1146,67 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     sms: {
       sent: smsSent,
       delivered: smsDelivered,
+      failed: smsFailed,
+      pending: smsPending,
+      deliveryUnconfirmed: smsDeliveryUnconfirmed,
       replied: smsReplied,
       parsed: smsParsed,
-      deliveredNoReply: Math.max(0, smsDelivered - smsReplied),
-      notUsable: Math.max(0, smsReplied - smsParsed),
+      prompts: promptMatches.prompts,
+      answeredPrompts: promptMatches.answered,
+      promptResponseRate: percent(promptMatches.answered, promptMatches.prompts),
+      deliveredNoReply: promptNoResponse.length,
+      notUsable: null,
+      byPurpose: [...new Set(filteredSms.map(message => message.purpose))].sort().map(purpose => ({
+        purpose,
+        outbound: filteredSms.filter(message => message.purpose === purpose && message.direction === 'outbound').length,
+        inbound: filteredSms.filter(message => message.purpose === purpose && message.direction === 'inbound').length,
+        delivered: filteredSms.filter(message => message.purpose === purpose && message.direction === 'outbound' && message.status === 'delivered').length,
+      })),
+    },
+    capture: {
+      interpreted: perDyad.reduce((sum, dyad) => sum + dyad.captureParsed, 0),
+      saved: perDyad.reduce((sum, dyad) => sum + dyad.captureSaved, 0),
+      clarificationNeeded: perDyad.reduce((sum, dyad) => sum + dyad.captureClarified, 0),
+      fallbackUsed: perDyad.reduce((sum, dyad) => sum + dyad.captureFallback, 0),
+      correctedBeforeSave: perDyad.reduce((sum, dyad) => sum + dyad.captureCorrected, 0),
+    },
+    independence: {
+      mciPlansCreated: perDyad.reduce((sum, dyad) => sum + dyad.mciPlansCreated, 0),
+      cpPlansCreated: perDyad.reduce((sum, dyad) => sum + dyad.cpPlansCreated, 0),
+      mciCompletions: perDyad.reduce((sum, dyad) => sum + dyad.mciCompletions, 0),
+      cpCompletions: perDyad.reduce((sum, dyad) => sum + dyad.cpCompletions, 0),
+      selfCaptureRate: percent(
+        perDyad.reduce((sum, dyad) => sum + dyad.mciPlansCreated, 0),
+        perDyad.reduce((sum, dyad) => sum + dyad.mciPlansCreated + dyad.cpPlansCreated, 0),
+      ),
+    },
+    nudges: {
+      sent: perDyad.reduce((sum, dyad) => sum + dyad.nudgeSent, 0),
+      responsesWithin2h: perDyad.reduce((sum, dyad) => sum + dyad.nudgeResponsesWithin2h, 0),
+      responseRate: percent(
+        perDyad.reduce((sum, dyad) => sum + dyad.nudgeResponsesWithin2h, 0),
+        perDyad.reduce((sum, dyad) => sum + dyad.nudgeSent, 0),
+      ),
+      pushSent: perDyad.reduce((sum, dyad) => sum + dyad.pushSent, 0),
+      averageLoadPerActiveDay: perDyad.length
+        ? Math.round((perDyad.reduce((sum, dyad) => sum + dyad.notificationLoadPerActiveDay, 0) / perDyad.length) * 10) / 10
+        : 0,
+    },
+    dataHealth: {
+      status: dataIssues.length === 0 ? 'healthy' : 'attention',
+      issues: dataIssues,
+      pagination: { pageSize: ANALYTICS_PAGE_SIZE, complete: dataIssues.length === 0 },
+      datasets: [
+        { name: 'Analytics events', rows: filteredEvents.length, latestAt: latestDate(filteredEvents.map(row => row.created_at)) },
+        { name: 'SMS messages', rows: filteredSms.length, latestAt: latestDate(filteredSms.map(row => row.created_at)) },
+        { name: 'Plans', rows: filteredPlans.length, latestAt: latestDate(filteredPlans.map(row => row.updated_at ?? row.created_at)) },
+        { name: 'Activity logs', rows: filteredActivities.length, latestAt: latestDate(filteredActivities.map(row => row.occurred_at)) },
+        { name: 'Timeline', rows: filteredTimeline.length, latestAt: latestDate(filteredTimeline.map(row => row.created_at)) },
+        { name: 'Recovery', rows: filteredRecoveryMoments.length, latestAt: latestDate(filteredRecoveryMoments.map(row => row.updated_at)) },
+        { name: 'Reflections', rows: filteredReflections.length, latestAt: latestDate(filteredReflections.map(row => row.updated_at)) },
+        { name: 'Calendar', rows: filteredCalendarEvents.length, latestAt: latestDate(filteredCalendarEvents.map(row => row.updated_at)) },
+        { name: 'Notifications', rows: filteredNotificationEvents.length, latestAt: latestDate(filteredNotificationEvents.map(row => row.sent_at ?? row.created_at)) },
+      ],
     },
     persistence: {
       useDaysWeek1: perDyad.reduce((sum, dyad) => sum + dyad.useDaysWeek1, 0),
@@ -1112,6 +1249,22 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
       feature_flags: filteredFeatureFlags,
       calendar_connections: filteredCalendarConnections,
       calendar_events: filteredCalendarEvents,
+      notifications: filteredNotificationEvents,
+      metric_summary: [{
+        sms_outbound: smsSent,
+        sms_delivered: smsDelivered,
+        sms_replies: smsReplied,
+        sms_prompt_response_rate: percent(promptMatches.answered, promptMatches.prompts),
+        plans_captured: captured,
+        completed_threads: completed,
+        recovery_attempts: allRecoveryEpisodes.length,
+        recovery_resumed: resolvedEpisodes.length,
+        participant_plans_created: perDyad.reduce((sum, dyad) => sum + dyad.mciPlansCreated, 0),
+        care_partner_plans_created: perDyad.reduce((sum, dyad) => sum + dyad.cpPlansCreated, 0),
+        nudges_sent: perDyad.reduce((sum, dyad) => sum + dyad.nudgeSent, 0),
+        nudge_responses_within_2h: perDyad.reduce((sum, dyad) => sum + dyad.nudgeResponsesWithin2h, 0),
+        data_health: dataIssues.length === 0 ? 'healthy' : 'attention',
+      }],
       pilot_readiness: [pilotReadiness],
     },
   }

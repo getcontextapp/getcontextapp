@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient, createServiceClient } from '@/lib/supabase-server'
 import { getLocalDateKey } from '@/lib/dates'
 import { reflectionToClient, saveReflectionInput } from '@/lib/reflections'
+import { trackEvent } from '@/lib/analytics'
 
 export async function GET() {
   const supabase = await createServerClient()
@@ -52,6 +53,12 @@ export async function POST(request: NextRequest) {
 
   try {
     const reflection = await saveReflectionInput(supabase, profile, rawInput, 'app')
+    await trackEvent(supabase, {
+      eventName: 'reflection_saved',
+      profile,
+      userId: user.id,
+      properties: { input_mode: body.input_mode ?? 'unknown', raw_length: rawInput.length },
+    })
     return NextResponse.json({ reflection })
   } catch (error) {
     console.error('[Reflection] Save failed:', error)

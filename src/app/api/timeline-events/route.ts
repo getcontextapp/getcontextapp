@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
     type?: TimelineEventType
     source?: TimelineEventSource
     confidence?: TimelineEventConfidence
+    input_mode?: 'keyboard' | 'voice'
   } = await request.json()
 
   const text = body.text?.trim().replace(/[—–]/g, ',')
@@ -90,7 +91,7 @@ export async function POST(request: NextRequest) {
     eventName: 'timeline_event_saved',
     profile,
     userId: user.id,
-    properties: { timeline_event_id: data.id, type, source, confidence },
+    properties: { timeline_event_id: data.id, type, source, confidence, input_mode: body.input_mode ?? 'unknown' },
   })
 
   return NextResponse.json({ event: data })

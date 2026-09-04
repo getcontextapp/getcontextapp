@@ -50,6 +50,8 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
   const [savingExact, setSavingExact] = useState(false)
   const [exactSaved, setExactSaved] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const inputModeRef = useRef<'keyboard' | 'voice'>('keyboard')
+  const parsedDraftsRef = useRef('')
   const wordCount = countPlanWords(message)
 
   function openComposer() {
@@ -72,7 +74,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
       const response = await fetch('/api/planned-activities/natural-language', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'parse', message: messageToInterpret }),
+        body: JSON.stringify({ action: 'parse', message: messageToInterpret, input_mode: inputModeRef.current }),
       })
       const result = await response.json()
       if (!response.ok) {
@@ -99,10 +101,12 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
         setModification(result.modification)
         setDrafts([])
       } else {
-        setDrafts((result.items ?? []).map((item: DraftPlan) => ({
+        const nextDrafts = (result.items ?? []).map((item: DraftPlan) => ({
           ...item,
           planned_for: item.planned_for ?? plannedFor,
-        })))
+        }))
+        setDrafts(nextDrafts)
+        parsedDraftsRef.current = JSON.stringify(nextDrafts)
         setCapture(null)
       }
       setError(null)
@@ -121,7 +125,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
       const response = await fetch('/api/planned-activities/natural-language', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'save_exact', message }),
+        body: JSON.stringify({ action: 'save_exact', message, input_mode: inputModeRef.current }),
       })
       const result = await response.json().catch(() => ({}))
       if (!response.ok || !result.event) {
@@ -146,6 +150,13 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
   }
 
   function discardDraft() {
+    if (message.trim()) {
+      void fetch('/api/analytics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_name: 'capture_abandoned', properties: { surface: 'plan', input_mode: inputModeRef.current, raw_length: message.length } }),
+      }).catch(() => undefined)
+    }
     setMessage('')
     setDrafts([])
     setCapture(null)
@@ -161,7 +172,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
     setSaving(true); setError(null)
     const response = await fetch('/api/planned-activities/natural-language', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'modify', modification }),
+      body: JSON.stringify({ action: 'modify', modification, input_mode: inputModeRef.current }),
     })
     const result = await response.json()
     setSaving(false)
@@ -186,6 +197,8 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
         body: JSON.stringify({
           action: 'save',
           planned_for: plannedFor,
+          input_mode: inputModeRef.current,
+          was_corrected: parsedDraftsRef.current !== JSON.stringify(validDrafts),
           items: validDrafts.map(item => ({ ...item, planned_for: item.planned_for ?? plannedFor })),
         }),
       })
@@ -220,6 +233,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
           type: capture.type,
           source: 'user-stated',
           confidence: 'high',
+          input_mode: inputModeRef.current,
         }),
       })
       const result = await response.json()
@@ -269,13 +283,16 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
             <label htmlFor="natural-plan-input" className="font-serif text-lg font-semibold text-warm-900">
               What would you like to do today?
             </label>
-            <p className="text-sm text-warm-400 mt-1">You can mention plans, what you're doing now, or what you just did.</p>
+            <p className="text-sm text-warm-400 mt-1">You can mention plans, what you’re doing now, or what you just did.</p>
             <div className="relative mt-4">
               <textarea
                 ref={inputRef}
                 id="natural-plan-input"
                 value={message}
-                onChange={event => setMessage(event.target.value)}
+                onChange={event => {
+                  inputModeRef.current = 'keyboard'
+                  setMessage(event.target.value)
+                }}
                 rows={3}
                 maxLength={PLAN_PRESERVATION_LIMIT}
                 placeholder="For example: Making lunch, take my medicine after breakfast, or call my care partner at 4."
@@ -285,7 +302,12 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
               />
               <WebSpeechMicButton
                 value={message}
-                onChange={setMessage}
+                onChange={value => {
+                  inputModeRef.current = 'voice'
+                  setMessage(value)
+                }}
+                onStart={() => { inputModeRef.current = 'voice' }}
+                surface="plan"
                 onNotice={setVoiceNotice}
                 className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-full bg-sage-100 text-base"
                 activeClassName="bg-terracotta-100"

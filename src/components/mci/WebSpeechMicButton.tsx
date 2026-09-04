@@ -46,6 +46,8 @@ interface Props {
   className?: string
   activeClassName?: string
   ariaLabel?: string
+  surface?: 'plan' | 'reflection'
+  onStart?: () => void
 }
 
 function joinSpeech(base: string, transcript: string) {
@@ -63,12 +65,26 @@ export default function WebSpeechMicButton({
   className = '',
   activeClassName = '',
   ariaLabel = 'Speak',
+  surface = 'plan',
+  onStart,
 }: Props) {
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const baseTextRef = useRef('')
-  const finalTranscriptRef = useRef('')
+  const sessionTranscriptRef = useRef('')
   const latestValueRef = useRef(value)
+  const startedAtRef = useRef<number | null>(null)
+  const resultEventCountRef = useRef(0)
+
+  function trackVoiceEvent(eventName: string, properties: Record<string, unknown> = {}) {
+    const userAgent = window.navigator.userAgent
+    const platform = /Android/i.test(userAgent) ? 'android' : /iPhone|iPad|iPod/i.test(userAgent) ? 'ios' : 'other'
+    void fetch('/api/analytics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_name: eventName, properties: { surface, platform, ...properties } }),
+    }).catch(() => undefined)
+  }
 
   useEffect(() => {
     latestValueRef.current = value
@@ -97,27 +113,28 @@ export default function WebSpeechMicButton({
     const recognition = new Recognition()
     recognitionRef.current = recognition
     baseTextRef.current = baseText
-    finalTranscriptRef.current = ''
+    sessionTranscriptRef.current = ''
     recognition.continuous = true
     recognition.interimResults = true
     recognition.lang = 'en-US'
 
     recognition.onresult = event => {
-      let interim = ''
-      for (let index = event.resultIndex; index < event.results.length; index++) {
+      resultEventCountRef.current += 1
+      // Safari can resend earlier result indexes as its interpretation improves.
+      // Rebuild the session transcript instead of repeatedly appending them.
+      const transcriptParts: string[] = []
+      for (let index = 0; index < event.results.length; index++) {
         const result = event.results[index]
         const transcript = result[0]?.transcript ?? ''
-        if (result.isFinal) {
-          finalTranscriptRef.current = `${finalTranscriptRef.current} ${transcript}`.trim()
-        } else {
-          interim = `${interim} ${transcript}`.trim()
-        }
+        if (transcript.trim()) transcriptParts.push(transcript.trim())
       }
-      onChange(joinSpeech(baseTextRef.current, `${finalTranscriptRef.current} ${interim}`))
+      sessionTranscriptRef.current = transcriptParts.join(' ')
+      onChange(joinSpeech(baseTextRef.current, sessionTranscriptRef.current))
     }
 
     recognition.onerror = event => {
       const errorName = event.error ?? ''
+      trackVoiceEvent('voice_input_failed', { error: errorName || 'unknown' })
       if (errorName === 'not-allowed' || errorName === 'service-not-allowed') {
         onNotice?.('Voice permission was blocked. Please type instead.')
         window.setTimeout(() => onNotice?.(null), 3500)
@@ -127,16 +144,26 @@ export default function WebSpeechMicButton({
     }
 
     recognition.onend = () => {
-      const committedText = joinSpeech(baseTextRef.current, finalTranscriptRef.current)
+      const committedText = joinSpeech(baseTextRef.current, sessionTranscriptRef.current)
       onChange(committedText)
       latestValueRef.current = committedText
       setListening(false)
       recognitionRef.current = null
+      trackVoiceEvent('voice_input_completed', {
+        duration_ms: startedAtRef.current ? Date.now() - startedAtRef.current : null,
+        result_events: resultEventCountRef.current,
+        captured_characters: sessionTranscriptRef.current.length,
+      })
+      startedAtRef.current = null
     }
 
     try {
       recognition.start()
       setListening(true)
+      startedAtRef.current = Date.now()
+      resultEventCountRef.current = 0
+      onStart?.()
+      trackVoiceEvent('voice_input_started')
     } catch {
       setListening(false)
       recognitionRef.current = null

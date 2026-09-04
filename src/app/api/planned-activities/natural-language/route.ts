@@ -122,6 +122,8 @@ export async function POST(request: NextRequest) {
     action?: 'parse' | 'save' | 'modify' | 'save_exact'
     message?: string
     planned_for?: string
+    input_mode?: 'keyboard' | 'voice'
+    was_corrected?: boolean
     items?: Array<{
       category?: ActivityCategory
       note?: string
@@ -149,7 +151,7 @@ export async function POST(request: NextRequest) {
         eventName: 'natural_language_processing_limit_reached',
         profile,
         userId: user.id,
-        properties: { raw_length: message.length, word_count: wordCount, preserved: true },
+        properties: { raw_length: message.length, word_count: wordCount, preserved: true, input_mode: body.input_mode ?? 'unknown' },
       })
       return NextResponse.json({
         error: 'That is over 1,000 words. Everything is still here. Shorten it for plan-making, or save your words exactly as a note.',
@@ -162,7 +164,7 @@ export async function POST(request: NextRequest) {
         eventName: 'natural_language_recall_requested',
         profile,
         userId: user.id,
-        properties: { raw_length: message.length },
+        properties: { raw_length: message.length, input_mode: body.input_mode ?? 'unknown' },
       })
       return NextResponse.json({ recall_request: true })
     }
@@ -220,7 +222,7 @@ export async function POST(request: NextRequest) {
         eventName: 'natural_language_clarification_requested',
         profile,
         userId: user.id,
-        properties: { kind: 'ambiguous_time_range', raw_length: message.length },
+        properties: { kind: 'ambiguous_time_range', raw_length: message.length, input_mode: body.input_mode ?? 'unknown' },
       })
       return NextResponse.json({ clarification })
     }
@@ -231,7 +233,7 @@ export async function POST(request: NextRequest) {
         eventName: 'natural_language_timeline_parsed',
         profile,
         userId: user.id,
-        properties: { type: capture.type, raw_length: message.length },
+        properties: { type: capture.type, raw_length: message.length, input_mode: body.input_mode ?? 'unknown' },
       })
       return NextResponse.json({ capture })
     }
@@ -255,6 +257,7 @@ export async function POST(request: NextRequest) {
         item_count: items.length,
         raw_length: message.length,
         used_custom_fallback: parsed.intent !== 'plan' || parsed.items.length === 0,
+        input_mode: body.input_mode ?? 'unknown',
       },
     })
 
@@ -286,7 +289,7 @@ export async function POST(request: NextRequest) {
       eventName: 'natural_language_exact_note_saved',
       profile,
       userId: user.id,
-      properties: { timeline_event_id: event.id, raw_length: message.length },
+      properties: { timeline_event_id: event.id, raw_length: message.length, input_mode: body.input_mode ?? 'unknown' },
     })
     return NextResponse.json({ event })
   }
@@ -439,6 +442,8 @@ export async function POST(request: NextRequest) {
         item_count: plannedItems.length,
         planned_activity_ids: plannedItems.map(item => item.id),
         planned_for_dates: Array.from(new Set(plannedItems.map(item => item.planned_for))),
+        input_mode: body.input_mode ?? 'unknown',
+        was_corrected: Boolean(body.was_corrected),
       },
     })
 

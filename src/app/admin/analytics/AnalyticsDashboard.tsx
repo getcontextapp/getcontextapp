@@ -8,7 +8,7 @@ type AnalyticsData = Awaited<ReturnType<typeof import('@/lib/pilot-analytics').l
 type Dyad = AnalyticsData['perDyad'][number]
 type OutcomeRow = AnalyticsData['outcomeRows'][number]
 type OutcomeScore = OutcomeRow['scores'][number]
-type TabKey = 'health' | 'outcomes' | 'arc' | 'behavior' | 'sms' | 'readiness' | 'exports'
+type TabKey = 'health' | 'outcomes' | 'arc' | 'behavior' | 'sms' | 'data' | 'readiness' | 'exports'
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'health', label: 'Household health' },
@@ -16,6 +16,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'arc', label: 'Study arc' },
   { key: 'behavior', label: 'Behavior' },
   { key: 'sms', label: 'SMS' },
+  { key: 'data', label: 'Data health' },
   { key: 'readiness', label: 'Pilot readiness' },
   { key: 'exports', label: 'Exports' },
 ]
@@ -29,6 +30,8 @@ const EXPORTS = [
   ['plans', 'Plans'],
   ['calendar_connections', 'Calendar connections'],
   ['calendar_events', 'Calendar events'],
+  ['notifications', 'Notification events'],
+  ['metric_summary', 'Metric summary'],
   ['feature_flags', 'Feature flags'],
   ['pilot_readiness', 'Pilot readiness'],
 ]
@@ -49,11 +52,12 @@ function flagLabel(value: string) {
   return 'Quiet'
 }
 
-function exportHref(dataset: string, data: AnalyticsData) {
+function exportHref(dataset: string, data: AnalyticsData, selectedHousehold = 'all') {
   const params = new URLSearchParams()
   params.set('dataset', dataset)
   params.set('days', String(data.filters.days))
-  if (data.filters.householdId) params.set('household', data.filters.householdId)
+  const household = selectedHousehold !== 'all' ? selectedHousehold : data.filters.householdId
+  if (household) params.set('household', household)
   if (data.filters.role) params.set('role', data.filters.role)
   return `/api/admin/analytics/export?${params.toString()}`
 }
@@ -100,18 +104,23 @@ function NewHouseholdAlert({ dyads }: { dyads: Dyad[] }) {
       seenIds = null
     }
 
+    let nextIds: string[]
     if (seenIds) {
       const seen = new Set(seenIds)
-      setNewHouseholdIds(dyads.filter(dyad => !seen.has(dyad.id)).map(dyad => dyad.id))
+      nextIds = dyads.filter(dyad => !seen.has(dyad.id)).map(dyad => dyad.id)
     } else {
       const cutoff = Date.now() - INITIAL_SIGNUP_LOOKBACK_DAYS * 86_400_000
       const recent = dyads.filter(dyad => new Date(dyad.householdCreatedAt).getTime() >= cutoff)
-      setNewHouseholdIds(recent.map(dyad => dyad.id))
+      nextIds = recent.map(dyad => dyad.id)
       if (recent.length === 0) {
         window.localStorage.setItem(SEEN_HOUSEHOLDS_KEY, JSON.stringify(dyads.map(dyad => dyad.id)))
       }
     }
-    setReady(true)
+    const frame = window.requestAnimationFrame(() => {
+      setNewHouseholdIds(nextIds)
+      setReady(true)
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [dyads])
 
   const newHouseholds = dyads.filter(dyad => newHouseholdIds.includes(dyad.id))
@@ -156,12 +165,22 @@ function ScopeBar({ data, selectedCohort, setSelectedCohort, selectedMode, setSe
   selectedHousehold: string
   setSelectedHousehold: (value: string) => void
 }) {
-  const dyads = data.perDyad.filter(dyad =>
+  const optionDyads = data.perDyad.filter(dyad =>
     (selectedCohort === 'all' || dyad.cohort === selectedCohort) &&
     (selectedMode === 'all' || dyad.accountMode === selectedMode)
   )
   return (
     <section className="scope-card">
+      <div>
+        <label htmlFor="date-window">Time window</label>
+        <select id="date-window" value={data.filters.days} onChange={event => {
+          const params = new URLSearchParams(window.location.search)
+          params.set('days', event.target.value)
+          window.location.search = params.toString()
+        }}>
+          {[7, 14, 30, 60, 90].map(days => <option key={days} value={days}>Last {days} days</option>)}
+        </select>
+      </div>
       <div>
         <label htmlFor="cohort">Cohort</label>
         <select id="cohort" value={selectedCohort} onChange={event => { setSelectedCohort(event.target.value); setSelectedHousehold('all') }}>
@@ -181,7 +200,7 @@ function ScopeBar({ data, selectedCohort, setSelectedCohort, selectedMode, setSe
         <label htmlFor="dyad">Household</label>
         <select id="dyad" value={selectedHousehold} onChange={event => setSelectedHousehold(event.target.value)}>
           <option value="all">All households</option>
-          {dyads.map(dyad => <option key={dyad.id} value={dyad.id}>{dyad.displayLabel}</option>)}
+          {optionDyads.map(dyad => <option key={dyad.id} value={dyad.id}>{dyad.displayLabel}</option>)}
         </select>
       </div>
     </section>
@@ -419,32 +438,51 @@ function StudyArcPanel({ data, dyads }: { data: AnalyticsData; dyads: Dyad[] }) 
   )
 }
 
-function BehaviorPanel({ data }: { data: AnalyticsData }) {
+function BehaviorPanel({ dyads }: { dyads: Dyad[] }) {
+  const sum = (pick: (dyad: Dyad) => number) => dyads.reduce((total, dyad) => total + pick(dyad), 0)
+  const mciPlans = sum(dyad => dyad.mciPlansCreated)
+  const cpPlans = sum(dyad => dyad.cpPlansCreated)
+  const nudges = sum(dyad => dyad.nudgeSent)
+  const nudgeResponses = sum(dyad => dyad.nudgeResponsesWithin2h)
   return (
     <section className="panel">
-      <div className="panel-heading">
-        <p>Behavior detail</p>
-        <h2>Signals that explain dyad health</h2>
-      </div>
+      <div className="panel-heading"><p>Behavior detail</p><h2>Signals that explain household outcomes</h2></div>
       <div className="stats-grid">
-        <StatCard label="Memory help attempts" value={data.recovery.attempts} />
-        <StatCard label="Reflections saved" value={data.modality.reflectionSaved} />
-        <StatCard label="Plans captured" value={data.threads.captured} />
-        <StatCard label="Calendar items synced" value={data.exports.calendar_events?.length ?? 0} />
+        <StatCard label="Memory help attempts" value={sum(dyad => dyad.attempts)} />
+        <StatCard label="Plan records" value={sum(dyad => dyad.captured)} />
+        <StatCard label="Completed threads" value={sum(dyad => dyad.completed)} />
+        <StatCard label="Past unresolved" value={sum(dyad => dyad.unresolved)} />
       </div>
-      <div className="feature-list">
-        {data.features.map(feature => (
-          <article key={feature.name}>
-            <span>{feature.label}</span>
-            <strong>{feature.count}</strong>
-          </article>
-        ))}
+      <h3>Capture funnel</h3>
+      <div className="stats-grid">
+        <StatCard label="Interpreted" value={sum(dyad => dyad.captureParsed)} />
+        <StatCard label="Saved" value={sum(dyad => dyad.captureSaved)} />
+        <StatCard label="Clarification requested" value={sum(dyad => dyad.captureClarified)} />
+        <StatCard label="Fallback interpretation" value={sum(dyad => dyad.captureFallback)} />
+        <StatCard label="Corrected before save" value={sum(dyad => dyad.captureCorrected)} />
+      </div>
+      <h3>Independence</h3>
+      <div className="stats-grid">
+        <StatCard label="Participant-created plans" value={mciPlans} />
+        <StatCard label="CP-created plans" value={cpPlans} />
+        <StatCard label="Participant self-capture" value={`${mciPlans + cpPlans > 0 ? Math.round((mciPlans / (mciPlans + cpPlans)) * 100) : 0}%`} />
+        <StatCard label="Participant completions" value={sum(dyad => dyad.mciCompletions)} />
+      </div>
+      <h3>Nudge follow-through and burden</h3>
+      <div className="stats-grid">
+        <StatCard label="Nudges sent" value={nudges} />
+        <StatCard label="Followed by activity within 2 hours" value={nudgeResponses} />
+        <StatCard label="2-hour follow-through" value={`${nudges > 0 ? Math.round((nudgeResponses / nudges) * 100) : 0}%`} note="Association only; it does not prove the nudge caused the activity." />
+        <StatCard label="Push notifications" value={sum(dyad => dyad.pushSent)} />
       </div>
     </section>
   )
 }
 
-function SmsPanel({ data }: { data: AnalyticsData }) {
+function SmsPanel({ dyads }: { dyads: Dyad[] }) {
+  const sum = (pick: (dyad: Dyad) => number) => dyads.reduce((total, dyad) => total + pick(dyad), 0)
+  const prompts = sum(dyad => dyad.smsPromptSent)
+  const answered = sum(dyad => dyad.smsPromptAnswered)
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -452,17 +490,21 @@ function SmsPanel({ data }: { data: AnalyticsData }) {
         <h2>Prompts, replies, and parsing</h2>
       </div>
       <div className="stats-grid">
-        <StatCard label="Sent" value={data.sms.sent} />
-        <StatCard label="Delivered" value={data.sms.delivered} />
-        <StatCard label="Replies" value={data.sms.replied} />
-        <StatCard label="Parsed replies" value={data.sms.parsed} />
+        <StatCard label="Outbound" value={sum(dyad => dyad.smsSent)} />
+        <StatCard label="Carrier delivered" value={sum(dyad => dyad.smsDelivered)} />
+        <StatCard label="Replies received" value={sum(dyad => dyad.smsReplied)} />
+        <StatCard label="Prompt response rate" value={`${prompts > 0 ? Math.round((answered / prompts) * 100) : 0}%`} note={`${answered} of ${prompts} prompts answered within 24 hours`} />
+        <StatCard label="Pending delivery" value={sum(dyad => dyad.smsPending)} />
+        <StatCard label="Failed" value={sum(dyad => dyad.smsFailed)} />
+        <StatCard label="Reply delivery unconfirmed" value={sum(dyad => dyad.smsDeliveryUnconfirmed)} note="TwiML replies do not have a carrier callback." />
+        <StatCard label="Parse events" value={sum(dyad => dyad.smsParsed)} />
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Dyad</th><th>Sent</th><th>Delivered</th><th>Replies</th><th>Median reply</th></tr></thead>
+          <thead><tr><th>Household</th><th>Outbound</th><th>Delivered</th><th>Replies</th><th>Prompts answered</th><th>Median reply</th></tr></thead>
           <tbody>
-            {data.perDyad.map(dyad => (
-              <tr key={dyad.id}><td>{dyad.displayLabel}</td><td>{dyad.smsSent}</td><td>{dyad.smsDelivered}</td><td>{dyad.smsReplied}</td><td>{dyad.smsMedianLatency ?? '-'} min</td></tr>
+            {dyads.map(dyad => (
+              <tr key={dyad.id}><td>{dyad.displayLabel}</td><td>{dyad.smsSent}</td><td>{dyad.smsDelivered}</td><td>{dyad.smsReplied}</td><td>{dyad.smsPromptAnswered} / {dyad.smsPromptSent}</td><td>{dyad.smsMedianLatency ?? '-'} min</td></tr>
             ))}
           </tbody>
         </table>
@@ -501,7 +543,42 @@ function ReadinessPanel({ data }: { data: AnalyticsData }) {
   )
 }
 
-function ExportsPanel({ data }: { data: AnalyticsData }) {
+function DataHealthPanel({ data }: { data: AnalyticsData }) {
+  const healthy = data.dataHealth.status === 'healthy'
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <p>Measurement integrity</p>
+        <h2>{healthy ? 'All data sources are available' : 'Some data sources need attention'}</h2>
+      </div>
+      <div className={`privacy-note ${healthy ? '' : 'data-warning'}`}>
+        {data.dataHealth.pagination.complete ? 'Pagination is complete.' : 'One or more datasets could not be loaded completely.'} Missing or inaccessible datasets are reported here and are never silently presented as zero.
+      </div>
+      {data.dataHealth.issues.length > 0 ? (
+        <div className="readiness-list">
+          {data.dataHealth.issues.map(issue => (
+            <article className="watch" key={`${issue.dataset}:${issue.code}`}>
+              <strong>{issue.dataset}</strong>
+              <span>{issue.code}: {issue.message}</span>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Dataset</th><th>Rows in window</th><th>Latest record</th></tr></thead>
+          <tbody>
+            {data.dataHealth.datasets.map(dataset => (
+              <tr key={dataset.name}><td>{dataset.name}</td><td>{dataset.rows}</td><td>{formatTime(dataset.latestAt)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
+function ExportsPanel({ data, selectedHousehold }: { data: AnalyticsData; selectedHousehold: string }) {
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -509,7 +586,7 @@ function ExportsPanel({ data }: { data: AnalyticsData }) {
         <h2>CSV files for study review</h2>
       </div>
       <div className="export-grid">
-        {EXPORTS.map(([dataset, label]) => <a key={dataset} href={exportHref(dataset, data)}>{label}</a>)}
+        {EXPORTS.map(([dataset, label]) => <a key={dataset} href={exportHref(dataset, data, selectedHousehold)}>{label}</a>)}
       </div>
     </section>
   )
@@ -540,6 +617,12 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
         <h1>Pilot monitoring</h1>
         <span>Generated {formatTime(data.generatedAt)} · Checking for new signups every minute</span>
       </header>
+      {data.dataHealth.status !== 'healthy' ? (
+        <section className="silent-alert" role="alert">
+          <h2>Dashboard data needs attention</h2>
+          <p>{data.dataHealth.issues.length} data source issue{data.dataHealth.issues.length === 1 ? '' : 's'} detected. Values from affected sources are marked in Data health and must not be interpreted as zero.</p>
+        </section>
+      ) : null}
       <NewHouseholdAlert dyads={data.perDyad} />
       <SilentDyadAlert dyads={dyads} />
       <ScopeBar data={data} selectedCohort={selectedCohort} setSelectedCohort={setSelectedCohort} selectedMode={selectedMode} setSelectedMode={setSelectedMode} selectedHousehold={selectedHousehold} setSelectedHousehold={setSelectedHousehold} />
@@ -550,10 +633,11 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
       {tab === 'health' ? <DyadHealthPanel dyads={dyads} /> : null}
       {tab === 'outcomes' ? <OutcomeScoresPanel rows={outcomeRows} /> : null}
       {tab === 'arc' ? <StudyArcPanel data={data} dyads={dyads} /> : null}
-      {tab === 'behavior' ? <BehaviorPanel data={data} /> : null}
-      {tab === 'sms' ? <SmsPanel data={data} /> : null}
+      {tab === 'behavior' ? <BehaviorPanel dyads={dyads} /> : null}
+      {tab === 'sms' ? <SmsPanel dyads={dyads} /> : null}
+      {tab === 'data' ? <DataHealthPanel data={data} /> : null}
       {tab === 'readiness' ? <ReadinessPanel data={data} /> : null}
-      {tab === 'exports' ? <ExportsPanel data={data} /> : null}
+      {tab === 'exports' ? <ExportsPanel data={data} selectedHousehold={selectedHousehold} /> : null}
       <style jsx global>{`
         .admin-shell { min-height: 100vh; background: #f8f4ea; color: #27211a; padding: 32px; font-family: var(--font-sans, system-ui, sans-serif); }
         .admin-hero, .panel, .scope-card, .silent-alert, .signup-alert { max-width: 1180px; margin: 0 auto 22px; }
@@ -561,7 +645,7 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
         .admin-hero h1 { font-family: var(--font-serif, Georgia, serif); font-size: clamp(2.3rem, 5vw, 4.4rem); line-height: 1; margin: 8px 0; }
         .admin-hero span { color: #817669; }
         .scope-card, .panel, .silent-alert { background: #fffdfa; border: 1px solid #ead8b6; border-radius: 24px; box-shadow: 0 14px 36px rgba(44, 35, 24, .07); padding: 24px; }
-        .scope-card { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+        .scope-card { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
         label { display: grid; gap: 7px; color: #6f6558; font-weight: 700; }
         select { min-height: 48px; border: 1px solid #ddceb8; border-radius: 12px; background: white; color: #27211a; padding: 0 14px; font: inherit; }
         .admin-tabs { max-width: 1180px; margin: 0 auto 22px; display: flex; gap: 10px; flex-wrap: wrap; }
