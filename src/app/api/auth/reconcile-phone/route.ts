@@ -1,10 +1,14 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient, createServiceClient } from '@/lib/supabase-server'
 import { normalizePhone } from '@/lib/sms'
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const authorization = request.headers.get('authorization')
+  const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice(7).trim() : null
+  const { data: { user } } = bearerToken
+    ? await supabase.auth.getUser(bearerToken)
+    : await supabase.auth.getUser()
 
   if (!user?.phone) {
     return NextResponse.json({ error: 'A verified phone session is required.' }, { status: 401 })

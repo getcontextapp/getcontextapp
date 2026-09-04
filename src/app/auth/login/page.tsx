@@ -85,14 +85,21 @@ export default function LoginPage() {
 
     const token = code.replace(/\D/g, '')
     if (deliveryMethod === 'phone') {
-      const { error } = await supabase.auth.verifyOtp({
+      const { data, error } = await supabase.auth.verifyOtp({
         phone: destination,
         token,
         type: 'sms',
       })
 
       if (!error) {
-        const response = await fetch('/api/auth/reconcile-phone', { method: 'POST' })
+        // Send the freshly verified session explicitly. Some mobile browsers do
+        // not make the new auth cookie visible to the immediately following
+        // request, even though Supabase has already accepted the OTP.
+        const accessToken = data.session?.access_token
+        const response = await fetch('/api/auth/reconcile-phone', {
+          method: 'POST',
+          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+        })
         const result = await response.json().catch(() => ({}))
 
         if (!response.ok) {
