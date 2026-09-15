@@ -13,6 +13,10 @@ function dashboardSource(value: string | string[] | undefined) {
   return source === 'sms_link' || source === 'home_screen' ? source : 'direct'
 }
 
+function firstParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null
+}
+
 export default async function MCIUserPage({
   searchParams,
 }: {
@@ -94,6 +98,8 @@ export default async function MCIUserPage({
       household={household ?? null}
       calendar={calendar}
       dashboardSource={dashboardSource(params?.source)}
+      initialNotificationTaskId={firstParam(params?.notificationTask)}
+      initialNotificationEventId={firstParam(params?.notificationEvent)}
     />
   )
 }

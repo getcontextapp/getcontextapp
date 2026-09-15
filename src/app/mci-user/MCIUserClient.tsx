@@ -29,6 +29,8 @@ interface Props {
   household: { join_code: string; name: string } | null
   calendar: CalendarDashboardData
   dashboardSource: 'sms_link' | 'direct' | 'home_screen'
+  initialNotificationTaskId: string | null
+  initialNotificationEventId: string | null
 }
 
 const PERIOD_ORDER: Record<string, number> = {
@@ -61,7 +63,7 @@ const VISIBLE_PLAN_STATUSES = new Set(['planned', 'not_now', 'confirmed'])
 type PlanAction = 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'remove_today' | 'stop_repeating'
 type TaskRemovalAction = 'remove_today' | 'stop_repeating' | 'delete'
 
-export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource }: Props) {
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource, initialNotificationTaskId, initialNotificationEventId }: Props) {
   const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
@@ -91,6 +93,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [recoveryFeedbackSaving, setRecoveryFeedbackSaving] = useState(false)
   const [recoveryCorrection, setRecoveryCorrection] = useState('')
   const [recoveryCorrectionFor, setRecoveryCorrectionFor] = useState<string | null>(null)
+  const [notificationTaskId, setNotificationTaskId] = useState<string | null>(initialNotificationTaskId)
+  const [notificationEventId, setNotificationEventId] = useState<string | null>(initialNotificationEventId)
+  const [notificationActionSaving, setNotificationActionSaving] = useState(false)
+  const [notificationActionError, setNotificationActionError] = useState<string | null>(null)
 
   const localHour = Number(clockNow.toLocaleString('en-US', {
     timeZone: profile.timezone,
@@ -365,9 +371,13 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     }, 50)
   }
 
-  const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: PlanAction) => {
+  const handlePlanAction = useCallback(async (
+    plannedActivity: PlannedActivity,
+    action: PlanAction,
+    notification?: { source: 'notification_action'; eventId: string | null },
+  ) => {
     if (action === 'confirm') {
-      if (confirmingPlanIds.includes(plannedActivity.id)) return
+      if (confirmingPlanIds.includes(plannedActivity.id)) return false
       setConfirmingPlanIds(current => [...current, plannedActivity.id])
     }
 
@@ -376,16 +386,21 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       res = await fetch('/api/planned-activities', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: plannedActivity.id, action }),
+        body: JSON.stringify({
+          id: plannedActivity.id,
+          action,
+          source: notification?.source,
+          notification_event_id: notification?.eventId ?? null,
+        }),
       })
     } catch {
       setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
-      return
+      return false
     }
 
     if (!res.ok) {
       setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
-      return
+      return false
     }
 
     const result: {
@@ -420,13 +435,48 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     if (!result.activity) {
       setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
       scheduleContextCardRefresh()
-      return
+      return true
     }
 
     setActivities(prev => prev.some(activity => activity.id === result.activity!.id) ? prev : [result.activity!, ...prev])
     setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
     scheduleContextCardRefresh()
+    return true
   }, [confirmingPlanIds, scheduleContextCardRefresh])
+
+  useEffect(() => {
+    if (!notificationTaskId) return
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [notificationTaskId])
+
+  const notificationTask = notificationTaskId
+    ? plannedActivities.find(item => item.id === notificationTaskId) ?? null
+    : null
+
+  async function handleNotificationTaskAction(action: 'confirm' | 'not_now') {
+    if (!notificationTask || notificationActionSaving) return
+    setNotificationActionSaving(true)
+    setNotificationActionError(null)
+    const success = await handlePlanAction(notificationTask, action, {
+      source: 'notification_action',
+      eventId: notificationEventId,
+    })
+    if (!success) {
+      setNotificationActionError('That did not save. Please try again.')
+      setNotificationActionSaving(false)
+      return
+    }
+    if (notificationEventId) {
+      await fetch('/api/notifications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_read', eventId: notificationEventId }),
+      }).catch(() => undefined)
+    }
+    setNotificationActionSaving(false)
+    setNotificationTaskId(null)
+    setNotificationEventId(null)
+  }
 
   async function handleMoveConfirmed() {
     if (!moveCandidate || !moveDate) return
@@ -1107,6 +1157,36 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             {moveError && <p className="mt-3 text-sm font-medium text-terracotta-700">{moveError}</p>}
             <button onClick={handleMoveConfirmed} className="mt-5 min-h-12 w-full rounded-xl bg-warm-700 text-base font-medium text-cream-50">Move task</button>
             <button onClick={() => { setMoveCandidate(null); setMoveError(null) }} className="mt-2 min-h-11 w-full text-sm font-medium text-warm-500">Cancel</button>
+          </div>
+        </div>
+      )}
+      {notificationTaskId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-warm-900/35 px-5" role="dialog" aria-modal="true" aria-labelledby="notification-task-title">
+          <div className="w-full max-w-sm rounded-3xl border border-cream-200 bg-white p-6 shadow-float">
+            {notificationTask ? (
+              <>
+                <p className="text-sm font-semibold uppercase tracking-wide text-sage-700">Gentle reminder</p>
+                <h2 id="notification-task-title" className="mt-2 font-serif text-2xl font-semibold text-warm-900">
+                  {notificationTask.note || notificationTask.label}
+                </h2>
+                <p className="mt-2 text-base leading-6 text-warm-600">Were you able to do this?</p>
+                {notificationActionError && <p className="mt-3 rounded-xl bg-terracotta-50 p-3 text-sm font-medium text-terracotta-700">{notificationActionError}</p>}
+                <button disabled={notificationActionSaving} onClick={() => handleNotificationTaskAction('confirm')}
+                  className="mt-5 min-h-14 w-full rounded-2xl bg-warm-800 text-lg font-semibold text-white disabled:opacity-60">
+                  {notificationActionSaving ? 'Saving…' : 'Yes, done'}
+                </button>
+                <button disabled={notificationActionSaving} onClick={() => handleNotificationTaskAction('not_now')}
+                  className="mt-3 min-h-14 w-full rounded-2xl border-2 border-warm-200 bg-white text-lg font-semibold text-warm-700 disabled:opacity-60">
+                  Later
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 id="notification-task-title" className="font-serif text-xl font-semibold text-warm-900">This reminder is no longer active.</h2>
+                <p className="mt-2 text-base leading-6 text-warm-600">It may already be completed or moved.</p>
+                <button onClick={() => setNotificationTaskId(null)} className="mt-5 min-h-12 w-full rounded-xl bg-warm-800 text-base font-semibold text-white">Okay</button>
+              </>
+            )}
           </div>
         </div>
       )}
