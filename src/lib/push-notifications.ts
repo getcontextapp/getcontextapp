@@ -17,6 +17,11 @@ export type PushNotificationInput = {
   metadata?: Record<string, unknown>
 }
 
+export function plannedActivityIdFromMetadata(metadata?: Record<string, unknown>) {
+  const value = metadata?.planned_activity_id
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
 export function pushConfiguration() {
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim() ?? ''
   const privateKey = process.env.VAPID_PRIVATE_KEY?.trim() ?? ''
@@ -92,6 +97,7 @@ export async function sendPushNotification(supabase: SupabaseClient, input: Push
     url: input.url,
     icon: '/icon-192.png',
     badge: '/icon-192.png',
+    plannedActivityId: plannedActivityIdFromMetadata(input.metadata),
   })
   let sent = 0
   let failed = 0

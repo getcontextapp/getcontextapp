@@ -12,17 +12,12 @@ create table if not exists timeline_events (
   confidence    text not null check (confidence in ('high', 'low')),
   created_at    timestamptz not null default now()
 );
-
 create index if not exists timeline_events_household_created
   on timeline_events (household_id, created_at desc);
-
 create index if not exists timeline_events_profile_created
   on timeline_events (profile_id, created_at desc);
-
 alter table timeline_events enable row level security;
-
 drop policy if exists "household timeline events" on timeline_events;
-
 create policy "household timeline events"
   on timeline_events for all
   using (
@@ -35,6 +30,5 @@ create policy "household timeline events"
       select household_id from profiles where user_id = auth.uid()
     )
   );
-
 grant all on timeline_events to authenticated;
 grant all on timeline_events to service_role;

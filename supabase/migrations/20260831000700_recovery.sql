@@ -17,18 +17,14 @@ create table if not exists recovery_sessions (
                        check (status in ('active', 'completed', 'abandoned')),
   created_at           timestamptz not null default now()
 );
-
 create index if not exists recovery_sessions_user_date
   on recovery_sessions (user_id, session_date);
-
 alter table recovery_sessions enable row level security;
-
 drop policy if exists "users own recovery sessions" on recovery_sessions;
 create policy "users own recovery sessions"
   on recovery_sessions for all
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
-
 -- 2. recovery_session_moments
 create table if not exists recovery_session_moments (
   id             uuid primary key default gen_random_uuid(),
@@ -47,27 +43,20 @@ create table if not exists recovery_session_moments (
   created_at     timestamptz not null default now(),
   updated_at     timestamptz not null default now()
 );
-
 alter table recovery_session_moments
   drop constraint if exists recovery_session_moments_user_id_session_date_moment_key_key;
-
 create unique index if not exists recovery_session_moments_session_moment_key
   on recovery_session_moments (session_id, moment_key);
-
 create index if not exists recovery_session_moments_user_date
   on recovery_session_moments (user_id, session_date);
-
 create index if not exists recovery_session_moments_session
   on recovery_session_moments (session_id);
-
 alter table recovery_session_moments enable row level security;
-
 drop policy if exists "users own recovery session moments" on recovery_session_moments;
 create policy "users own recovery session moments"
   on recovery_session_moments for all
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
-
 -- 3. Verify
 select 'recovery_sessions' as tbl, count(*) from recovery_sessions
 union all

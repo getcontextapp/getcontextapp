@@ -15,17 +15,12 @@ create table if not exists public.sms_messages (
   metadata      jsonb not null default '{}'::jsonb,
   created_at    timestamptz not null default now()
 );
-
 create index if not exists sms_messages_profile_time
   on public.sms_messages (profile_id, created_at desc);
-
 create index if not exists sms_messages_household_time
   on public.sms_messages (household_id, created_at desc);
-
 alter table public.sms_messages enable row level security;
-
 drop policy if exists "household sms messages" on public.sms_messages;
-
 create policy "household sms messages"
   on public.sms_messages for select
   using (
@@ -36,11 +31,9 @@ create policy "household sms messages"
       select id from public.profiles where user_id = auth.uid()
     )
   );
-
 grant select on public.sms_messages to authenticated;
 grant insert on public.sms_messages to authenticated;
 grant all on public.sms_messages to service_role;
-
 create or replace function public.find_sms_profile_by_phone(incoming_phone text)
 returns setof public.profiles
 language sql
@@ -78,7 +71,6 @@ as $$
   where not exists (select 1 from direct_profile)
   limit 1;
 $$;
-
 grant execute on function public.find_sms_profile_by_phone(text) to anon;
 grant execute on function public.find_sms_profile_by_phone(text) to authenticated;
 grant execute on function public.find_sms_profile_by_phone(text) to service_role;

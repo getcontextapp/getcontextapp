@@ -1,11 +1,12 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { ACTIVITY_TILES } from '@/types'
-import type { Profile, ActivityLog, InputCapture, PlannedActivity, TimelineEvent, Reflection } from '@/types'
+import type { Profile, ActivityLog, PlannedActivity, TimelineEvent, Reflection } from '@/types'
 import HouseholdCode from '@/components/mci/HouseholdCode'
 import ReminderSettings from '@/components/mci/ReminderSettings'
 import NaturalLanguagePlanComposer from '@/components/mci/NaturalLanguagePlanComposer'
@@ -24,12 +25,13 @@ interface Props {
   initialActivities: ActivityLog[]
   initialPlannedActivities: PlannedActivity[]
   initialTimelineEvents: TimelineEvent[]
-  initialInputCaptures: InputCapture[]
   initialReflection: Reflection | null
   carePartner: Profile | null
   household: { join_code: string; name: string } | null
   calendar: CalendarDashboardData
   dashboardSource: 'sms_link' | 'direct' | 'home_screen'
+  initialNotificationTaskId: string | null
+  initialNotificationEventId: string | null
 }
 
 const PERIOD_ORDER: Record<string, number> = {
@@ -62,14 +64,12 @@ const VISIBLE_PLAN_STATUSES = new Set(['planned', 'not_now', 'confirmed'])
 type PlanAction = 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'remove_today' | 'stop_repeating'
 type TaskRemovalAction = 'remove_today' | 'stop_repeating' | 'delete'
 
-export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialInputCaptures, initialReflection, carePartner, household, calendar, dashboardSource }: Props) {
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource, initialNotificationTaskId, initialNotificationEventId }: Props) {
   const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
   const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>(initialTimelineEvents)
-  const [inputCaptures, setInputCaptures] = useState<InputCapture[]>(initialInputCaptures)
-  const [viewCapture, setViewCapture] = useState<InputCapture | null>(null)
   const [calendarConnection, setCalendarConnection] = useState(calendar.connection)
   const [calendarEvents, setCalendarEvents] = useState(calendar.events)
   const [showSettings, setShowSettings] = useState(false)
@@ -94,6 +94,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [recoveryFeedbackSaving, setRecoveryFeedbackSaving] = useState(false)
   const [recoveryCorrection, setRecoveryCorrection] = useState('')
   const [recoveryCorrectionFor, setRecoveryCorrectionFor] = useState<string | null>(null)
+  const [notificationTaskId, setNotificationTaskId] = useState<string | null>(initialNotificationTaskId)
+  const [notificationEventId, setNotificationEventId] = useState<string | null>(initialNotificationEventId)
+  const [notificationActionSaving, setNotificationActionSaving] = useState(false)
+  const [notificationActionError, setNotificationActionError] = useState<string | null>(null)
 
   const localHour = Number(clockNow.toLocaleString('en-US', {
     timeZone: profile.timezone,
@@ -129,7 +133,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   const refreshDashboardData = useCallback(async () => {
     const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
-    const [activityResult, plannedResult, timelineResult, captureResult] = await Promise.all([
+    const [activityResult, plannedResult, timelineResult] = await Promise.all([
       supabase
         .from('activity_logs')
         .select('*')
@@ -153,20 +157,12 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         .lt('created_at', todayRange.end)
         .order('created_at', { ascending: false })
         .limit(20),
-      supabase
-        .from('input_captures')
-        .select('*')
-        .eq('profile_id', profile.id)
-        .neq('status', 'cancelled')
-        .order('created_at', { ascending: false })
-        .limit(10),
     ])
 
     if (activityResult.data) setActivities(activityResult.data as ActivityLog[])
     if (plannedResult.data) setPlannedActivities(plannedResult.data as PlannedActivity[])
     if (timelineResult.data) setTimelineEvents(timelineResult.data as TimelineEvent[])
-    if (captureResult.data) setInputCaptures(captureResult.data as InputCapture[])
-  }, [profile.household_id, profile.id, profile.timezone, supabase])
+  }, [profile.household_id, profile.timezone, supabase])
 
   // Subscribe to realtime activity updates
   useEffect(() => {
@@ -291,12 +287,6 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setTimelineEvents(prev => prev.some(item => item.id === event.id) ? prev : [event, ...prev])
   }, [])
 
-  const handleInputCaptured = useCallback((capture: InputCapture) => {
-    setInputCaptures(current => capture.status === 'cancelled'
-      ? current.filter(item => item.id !== capture.id)
-      : [capture, ...current.filter(item => item.id !== capture.id)].slice(0, 10))
-  }, [])
-
   function openRecovery() {
     setRecoveryOpen(true)
     setRecoveryMoreOpen(false)
@@ -382,9 +372,13 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     }, 50)
   }
 
-  const handlePlanAction = useCallback(async (plannedActivity: PlannedActivity, action: PlanAction) => {
+  const handlePlanAction = useCallback(async (
+    plannedActivity: PlannedActivity,
+    action: PlanAction,
+    notification?: { source: 'notification_action'; eventId: string | null },
+  ) => {
     if (action === 'confirm') {
-      if (confirmingPlanIds.includes(plannedActivity.id)) return
+      if (confirmingPlanIds.includes(plannedActivity.id)) return false
       setConfirmingPlanIds(current => [...current, plannedActivity.id])
     }
 
@@ -393,16 +387,21 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
       res = await fetch('/api/planned-activities', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: plannedActivity.id, action }),
+        body: JSON.stringify({
+          id: plannedActivity.id,
+          action,
+          source: notification?.source,
+          notification_event_id: notification?.eventId ?? null,
+        }),
       })
     } catch {
       setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
-      return
+      return false
     }
 
     if (!res.ok) {
       setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
-      return
+      return false
     }
 
     const result: {
@@ -437,13 +436,48 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     if (!result.activity) {
       setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
       scheduleContextCardRefresh()
-      return
+      return true
     }
 
     setActivities(prev => prev.some(activity => activity.id === result.activity!.id) ? prev : [result.activity!, ...prev])
     setConfirmingPlanIds(current => current.filter(id => id !== plannedActivity.id))
     scheduleContextCardRefresh()
+    return true
   }, [confirmingPlanIds, scheduleContextCardRefresh])
+
+  useEffect(() => {
+    if (!notificationTaskId) return
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [notificationTaskId])
+
+  const notificationTask = notificationTaskId
+    ? plannedActivities.find(item => item.id === notificationTaskId) ?? null
+    : null
+
+  async function handleNotificationTaskAction(action: 'confirm' | 'not_now') {
+    if (!notificationTask || notificationActionSaving) return
+    setNotificationActionSaving(true)
+    setNotificationActionError(null)
+    const success = await handlePlanAction(notificationTask, action, {
+      source: 'notification_action',
+      eventId: notificationEventId,
+    })
+    if (!success) {
+      setNotificationActionError('That did not save. Please try again.')
+      setNotificationActionSaving(false)
+      return
+    }
+    if (notificationEventId) {
+      await fetch('/api/notifications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_read', eventId: notificationEventId }),
+      }).catch(() => undefined)
+    }
+    setNotificationActionSaving(false)
+    setNotificationTaskId(null)
+    setNotificationEventId(null)
+  }
 
   async function handleMoveConfirmed() {
     if (!moveCandidate || !moveDate) return
@@ -500,15 +534,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   )
   const openPlannedCount = sortedPlannedActivities.filter(a => a.status === 'planned' || a.status === 'not_now').length
   const recentTimeline = timelineEvents.find(event => event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply')
-  const recentInputCapture = inputCaptures[0] ?? null
-  const recentActivity = recentInputCapture?.raw_text
-    ? recentInputCapture.raw_text
-    : recentTimeline?.text
+  const recentActivity = recentTimeline?.text
     ? recentTimeline.text
     : displayActivities[0]?.note?.trim() || displayActivities[0]?.label || 'No recent note yet'
-  const recentActivityTime = recentInputCapture
-    ? recentInputCapture.status === 'confirmed' ? 'added' : 'saved'
-    : recentTimeline
+  const recentActivityTime = recentTimeline
     ? (recentTimeline.type === 'doing_now' ? 'now' : 'earlier')
     : displayActivities[0]
     ? 'earlier'
@@ -660,6 +689,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             </div>
             <div className="flex items-center gap-2">
               <NotificationUpdates />
+              <Link
+                href="/mci-user/calendar"
+                className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
+                title="Calendar"
+                aria-label="Open calendar"
+              >
+                📅
+              </Link>
               <button
                 onClick={() => setShowHousehold(true)}
                 className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
@@ -691,20 +728,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           plannedFor={todayKey}
           onSaved={handleNaturalPlansSaved}
           onTimelineSaved={handleTimelineSaved}
-          onCaptured={handleInputCaptured}
           onRecallRequested={openRecovery}
         />
 
         <div className="rounded-[20px] border-2 border-cream-300 bg-white px-5 shadow-card">
           <div className="flex items-center gap-3 py-4">
-            <span className="w-8 h-8 shrink-0 rounded-full bg-sage-100 text-sage-600 flex items-center justify-center font-semibold" aria-hidden="true">{recentInputCapture && recentInputCapture.status !== 'confirmed' ? '✎' : '✓'}</span>
-            <div className="min-w-0 flex-1">
-              {recentInputCapture && <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-sage-600">Just captured</p>}
-              <p className="line-clamp-3 text-base font-semibold leading-5 text-warm-900 break-words">{recentActivity}</p>
-            </div>
-            {recentInputCapture ? (
-              <button type="button" onClick={() => setViewCapture(recentInputCapture)} className="min-h-11 rounded-xl px-3 text-sm font-semibold text-sage-600">View</button>
-            ) : recentActivityTime ? <span className="text-sm font-semibold text-warm-400">{recentActivityTime}</span> : null}
+            <span className="w-8 h-8 shrink-0 rounded-full bg-sage-100 text-sage-600 flex items-center justify-center font-semibold" aria-hidden="true">✓</span>
+            <p className="min-w-0 flex-1 text-base font-semibold leading-5 text-warm-900 break-words">{recentActivity}</p>
+            {recentActivityTime && <span className="text-sm font-semibold text-warm-400">{recentActivityTime}</span>}
           </div>
           <div className="flex items-center gap-3 border-t border-cream-200 py-4">
             <span className="w-8 h-8 shrink-0 rounded-full bg-cream-200 text-terracotta-600 flex items-center justify-center font-semibold" aria-hidden="true">→</span>
@@ -1063,26 +1094,6 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         />
       )}
 
-      {viewCapture && (
-        <div className="fixed inset-0 z-50 flex items-end bg-warm-900/35" role="dialog" aria-modal="true" aria-labelledby="captured-words-title">
-          <div className="mx-auto w-full max-w-lg rounded-t-3xl bg-cream-50 px-5 pb-8 pt-3 shadow-float safe-bottom">
-            <div className="mx-auto mb-4 h-1 w-10 rounded-pill bg-warm-300/40" />
-            <h2 id="captured-words-title" className="font-serif text-xl font-semibold text-warm-900">Your saved words</h2>
-            <p className="mt-1 text-sm text-warm-500">
-              {viewCapture.status === 'confirmed'
-                ? 'Context added the confirmed details.'
-                : 'These words are safe. The suggested details have not been confirmed.'}
-            </p>
-            <div className="mt-5 max-h-[50svh] overflow-y-auto rounded-2xl border border-cream-200 bg-white p-4 text-lg leading-7 text-warm-900">
-              {viewCapture.raw_text}
-            </div>
-            <button type="button" onClick={() => setViewCapture(null)} className="mt-5 min-h-14 w-full rounded-xl bg-warm-700 text-base font-semibold text-cream-50">
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
       {deleteCandidate && (
         <div className="fixed inset-0 z-50 bg-warm-900/35 px-5 flex items-center justify-center">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-float border border-cream-200">
@@ -1155,6 +1166,36 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             {moveError && <p className="mt-3 text-sm font-medium text-terracotta-700">{moveError}</p>}
             <button onClick={handleMoveConfirmed} className="mt-5 min-h-12 w-full rounded-xl bg-warm-700 text-base font-medium text-cream-50">Move task</button>
             <button onClick={() => { setMoveCandidate(null); setMoveError(null) }} className="mt-2 min-h-11 w-full text-sm font-medium text-warm-500">Cancel</button>
+          </div>
+        </div>
+      )}
+      {notificationTaskId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-warm-900/35 px-5" role="dialog" aria-modal="true" aria-labelledby="notification-task-title">
+          <div className="w-full max-w-sm rounded-3xl border border-cream-200 bg-white p-6 shadow-float">
+            {notificationTask ? (
+              <>
+                <p className="text-sm font-semibold uppercase tracking-wide text-sage-700">Gentle reminder</p>
+                <h2 id="notification-task-title" className="mt-2 font-serif text-2xl font-semibold text-warm-900">
+                  {notificationTask.note || notificationTask.label}
+                </h2>
+                <p className="mt-2 text-base leading-6 text-warm-600">Were you able to do this?</p>
+                {notificationActionError && <p className="mt-3 rounded-xl bg-terracotta-50 p-3 text-sm font-medium text-terracotta-700">{notificationActionError}</p>}
+                <button disabled={notificationActionSaving} onClick={() => handleNotificationTaskAction('confirm')}
+                  className="mt-5 min-h-14 w-full rounded-2xl bg-warm-800 text-lg font-semibold text-white disabled:opacity-60">
+                  {notificationActionSaving ? 'Saving…' : 'Yes, done'}
+                </button>
+                <button disabled={notificationActionSaving} onClick={() => handleNotificationTaskAction('not_now')}
+                  className="mt-3 min-h-14 w-full rounded-2xl border-2 border-warm-200 bg-white text-lg font-semibold text-warm-700 disabled:opacity-60">
+                  Later
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 id="notification-task-title" className="font-serif text-xl font-semibold text-warm-900">This reminder is no longer active.</h2>
+                <p className="mt-2 text-base leading-6 text-warm-600">It may already be completed or moved.</p>
+                <button onClick={() => setNotificationTaskId(null)} className="mt-5 min-h-12 w-full rounded-xl bg-warm-800 text-base font-semibold text-white">Okay</button>
+              </>
+            )}
           </div>
         </div>
       )}

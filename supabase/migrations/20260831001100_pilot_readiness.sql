@@ -11,15 +11,11 @@ create table if not exists study_outcomes (
   score integer check (score between 1 and 5),
   recorded_at timestamp with time zone default now()
 );
-
 create unique index if not exists study_outcomes_unique_measure
   on study_outcomes (household_id, profile_id, role, session, measure_key);
-
 create index if not exists study_outcomes_household_idx
   on study_outcomes (household_id, role, measure_key);
-
 alter table study_outcomes enable row level security;
-
 drop policy if exists "Members can view household study outcomes" on study_outcomes;
 create policy "Members can view household study outcomes"
   on study_outcomes
@@ -32,17 +28,14 @@ create policy "Members can view household study outcomes"
         and p.household_id = study_outcomes.household_id
     )
   );
-
 drop policy if exists "Service role can manage study outcomes" on study_outcomes;
 create policy "Service role can manage study outcomes"
   on study_outcomes
   for all
   using (auth.role() = 'service_role')
   with check (auth.role() = 'service_role');
-
 grant select on study_outcomes to authenticated;
 grant all on study_outcomes to service_role;
-
 create table if not exists household_feature_flags (
   id uuid primary key default gen_random_uuid(),
   household_id uuid not null references households(id) on delete cascade,
@@ -52,12 +45,9 @@ create table if not exists household_feature_flags (
   updated_at timestamptz not null default now(),
   unique (household_id, feature_key)
 );
-
 create index if not exists household_feature_flags_household_idx
   on household_feature_flags (household_id, feature_key);
-
 alter table household_feature_flags enable row level security;
-
 drop policy if exists "Members can view household feature flags" on household_feature_flags;
 create policy "Members can view household feature flags"
   on household_feature_flags
@@ -70,17 +60,14 @@ create policy "Members can view household feature flags"
         and p.household_id = household_feature_flags.household_id
     )
   );
-
 drop policy if exists "Service role can manage household feature flags" on household_feature_flags;
 create policy "Service role can manage household feature flags"
   on household_feature_flags
   for all
   using (auth.role() = 'service_role')
   with check (auth.role() = 'service_role');
-
 grant select on household_feature_flags to authenticated;
 grant all on household_feature_flags to service_role;
-
 insert into household_feature_flags (household_id, feature_key, enabled)
 select h.id, feature.feature_key, true
 from households h

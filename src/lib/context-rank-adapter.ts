@@ -12,7 +12,7 @@ import {
   type RecoveryIntent,
   type RecoverySession,
 } from '@/lib/context-rank'
-import type { ActivityLog, CalendarEvent, InputCapture, PlannedActivity, Profile, Reflection, SmsMessage, TimelineEvent } from '@/types'
+import type { ActivityLog, CalendarEvent, PlannedActivity, Profile, Reflection, SmsMessage, TimelineEvent } from '@/types'
 
 type RecoveryMomentRow = {
   id: string
@@ -296,7 +296,7 @@ export async function buildContextRankInput({
   const windowEnd = new Date(Math.max(new Date(todayRange.end).getTime(), queryTime + 60 * 60 * 1000)).toISOString()
   await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
 
-  const [activityResult, taskResult, smsResult, timelineResult, captureResult, reflectionResult, calendarResult, sessionRow] = await Promise.all([
+  const [activityResult, taskResult, smsResult, timelineResult, reflectionResult, calendarResult, sessionRow] = await Promise.all([
     supabase
       .from('activity_logs')
       .select('*')
@@ -329,15 +329,6 @@ export async function buildContextRankInput({
       .order('created_at', { ascending: false })
       .limit(40),
     supabase
-      .from('input_captures')
-      .select('*')
-      .eq('profile_id', profile.id)
-      .gte('created_at', windowStart)
-      .lt('created_at', windowEnd)
-      .neq('status', 'cancelled')
-      .order('created_at', { ascending: false })
-      .limit(30),
-    supabase
       .from('reflections')
       .select('*')
       .eq('user_id', profile.user_id)
@@ -357,9 +348,6 @@ export async function buildContextRankInput({
 
   if (timelineResult.error) {
     console.error('[ContextRank] Timeline evidence unavailable:', timelineResult.error.message)
-  }
-  if (captureResult.error && !isMissingTableError(captureResult.error)) {
-    console.error('[ContextRank] Capture evidence unavailable:', captureResult.error.message)
   }
   if (calendarResult.error && !isMissingTableError(calendarResult.error)) {
     console.error('[ContextRank] Calendar evidence unavailable:', calendarResult.error.message)
@@ -444,23 +432,6 @@ export async function buildContextRankInput({
       time: dateWindow(point, 30 * 60 * 1000, 30 * 60 * 1000),
       provenance: `timeline_events:${event.id}`,
       occurrenceStrength: event.confidence === 'high' ? 0.92 : 0.45,
-    }))
-  }
-
-  const inputCaptures = captureResult.error ? [] : ((captureResult.data ?? []) as InputCapture[])
-  for (const capture of inputCaptures) {
-    const point = Date.parse(capture.created_at)
-    const confirmed = capture.status === 'confirmed'
-    evidence.push(makeEvidence({
-      id: `input_capture:${capture.id}`,
-      userId: profile.user_id,
-      content: capture.raw_text.slice(0, 1_000),
-      rawContent: capture.raw_text,
-      source: confirmed ? 'user_confirmation' : 'ai_parse',
-      state: confirmed ? 'confirmed' : 'parsed',
-      time: dateWindow(point, 30 * 60 * 1000, 30 * 60 * 1000),
-      provenance: `input_captures:${capture.id}`,
-      occurrenceStrength: confirmed ? 0.78 : 0.28,
     }))
   }
 

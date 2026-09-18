@@ -10,15 +10,11 @@ create table if not exists study_outcomes (
   score integer check (score between 1 and 5),
   recorded_at timestamp with time zone default now()
 );
-
 create unique index if not exists study_outcomes_unique_measure
   on study_outcomes (household_id, profile_id, role, session, measure_key);
-
 create index if not exists study_outcomes_household
   on study_outcomes (household_id, role, measure_key);
-
 alter table study_outcomes enable row level security;
-
 drop policy if exists "household study outcomes" on study_outcomes;
 create policy "household study outcomes"
   on study_outcomes for all
@@ -36,23 +32,17 @@ create policy "household study outcomes"
         and p.household_id = study_outcomes.household_id
     )
   );
-
 grant all on study_outcomes to authenticated;
 grant all on study_outcomes to service_role;
-
 alter table sms_messages
   add column if not exists reminder_log_id uuid references reminder_logs(id) on delete set null;
-
 create index if not exists sms_messages_reminder_log
   on sms_messages (reminder_log_id);
-
 alter table planned_activities
   drop constraint if exists planned_activities_status_check;
-
 alter table planned_activities
   add constraint planned_activities_status_check
   check (status in ('planned', 'confirmed', 'not_now', 'skipped', 'abandoned'));
-
 create or replace function abandon_past_planned_activities()
 returns integer
 language plpgsql
@@ -71,11 +61,8 @@ begin
   return updated_count;
 end;
 $$;
-
 grant execute on function abandon_past_planned_activities() to service_role;
-
 create schema if not exists study;
-
 create table if not exists study.cohorts (
   id text primary key,
   label text not null,
@@ -84,7 +71,6 @@ create table if not exists study.cohorts (
   active boolean not null default false,
   created_at timestamp with time zone not null default now()
 );
-
 insert into study.cohorts (id, label, code_prefix, active)
 values
   ('test', 'Internal testers', 'D', false),
@@ -93,10 +79,8 @@ on conflict (id) do update
 set label = excluded.label,
     code_prefix = excluded.code_prefix,
     active = excluded.active;
-
 alter table if exists study.dyads
   add column if not exists cohort text not null default 'test';
-
 do $$
 begin
   if to_regclass('study.dyads') is not null then
@@ -106,14 +90,12 @@ begin
   end if;
 end;
 $$;
-
 create table if not exists study.dyad_labels (
   dyad_id uuid primary key,
   label text not null,
   created_at timestamp with time zone not null default now(),
   updated_at timestamp with time zone not null default now()
 );
-
 create table if not exists study.interview_flag_thresholds (
   key text primary key,
   threshold integer not null,
@@ -122,7 +104,6 @@ create table if not exists study.interview_flag_thresholds (
   active boolean not null default true,
   updated_at timestamp with time zone not null default now()
 );
-
 insert into study.interview_flag_thresholds (key, threshold, question, source_label)
 values
   ('no_context', 2, 'What were you looking for that Context did not have?', 'Query log'),
@@ -142,7 +123,6 @@ set threshold = excluded.threshold,
     question = excluded.question,
     source_label = excluded.source_label,
     updated_at = now();
-
 create or replace view study.v_interview_flags as
 select
   null::uuid as dyad_id,
@@ -153,7 +133,6 @@ select
 from study.interview_flag_thresholds t
 where t.active = true
   and false;
-
 grant usage on schema study to authenticated, service_role;
 grant select on study.cohorts to authenticated, service_role;
 grant all on study.dyad_labels to authenticated, service_role;

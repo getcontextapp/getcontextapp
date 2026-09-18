@@ -5,7 +5,6 @@
 
 -- Enable uuid extension
 create extension if not exists "pgcrypto";
-
 -- ─── Households ──────────────────────────────────────────────────────────────
 create table if not exists households (
   id          uuid primary key default gen_random_uuid(),
@@ -13,7 +12,6 @@ create table if not exists households (
   join_code   char(6) not null unique default upper(substring(md5(random()::text), 1, 6)),
   created_at  timestamptz default now()
 );
-
 -- ─── Profiles ────────────────────────────────────────────────────────────────
 create table if not exists profiles (
   id                     uuid primary key default gen_random_uuid(),
@@ -27,11 +25,9 @@ create table if not exists profiles (
   timezone               text not null default 'America/New_York',
   created_at             timestamptz default now()
 );
-
 create unique index if not exists profiles_phone_e164_unique
   on profiles (phone_e164)
   where phone_e164 is not null;
-
 -- ─── Activity Logs ───────────────────────────────────────────────────────────
 create table if not exists activity_logs (
   id            uuid primary key default gen_random_uuid(),
@@ -43,10 +39,8 @@ create table if not exists activity_logs (
   occurred_at   timestamptz not null default now(),
   created_at    timestamptz default now()
 );
-
 create index if not exists activity_logs_household_time
   on activity_logs (household_id, occurred_at desc);
-
 -- ─── Planned Activities ─────────────────────────────────────────────────────
 create table if not exists planned_activities (
   id                         uuid primary key default gen_random_uuid(),
@@ -68,10 +62,8 @@ create table if not exists planned_activities (
   created_at                 timestamptz default now(),
   updated_at                 timestamptz default now()
 );
-
 create index if not exists planned_activities_household_day
   on planned_activities (household_id, planned_for, status);
-
 -- ─── SMS Messages ───────────────────────────────────────────────────────────
 create table if not exists sms_messages (
   id            uuid primary key default gen_random_uuid(),
@@ -87,16 +79,12 @@ create table if not exists sms_messages (
   metadata      jsonb not null default '{}'::jsonb,
   created_at    timestamptz not null default now()
 );
-
 create index if not exists sms_messages_profile_time
   on sms_messages (profile_id, created_at desc);
-
 create index if not exists sms_messages_household_time
   on sms_messages (household_id, created_at desc);
-
 create index if not exists sms_messages_reminder_log
   on sms_messages (reminder_log_id);
-
 -- ─── Context Cards ───────────────────────────────────────────────────────────
 create table if not exists context_cards (
   id               uuid primary key default gen_random_uuid(),
@@ -109,10 +97,8 @@ create table if not exists context_cards (
   is_active        boolean not null default true,
   created_at       timestamptz default now()
 );
-
 create index if not exists context_cards_household_active
   on context_cards (household_id, is_active, created_at desc);
-
 -- ─── Analytics Events ───────────────────────────────────────────────────────
 create table if not exists analytics_events (
   id            uuid primary key default gen_random_uuid(),
@@ -124,13 +110,10 @@ create table if not exists analytics_events (
   properties    jsonb not null default '{}'::jsonb,
   created_at    timestamptz not null default now()
 );
-
 create index if not exists analytics_events_created_at
   on analytics_events (created_at desc);
-
 create index if not exists analytics_events_household_time
   on analytics_events (household_id, created_at desc);
-
 -- ─── Study Outcomes ──────────────────────────────────────────────────────────
 create table if not exists study_outcomes (
   id uuid primary key default gen_random_uuid(),
@@ -142,13 +125,10 @@ create table if not exists study_outcomes (
   score integer check (score between 1 and 5),
   recorded_at timestamp with time zone default now()
 );
-
 create unique index if not exists study_outcomes_unique_measure
   on study_outcomes (household_id, profile_id, role, session, measure_key);
-
 create index if not exists study_outcomes_household
   on study_outcomes (household_id, role, measure_key);
-
 -- ─── Reminder Logs ───────────────────────────────────────────────────────────
 create table if not exists reminder_logs (
   id            uuid primary key default gen_random_uuid(),
@@ -159,14 +139,11 @@ create table if not exists reminder_logs (
   twilio_sid    text,
   status        text not null default 'sent'
 );
-
 alter table sms_messages
   drop constraint if exists sms_messages_reminder_log_id_fkey;
-
 alter table sms_messages
   add constraint sms_messages_reminder_log_id_fkey
   foreign key (reminder_log_id) references reminder_logs(id) on delete set null;
-
 -- ─── Row Level Security ───────────────────────────────────────────────────────
 alter table profiles       enable row level security;
 alter table households     enable row level security;
@@ -177,12 +154,10 @@ alter table context_cards  enable row level security;
 alter table analytics_events enable row level security;
 alter table reminder_logs  enable row level security;
 alter table study_outcomes enable row level security;
-
 -- Profiles: user sees own profile
 create policy "own profile"
   on profiles for all
   using (auth.uid() = user_id);
-
 -- Households: members see their household
 create policy "household member"
   on households for all
@@ -191,7 +166,6 @@ create policy "household member"
       select household_id from profiles where user_id = auth.uid()
     )
   );
-
 -- Activity logs: household members
 create policy "household activity"
   on activity_logs for all
@@ -200,7 +174,6 @@ create policy "household activity"
       select household_id from profiles where user_id = auth.uid()
     )
   );
-
 -- Planned activities: household members
 create policy "household planned activities"
   on planned_activities for all
@@ -214,7 +187,6 @@ create policy "household planned activities"
       select household_id from profiles where user_id = auth.uid()
     )
   );
-
 -- SMS messages: household members
 create policy "household sms messages"
   on sms_messages for select
@@ -226,7 +198,6 @@ create policy "household sms messages"
       select id from profiles where user_id = auth.uid()
     )
   );
-
 -- Context cards: household members
 create policy "household cards"
   on context_cards for all
@@ -235,12 +206,10 @@ create policy "household cards"
       select household_id from profiles where user_id = auth.uid()
     )
   );
-
 -- Analytics: users can insert their own events; service role can read all
 create policy "insert own analytics events"
   on analytics_events for insert
   with check (auth.uid() = user_id);
-
 -- Reminder logs: household members (read only for non-service)
 create policy "household reminders read"
   on reminder_logs for select
@@ -249,7 +218,6 @@ create policy "household reminders read"
       select household_id from profiles where user_id = auth.uid()
     )
   );
-
 -- Study outcomes: household members
 create policy "household study outcomes"
   on study_outcomes for all
@@ -263,13 +231,11 @@ create policy "household study outcomes"
       select household_id from profiles where user_id = auth.uid()
     )
   );
-
 -- ─── Helper function: get profile for current user ────────────────────────────
 create or replace function get_my_profile()
 returns profiles language sql stable security definer as $$
   select * from profiles where user_id = auth.uid() limit 1;
 $$;
-
 grant all on profiles to authenticated;
 grant all on households to authenticated;
 grant all on activity_logs to authenticated;
@@ -279,7 +245,6 @@ grant all on context_cards to authenticated;
 grant all on analytics_events to authenticated;
 grant all on reminder_logs to authenticated;
 grant all on study_outcomes to authenticated;
-
 grant all on profiles to service_role;
 grant all on households to service_role;
 grant all on activity_logs to service_role;

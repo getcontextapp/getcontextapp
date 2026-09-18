@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Reflection, ReflectionNodes } from '@/types'
 import WebSpeechMicButton from './WebSpeechMicButton'
 
@@ -45,6 +45,7 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
   const [confirmClear, setConfirmClear] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const inputModeRef = useRef<'keyboard' | 'voice'>('keyboard')
 
   async function saveReflection() {
     const rawInput = text.trim()
@@ -58,7 +59,7 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
       const response = await fetch('/api/reflections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ raw_input: rawInput }),
+        body: JSON.stringify({ raw_input: rawInput, input_mode: inputModeRef.current }),
       })
       const result = await response.json().catch(() => ({}))
       if (!response.ok) {
@@ -145,7 +146,7 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
         <div className="mt-4 rounded-[14px] border border-cream-300 bg-white/60 p-3">
           {confirmClear ? (
             <div className="space-y-3">
-              <p className="text-sm font-semibold text-warm-700">Clear today's reflection?</p>
+              <p className="text-sm font-semibold text-warm-700">Clear today’s reflection?</p>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -172,7 +173,7 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
               className="min-h-11 text-sm font-semibold text-terracotta-700 underline underline-offset-4"
               disabled={clearing}
             >
-              Clear today's reflection
+              Clear today’s reflection
             </button>
           )}
         </div>
@@ -199,7 +200,10 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
           <div className="relative">
             <textarea
               value={text}
-              onChange={event => setText(event.target.value)}
+              onChange={event => {
+                inputModeRef.current = 'keyboard'
+                setText(event.target.value)
+              }}
               placeholder="Type or speak anything you want Context to remember..."
               rows={3}
               maxLength={2500}
@@ -207,7 +211,12 @@ export default function DailyReflection({ initialReflection }: { initialReflecti
             />
             <WebSpeechMicButton
               value={text}
-              onChange={setText}
+              onChange={value => {
+                inputModeRef.current = 'voice'
+                setText(value)
+              }}
+              onStart={() => { inputModeRef.current = 'voice' }}
+              surface="reflection"
               onNotice={setNotice}
               className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-full bg-sage-100 text-base"
               activeClassName="bg-terracotta-100"

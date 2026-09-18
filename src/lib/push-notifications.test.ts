@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isAllowedPushEndpoint, shouldDisablePushSubscription } from './push-notifications'
+import {
+  isAllowedPushEndpoint,
+  plannedActivityIdFromMetadata,
+  shouldDisablePushSubscription,
+} from './push-notifications'
 
 test('retires push subscriptions only when the push service says they are gone', () => {
   assert.equal(shouldDisablePushSubscription(404), true)
@@ -16,4 +20,14 @@ test('accepts known browser push services and rejects arbitrary endpoints', () =
   assert.equal(isAllowedPushEndpoint('https://wns2-bl2p.notify.windows.com/w/?token=example'), true)
   assert.equal(isAllowedPushEndpoint('https://example.com/internal-callback'), false)
   assert.equal(isAllowedPushEndpoint('http://localhost:3000/private'), false)
+})
+
+test('uses a planned activity id to make a push actionable', () => {
+  assert.equal(plannedActivityIdFromMetadata({ planned_activity_id: 'task-123' }), 'task-123')
+})
+
+test('keeps notifications without a task non-actionable', () => {
+  assert.equal(plannedActivityIdFromMetadata(), null)
+  assert.equal(plannedActivityIdFromMetadata({ planned_activity_id: 123 }), null)
+  assert.equal(plannedActivityIdFromMetadata({ planned_activity_id: '' }), null)
 })

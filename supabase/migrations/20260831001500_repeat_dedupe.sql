@@ -24,7 +24,6 @@ as $$
     '\s+', ' ', 'g'
   ));
 $$;
-
 create or replace function repeat_task_family_key(item planned_activities)
 returns text
 language sql
@@ -37,7 +36,6 @@ as $$
     normalize_repeat_task_text(coalesce(item.note, item.label))
   );
 $$;
-
 create or replace function skip_duplicate_repeat_occurrences_for_date(target_date date default current_date)
 returns integer
 language plpgsql
@@ -77,7 +75,6 @@ begin
   return updated_count;
 end;
 $$;
-
 create or replace function ensure_repeat_occurrences_for_date(target_date date default current_date)
 returns integer
 language plpgsql
@@ -184,7 +181,6 @@ begin
   return created_count;
 end;
 $$;
-
 grant execute on function normalize_repeat_task_text(text) to service_role;
 grant execute on function repeat_task_family_key(planned_activities) to service_role;
 grant execute on function skip_duplicate_repeat_occurrences_for_date(date) to service_role;

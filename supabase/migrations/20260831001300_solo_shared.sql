@@ -15,7 +15,6 @@ select
 from households h
 on conflict (household_id, feature_key)
 do update set enabled = excluded.enabled, updated_at = now();
-
 -- These two currently enrolled households were confirmed as Solo by the study team.
 insert into household_feature_flags (household_id, feature_key, enabled)
 select id, 'solo_account', true

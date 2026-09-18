@@ -10,13 +10,9 @@ create table if not exists pilot_interest (
   user_agent text,
   created_at timestamp with time zone not null default now()
 );
-
 create index if not exists pilot_interest_created_at_idx
   on pilot_interest (created_at desc);
-
 create index if not exists pilot_interest_email_idx
   on pilot_interest (lower(email));
-
 alter table pilot_interest enable row level security;
-
 grant all on pilot_interest to service_role;

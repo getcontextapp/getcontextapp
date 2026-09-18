@@ -87,14 +87,21 @@ export default function LoginPage() {
 
     const token = code.replace(/\D/g, '')
     if (deliveryMethod === 'phone') {
-      const { error } = await supabase.auth.verifyOtp({
+      const { data, error } = await supabase.auth.verifyOtp({
         phone: destination,
         token,
         type: 'sms',
       })
 
       if (!error) {
-        const response = await fetch('/api/auth/reconcile-phone', { method: 'POST' })
+        // Send the freshly verified session explicitly. Some mobile browsers do
+        // not make the new auth cookie visible to the immediately following
+        // request, even though Supabase has already accepted the OTP.
+        const accessToken = data.session?.access_token
+        const response = await fetch('/api/auth/reconcile-phone', {
+          method: 'POST',
+          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+        })
         const result = await response.json().catch(() => ({}))
 
         if (!response.ok) {
@@ -159,18 +166,18 @@ export default function LoginPage() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ account }),
     })
-    const result = await response.json().catch(() => ({}))
+    const result = await response.json().catch(() => ({})) as { access_token?: string; refresh_token?: string; error?: string }
     if (!response.ok || !result.access_token || !result.refresh_token) {
       setError(result.error || 'The staging demo account could not be opened.')
       setDemoLoading(null)
       return
     }
-    const { error } = await supabase.auth.setSession({
+    const { error: sessionError } = await supabase.auth.setSession({
       access_token: result.access_token,
       refresh_token: result.refresh_token,
     })
-    if (error) {
-      setError(error.message)
+    if (sessionError) {
+      setError(sessionError.message)
       setDemoLoading(null)
       return
     }

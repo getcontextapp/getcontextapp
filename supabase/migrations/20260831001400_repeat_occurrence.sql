@@ -101,7 +101,6 @@ begin
   return created_count;
 end;
 $$;
-
 create or replace function abandon_past_planned_activities()
 returns integer
 language plpgsql
@@ -122,6 +121,5 @@ begin
   return updated_count;
 end;
 $$;
-
 grant execute on function ensure_repeat_occurrences_for_date(date) to service_role;
 grant execute on function abandon_past_planned_activities() to service_role;

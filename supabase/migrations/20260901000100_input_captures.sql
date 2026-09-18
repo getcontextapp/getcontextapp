@@ -14,27 +14,21 @@ create table if not exists public.input_captures (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
 create index if not exists input_captures_profile_created_idx
   on public.input_captures(profile_id, created_at desc);
-
 alter table public.input_captures enable row level security;
-
 drop policy if exists "Participants can read their captures" on public.input_captures;
 create policy "Participants can read their captures"
   on public.input_captures for select
   using (auth.uid() = user_id);
-
 drop policy if exists "Participants can create their captures" on public.input_captures;
 create policy "Participants can create their captures"
   on public.input_captures for insert
   with check (auth.uid() = user_id);
-
 drop policy if exists "Participants can update their captures" on public.input_captures;
 create policy "Participants can update their captures"
   on public.input_captures for update
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
-
 grant select, insert, update on public.input_captures to authenticated;
 grant all on public.input_captures to service_role;

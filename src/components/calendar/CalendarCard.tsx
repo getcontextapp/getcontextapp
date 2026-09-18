@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import Link from 'next/link'
 import { calendarPlanAddedMessage } from '@/lib/calendar-plan'
 import { getLocalDateKey } from '@/lib/dates'
 import type { CalendarConnectionSummary, CalendarEvent, PlannedActivity } from '@/types'
@@ -315,6 +316,14 @@ export default function CalendarCard({
             </div>
           ))}
         </div>
+      )}
+      {role === 'mci_user' && (
+        <Link
+          href="/mci-user/calendar"
+          className="mt-4 flex min-h-[56px] w-full items-center justify-center rounded-xl bg-sage-600 px-4 text-base font-semibold text-white focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+        >
+          Open full calendar
+        </Link>
       )}
       <button
         type="button"

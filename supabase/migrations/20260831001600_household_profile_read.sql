@@ -13,11 +13,8 @@ as $$
   where user_id = auth.uid()
   limit 1
 $$;
-
 grant execute on function public.current_user_household_id() to authenticated;
-
 drop policy if exists "household profiles read" on public.profiles;
-
 create policy "household profiles read"
   on public.profiles
   for select

@@ -15,20 +15,14 @@ create table if not exists sms_messages (
   metadata      jsonb not null default '{}'::jsonb,
   created_at    timestamptz not null default now()
 );
-
 create index if not exists sms_messages_profile_time
   on sms_messages (profile_id, created_at desc);
-
 create index if not exists sms_messages_household_time
   on sms_messages (household_id, created_at desc);
-
 create index if not exists sms_messages_reminder_log
   on sms_messages (reminder_log_id);
-
 alter table sms_messages enable row level security;
-
 drop policy if exists "household sms messages" on sms_messages;
-
 create policy "household sms messages"
   on sms_messages for select
   using (
@@ -39,6 +33,5 @@ create policy "household sms messages"
       select id from profiles where user_id = auth.uid()
     )
   );
-
 grant select on sms_messages to authenticated;
 grant all on sms_messages to service_role;

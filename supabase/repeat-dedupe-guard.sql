@@ -25,16 +25,16 @@ as $$
   ));
 $$;
 
-create or replace function repeat_task_family_key(item planned_activities)
+create or replace function repeat_task_family_key(row planned_activities)
 returns text
 language sql
 stable
 as $$
   select concat_ws(
     '|',
-    coalesce(item.assigned_to::text, item.created_by::text),
-    item.repeat_rule,
-    normalize_repeat_task_text(coalesce(item.note, item.label))
+    coalesce(row.assigned_to::text, row.created_by::text),
+    row.repeat_rule,
+    normalize_repeat_task_text(coalesce(row.note, row.label))
   );
 $$;
 

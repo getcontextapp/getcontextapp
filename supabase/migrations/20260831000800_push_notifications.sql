@@ -2,7 +2,6 @@
 -- Apply once in Supabase before enabling the production UI.
 
 create extension if not exists pgcrypto;
-
 create table if not exists push_subscriptions (
   id uuid primary key default gen_random_uuid(),
   profile_id uuid not null references profiles(id) on delete cascade,
@@ -20,10 +19,8 @@ create table if not exists push_subscriptions (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
 create index if not exists push_subscriptions_profile_idx
   on push_subscriptions(profile_id, enabled);
-
 create table if not exists notification_preferences (
   profile_id uuid primary key references profiles(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -37,7 +34,6 @@ create table if not exists notification_preferences (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
 create table if not exists notification_events (
   id uuid primary key default gen_random_uuid(),
   profile_id uuid not null references profiles(id) on delete cascade,
@@ -55,37 +51,30 @@ create table if not exists notification_events (
   read_at timestamptz,
   created_at timestamptz not null default now()
 );
-
 create index if not exists notification_events_profile_created_idx
   on notification_events(profile_id, created_at desc);
-
 alter table push_subscriptions enable row level security;
 alter table notification_preferences enable row level security;
 alter table notification_events enable row level security;
-
 drop policy if exists "Profiles manage own push subscriptions" on push_subscriptions;
 create policy "Profiles manage own push subscriptions"
   on push_subscriptions for all to authenticated
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
-
 drop policy if exists "Profiles manage own notification preferences" on notification_preferences;
 create policy "Profiles manage own notification preferences"
   on notification_preferences for all to authenticated
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
-
 drop policy if exists "Profiles view own notification events" on notification_events;
 create policy "Profiles view own notification events"
   on notification_events for select to authenticated
   using (user_id = auth.uid());
-
 drop policy if exists "Profiles mark own notification events read" on notification_events;
 create policy "Profiles mark own notification events read"
   on notification_events for update to authenticated
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
-
 grant select, insert, update, delete on push_subscriptions to authenticated;
 grant select, insert, update on notification_preferences to authenticated;
 grant select, update on notification_events to authenticated;

@@ -2,12 +2,12 @@ import crypto from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient } from '@/lib/supabase-server'
 import { getLocalDateKey, getUtcRangeForLocalDateKey } from '@/lib/dates'
+import { calendarPlanTiming } from '@/lib/calendar-plan'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import type { CalendarConnectionSummary, CalendarEvent, Profile } from '@/types'
 
 export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
-export const GOOGLE_TASKS_SCOPE = 'https://www.googleapis.com/auth/tasks.readonly'
-const GOOGLE_OAUTH_SCOPES = [GOOGLE_CALENDAR_SCOPE, GOOGLE_TASKS_SCOPE].join(' ')
+const GOOGLE_OAUTH_SCOPES = GOOGLE_CALENDAR_SCOPE
 const STATE_MAX_AGE_MS = 15 * 60 * 1000
 
 type CalendarState = {
@@ -68,37 +68,15 @@ type GoogleCalendarListResponse = {
   error?: { message?: string }
 }
 
-type GoogleTaskList = {
-  id: string
-  title?: string
-}
-
-type GoogleTaskListResponse = {
-  items?: GoogleTaskList[]
-  error?: { message?: string }
-}
-
-type GoogleTask = {
-  id: string
-  title?: string
-  notes?: string
-  status?: string
-  due?: string
-  updated?: string
-  deleted?: boolean
-  hidden?: boolean
-  webViewLink?: string
-}
-
-type GoogleTasksResponse = {
-  items?: GoogleTask[]
-  error?: { message?: string }
-}
-
 export type CalendarDashboardData = {
   enabled: boolean
   connection: CalendarConnectionSummary | null
   events: CalendarEvent[]
+  linkedPlanIds?: string[]
+}
+
+export type CalendarRangeData = CalendarDashboardData & {
+  linkedPlanIds: string[]
 }
 
 function base64url(value: string | Buffer) {
@@ -208,6 +186,35 @@ function dayWindowForProfile(profile: Profile) {
   }
 }
 
+function calendarSyncWindowForProfile(profile: Profile) {
+  const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  const startDate = new Date(`${todayKey}T12:00:00.000Z`)
+  startDate.setUTCDate(startDate.getUTCDate() - 35)
+  const endDate = new Date(`${todayKey}T12:00:00.000Z`)
+  endDate.setUTCDate(endDate.getUTCDate() + 70)
+  return {
+    start: getUtcRangeForLocalDateKey(startDate.toISOString().slice(0, 10), profile.timezone).start,
+    end: getUtcRangeForLocalDateKey(endDate.toISOString().slice(0, 10), profile.timezone).start,
+  }
+}
+
+async function linkedCalendarPlanIds(supabase: SupabaseClient, householdId: string) {
+  const { data, error } = await supabase
+    .from('analytics_events')
+    .select('properties')
+    .eq('household_id', householdId)
+    .eq('event_name', 'calendar_event_added_to_context')
+    .limit(1000)
+  if (error) {
+    console.error('[Calendar] Could not load calendar links:', error.message)
+    return []
+  }
+  return [...new Set((data ?? []).flatMap(row => {
+    const planId = row.properties?.planned_activity_id
+    return typeof planId === 'string' ? [planId] : []
+  }))]
+}
+
 async function exchangeCodeForTokens(code: string, redirectUri: string) {
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -257,10 +264,6 @@ async function googleAccountEmail(accessToken: string) {
 function tokenExpiry(expiresInSeconds?: number) {
   const seconds = Math.max(60, expiresInSeconds ?? 3600)
   return new Date(Date.now() + seconds * 1000).toISOString()
-}
-
-function hasGoogleScope(scope: string | null | undefined, requiredScope: string) {
-  return (scope ?? '').split(/\s+/).includes(requiredScope)
 }
 
 async function usableGoogleToken(service: SupabaseClient, connectionId: string) {
@@ -370,8 +373,8 @@ function parseGoogleDate(value: { dateTime?: string; date?: string } | undefined
   return null
 }
 
-function providerEventId(source: 'calendar' | 'task', containerId: string, itemId: string) {
-  return `${source}:${base64url(containerId)}:${itemId}`
+function providerEventId(containerId: string, itemId: string) {
+  return `calendar:${base64url(containerId)}:${itemId}`
 }
 
 function isBirthdayCalendar(calendar: GoogleCalendarListEntry) {
@@ -399,7 +402,7 @@ async function googleCalendarEvents(accessToken: string, calendarId: string, win
   url.searchParams.set('timeMax', window.end)
   url.searchParams.set('singleEvents', 'true')
   url.searchParams.set('orderBy', 'startTime')
-  url.searchParams.set('maxResults', '30')
+  url.searchParams.set('maxResults', '250')
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -407,53 +410,6 @@ async function googleCalendarEvents(accessToken: string, calendarId: string, win
   const result = await response.json() as GoogleEventsResponse
   if (!response.ok || result.error) throw new Error(result.error?.message || 'Google calendar sync failed.')
   return result.items ?? []
-}
-
-async function googleTaskLists(accessToken: string) {
-  const response = await fetch('https://tasks.googleapis.com/tasks/v1/users/@me/lists', {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  const result = await response.json() as GoogleTaskListResponse
-  if (!response.ok || result.error) throw new Error(result.error?.message || 'Google task list sync failed.')
-  return (result.items ?? []).filter(list => list.id)
-}
-
-async function googleTasksForList(accessToken: string, taskListId: string, window: { start: string; end: string }) {
-  const url = new URL(`https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(taskListId)}/tasks`)
-  url.searchParams.set('dueMin', window.start)
-  url.searchParams.set('dueMax', window.end)
-  url.searchParams.set('showCompleted', 'false')
-  url.searchParams.set('showDeleted', 'false')
-  url.searchParams.set('showHidden', 'false')
-  url.searchParams.set('maxResults', '30')
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  const result = await response.json() as GoogleTasksResponse
-  if (!response.ok || result.error) throw new Error(result.error?.message || 'Google tasks sync failed.')
-  return result.items ?? []
-}
-
-function parseGoogleTaskDue(task: GoogleTask, ownerProfile: Profile) {
-  if (!task.due) return null
-  const due = new Date(task.due)
-  if (Number.isNaN(due.getTime())) return null
-  const dateKey = task.due.slice(0, 10)
-  const todayKey = getLocalDateKey(new Date(), ownerProfile.timezone)
-
-  // Google Tasks only exposes the due date through the public API, even when
-  // the Calendar app displays a reminder time. Keep tasks as all-day evidence
-  // so Context does not invent a time Google did not provide.
-  if (dateKey === todayKey) return {
-    startsAt: getUtcRangeForLocalDateKey(todayKey, ownerProfile.timezone).start,
-    allDay: true,
-  }
-
-  return {
-    startsAt: `${dateKey}T00:00:00.000Z`,
-    allDay: true,
-  }
 }
 
 async function markMissingCalendarEventsCancelled({
@@ -498,11 +454,57 @@ async function markMissingCalendarEventsCancelled({
   if (updateError) throw new Error(updateError.message)
 }
 
+async function syncCalendarLinkedPlans(
+  service: SupabaseClient,
+  ownerProfile: Profile,
+  events: Array<{ id: string; title: string; starts_at: string; all_day: boolean }>,
+) {
+  if (events.length === 0) return
+  const eventById = new Map(events.map(event => [event.id, event]))
+  const { data: links, error: linkError } = await service
+    .from('analytics_events')
+    .select('properties')
+    .eq('household_id', ownerProfile.household_id)
+    .eq('event_name', 'calendar_event_added_to_context')
+    .limit(500)
+  if (linkError) {
+    console.error('[Calendar] Could not load linked Context plans:', linkError.message)
+    return
+  }
+
+  const linkedPlans = new Map<string, string>()
+  for (const link of links ?? []) {
+    const eventId = link.properties?.calendar_event_id
+    const planId = link.properties?.planned_activity_id
+    if (typeof eventId === 'string' && typeof planId === 'string' && eventById.has(eventId)) {
+      linkedPlans.set(planId, eventId)
+    }
+  }
+
+  await Promise.all([...linkedPlans].map(async ([planId, eventId]) => {
+    const event = eventById.get(eventId)
+    if (!event) return
+    const timing = calendarPlanTiming(event.starts_at, event.all_day, ownerProfile.timezone)
+    const { error } = await service.from('planned_activities').update({
+      label: event.title,
+      note: null,
+      expected_period: timing.expectedPeriod,
+      expected_time: timing.expectedTime,
+      planned_for: timing.plannedFor,
+      updated_at: new Date().toISOString(),
+    })
+      .eq('id', planId)
+      .eq('assigned_to', ownerProfile.id)
+      .in('status', ['planned', 'not_now'])
+    if (error) console.error('[Calendar] Could not update a linked Context plan:', error.message)
+  }))
+}
+
 export async function syncGoogleCalendarConnection(ownerProfile: Profile, connection: CalendarConnectionSummary) {
   if (!googleCalendarConfigured()) return
   const service = createServiceClient()
   const token = await usableGoogleToken(service, connection.id)
-  const window = dayWindowForProfile(ownerProfile)
+  const window = calendarSyncWindowForProfile(ownerProfile)
   const rows: Array<Record<string, string | boolean | null>> = []
   const activeProviderIds = new Set<string>()
 
@@ -514,7 +516,7 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
       const allDay = Boolean(item.start?.date)
       const startsAt = parseGoogleDate(item.start, allDay, ownerProfile.timezone)
       if (!startsAt) continue
-      const id = providerEventId('calendar', calendar.id, item.id)
+      const id = providerEventId(calendar.id, item.id)
       activeProviderIds.add(id)
       rows.push({
         household_id: ownerProfile.household_id,
@@ -536,46 +538,13 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
     }
   }
 
-  if (hasGoogleScope(token.scope, GOOGLE_TASKS_SCOPE)) {
-    try {
-      const taskLists = await googleTaskLists(token.accessToken)
-      for (const taskList of taskLists) {
-        const tasks = await googleTasksForList(token.accessToken, taskList.id, window)
-        for (const task of tasks) {
-          if (!task.id || !task.due || task.deleted || task.hidden || task.status === 'completed') continue
-          const parsedDue = parseGoogleTaskDue(task, ownerProfile)
-          if (!parsedDue) continue
-          const id = providerEventId('task', taskList.id, task.id)
-          activeProviderIds.add(id)
-          rows.push({
-            household_id: ownerProfile.household_id,
-            owner_profile_id: ownerProfile.id,
-            connection_id: connection.id,
-            provider: 'google',
-            provider_event_id: id,
-            title: (task.title || 'Google task').slice(0, 160),
-            description: task.notes ?? null,
-            location: null,
-            starts_at: parsedDue.startsAt,
-            ends_at: null,
-            all_day: parsedDue.allDay,
-            status: 'confirmed',
-            html_link: task.webViewLink ?? null,
-            synced_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-        }
-      }
-    } catch (error) {
-      console.error('[Calendar] Google Tasks sync skipped:', error instanceof Error ? error.message : error)
-    }
-  }
-
   if (rows.length > 0) {
-    const { error } = await service
+    const { data: syncedEvents, error } = await service
       .from('calendar_events')
       .upsert(rows, { onConflict: 'connection_id,provider_event_id' })
+      .select('id,title,starts_at,all_day')
     if (error) throw new Error(error.message)
+    await syncCalendarLinkedPlans(service, ownerProfile, syncedEvents ?? [])
   }
 
   await markMissingCalendarEventsCancelled({
@@ -642,5 +611,35 @@ export async function getCalendarDashboardData(
     enabled,
     connection: (connection as CalendarConnectionSummary | null) ?? null,
     events: ((events ?? []) as CalendarEvent[]).filter(event => !event.hidden_at),
+    linkedPlanIds: await linkedCalendarPlanIds(supabase, ownerProfile.household_id),
+  }
+}
+
+export async function getCalendarRangeData(
+  supabase: SupabaseClient,
+  ownerProfile: Profile,
+  start: string,
+  end: string,
+): Promise<CalendarRangeData> {
+  const dashboard = await getCalendarDashboardData(supabase, ownerProfile)
+  if (!dashboard.enabled || !dashboard.connection) {
+    return { ...dashboard, linkedPlanIds: dashboard.linkedPlanIds ?? [] }
+  }
+
+  const { data: events, error } = await supabase
+    .from('calendar_events')
+    .select('*')
+    .eq('owner_profile_id', ownerProfile.id)
+    .eq('status', 'confirmed')
+    .gte('starts_at', start)
+    .lt('starts_at', end)
+    .order('starts_at', { ascending: true })
+    .limit(500)
+
+  if (error) console.error('[Calendar] Range lookup failed:', error.message)
+  return {
+    ...dashboard,
+    events: ((events ?? []) as CalendarEvent[]).filter(event => !event.hidden_at),
+    linkedPlanIds: dashboard.linkedPlanIds ?? [],
   }
 }

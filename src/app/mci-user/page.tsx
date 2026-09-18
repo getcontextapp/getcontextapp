@@ -13,6 +13,10 @@ function dashboardSource(value: string | string[] | undefined) {
   return source === 'sms_link' || source === 'home_screen' ? source : 'direct'
 }
 
+function firstParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null
+}
+
 export default async function MCIUserPage({
   searchParams,
 }: {
@@ -65,14 +69,6 @@ export default async function MCIUserPage({
     .order('created_at', { ascending: false })
     .limit(20)
 
-  const { data: inputCaptures } = await supabase
-    .from('input_captures')
-    .select('*')
-    .eq('profile_id', profile.id)
-    .neq('status', 'cancelled')
-    .order('created_at', { ascending: false })
-    .limit(10)
-
   const { data: reflection } = await supabase
     .from('reflections')
     .select('*')
@@ -97,12 +93,13 @@ export default async function MCIUserPage({
       initialActivities={activities ?? []}
       initialPlannedActivities={plannedActivities ?? []}
       initialTimelineEvents={timelineEvents ?? []}
-      initialInputCaptures={inputCaptures ?? []}
       initialReflection={reflection ? reflectionToClient(reflection) : null}
       carePartner={carePartner}
       household={household ?? null}
       calendar={calendar}
       dashboardSource={dashboardSource(params?.source)}
+      initialNotificationTaskId={firstParam(params?.notificationTask)}
+      initialNotificationEventId={firstParam(params?.notificationEvent)}
     />
   )
 }

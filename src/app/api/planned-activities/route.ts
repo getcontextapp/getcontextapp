@@ -106,6 +106,8 @@ export async function PATCH(request: NextRequest) {
     expected_time?: string | null
     repeat_rule?: RepeatRule
     series_scope?: 'one' | 'future'
+    source?: 'notification_action'
+    notification_event_id?: string | null
   } = await request.json()
   if (!body.id || !body.action) {
     return NextResponse.json({ error: 'Missing planned activity or action' }, { status: 400 })
@@ -400,6 +402,9 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (body.action !== 'confirm') {
+    if (body.action === 'not_now' && plannedActivity.status === 'confirmed') {
+      return NextResponse.json({ plannedActivity, activity: null })
+    }
     const { data: updated, error } = await supabase
       .from('planned_activities')
       .update({
@@ -421,6 +426,8 @@ export async function PATCH(request: NextRequest) {
       properties: {
         planned_activity_id: plannedActivity.id,
         category: plannedActivity.category,
+        source: body.source ?? 'in_app',
+        notification_event_id: body.notification_event_id ?? null,
       },
     })
 
@@ -531,6 +538,8 @@ export async function PATCH(request: NextRequest) {
       activity_id: activity.id,
       category: activity.category,
       expected_period: plannedActivity.expected_period,
+      source: body.source ?? 'in_app',
+      notification_event_id: body.notification_event_id ?? null,
     },
   })
 

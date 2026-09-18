@@ -1,23 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { trackEvent } from '@/lib/analytics'
 import { getLocalDateKey } from '@/lib/dates'
-import { calendarPlanExistingMessage } from '@/lib/calendar-plan'
+import { calendarPlanExistingMessage, calendarPlanTiming } from '@/lib/calendar-plan'
 import { getCalendarDashboardData, resolveCalendarOwnerProfile } from '@/lib/calendar-sync'
-import { periodForTime } from '@/lib/task-scheduling'
 import { createServerClient } from '@/lib/supabase-server'
-import type { ExpectedPeriod } from '@/types'
-
-function localTimeHHMM(date: Date, timeZone?: string | null) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: timeZone ?? undefined,
-  }).formatToParts(date)
-  const hour = parts.find(part => part.type === 'hour')?.value ?? '00'
-  const minute = parts.find(part => part.type === 'minute')?.value ?? '00'
-  return `${hour === '24' ? '00' : hour}:${minute}`
-}
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -55,10 +41,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: eventError?.message ?? 'Calendar event was not found.' }, { status: 404 })
   }
 
-  const start = new Date(event.starts_at)
-  const expectedTime = event.all_day ? null : localTimeHHMM(start, ownerProfile.timezone)
-  const plannedFor = getLocalDateKey(start, ownerProfile.timezone)
-  const expectedPeriod: ExpectedPeriod = expectedTime ? periodForTime(expectedTime) : 'anytime'
+  const { expectedTime, expectedPeriod, plannedFor } = calendarPlanTiming(
+    event.starts_at,
+    event.all_day,
+    ownerProfile.timezone,
+  )
 
   const { data: existingPlans } = await supabase
     .from('planned_activities')
@@ -85,7 +72,7 @@ export async function POST(request: NextRequest) {
       assigned_to: ownerProfile.id,
       category: 'custom',
       label: event.title,
-      note: event.location || null,
+      note: null,
       expected_period: expectedPeriod,
       expected_time: expectedTime,
       planned_for: plannedFor,
