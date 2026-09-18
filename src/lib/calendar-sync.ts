@@ -72,6 +72,11 @@ export type CalendarDashboardData = {
   enabled: boolean
   connection: CalendarConnectionSummary | null
   events: CalendarEvent[]
+  linkedPlanIds?: string[]
+}
+
+export type CalendarRangeData = CalendarDashboardData & {
+  linkedPlanIds: string[]
 }
 
 function base64url(value: string | Buffer) {
@@ -179,6 +184,35 @@ function dayWindowForProfile(profile: Profile) {
     start: getUtcRangeForLocalDateKey(todayKey, profile.timezone).start,
     end: getUtcRangeForLocalDateKey(endKey, profile.timezone).start,
   }
+}
+
+function calendarSyncWindowForProfile(profile: Profile) {
+  const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  const startDate = new Date(`${todayKey}T12:00:00.000Z`)
+  startDate.setUTCDate(startDate.getUTCDate() - 35)
+  const endDate = new Date(`${todayKey}T12:00:00.000Z`)
+  endDate.setUTCDate(endDate.getUTCDate() + 70)
+  return {
+    start: getUtcRangeForLocalDateKey(startDate.toISOString().slice(0, 10), profile.timezone).start,
+    end: getUtcRangeForLocalDateKey(endDate.toISOString().slice(0, 10), profile.timezone).start,
+  }
+}
+
+async function linkedCalendarPlanIds(supabase: SupabaseClient, householdId: string) {
+  const { data, error } = await supabase
+    .from('analytics_events')
+    .select('properties')
+    .eq('household_id', householdId)
+    .eq('event_name', 'calendar_event_added_to_context')
+    .limit(1000)
+  if (error) {
+    console.error('[Calendar] Could not load calendar links:', error.message)
+    return []
+  }
+  return [...new Set((data ?? []).flatMap(row => {
+    const planId = row.properties?.planned_activity_id
+    return typeof planId === 'string' ? [planId] : []
+  }))]
 }
 
 async function exchangeCodeForTokens(code: string, redirectUri: string) {
@@ -368,7 +402,7 @@ async function googleCalendarEvents(accessToken: string, calendarId: string, win
   url.searchParams.set('timeMax', window.end)
   url.searchParams.set('singleEvents', 'true')
   url.searchParams.set('orderBy', 'startTime')
-  url.searchParams.set('maxResults', '30')
+  url.searchParams.set('maxResults', '250')
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -470,7 +504,7 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
   if (!googleCalendarConfigured()) return
   const service = createServiceClient()
   const token = await usableGoogleToken(service, connection.id)
-  const window = dayWindowForProfile(ownerProfile)
+  const window = calendarSyncWindowForProfile(ownerProfile)
   const rows: Array<Record<string, string | boolean | null>> = []
   const activeProviderIds = new Set<string>()
 
@@ -577,5 +611,35 @@ export async function getCalendarDashboardData(
     enabled,
     connection: (connection as CalendarConnectionSummary | null) ?? null,
     events: ((events ?? []) as CalendarEvent[]).filter(event => !event.hidden_at),
+    linkedPlanIds: await linkedCalendarPlanIds(supabase, ownerProfile.household_id),
+  }
+}
+
+export async function getCalendarRangeData(
+  supabase: SupabaseClient,
+  ownerProfile: Profile,
+  start: string,
+  end: string,
+): Promise<CalendarRangeData> {
+  const dashboard = await getCalendarDashboardData(supabase, ownerProfile)
+  if (!dashboard.enabled || !dashboard.connection) {
+    return { ...dashboard, linkedPlanIds: dashboard.linkedPlanIds ?? [] }
+  }
+
+  const { data: events, error } = await supabase
+    .from('calendar_events')
+    .select('*')
+    .eq('owner_profile_id', ownerProfile.id)
+    .eq('status', 'confirmed')
+    .gte('starts_at', start)
+    .lt('starts_at', end)
+    .order('starts_at', { ascending: true })
+    .limit(500)
+
+  if (error) console.error('[Calendar] Range lookup failed:', error.message)
+  return {
+    ...dashboard,
+    events: ((events ?? []) as CalendarEvent[]).filter(event => !event.hidden_at),
+    linkedPlanIds: dashboard.linkedPlanIds ?? [],
   }
 }

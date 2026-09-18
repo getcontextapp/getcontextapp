@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
@@ -688,6 +689,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             </div>
             <div className="flex items-center gap-2">
               <NotificationUpdates />
+              <Link
+                href="/mci-user/calendar"
+                className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
+                title="Calendar"
+                aria-label="Open calendar"
+              >
+                📅
+              </Link>
               <button
                 onClick={() => setShowHousehold(true)}
                 className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
