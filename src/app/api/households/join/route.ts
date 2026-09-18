@@ -39,6 +39,10 @@ export async function POST(request: NextRequest) {
   }
 
   if (profile.role === 'care_partner') {
+    await service.from('profiles')
+      .update({ care_partner_calendar_management: false })
+      .eq('household_id', household.id)
+      .eq('role', 'mci_user')
     const { error: modeError } = await service.from('household_feature_flags').upsert({
       household_id: household.id,
       feature_key: 'solo_account',

@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
 
   const { data: updatedProfile, error: profileError } = await service
     .from('profiles')
-    .update({ household_id: household.id })
+    .update({ household_id: household.id, care_partner_calendar_management: false })
     .eq('id', profile.id)
     .select('*')
     .single()
