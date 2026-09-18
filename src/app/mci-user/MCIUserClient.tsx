@@ -533,20 +533,19 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     item.status === 'planned' || item.status === 'not_now',
   )
   const openPlannedCount = sortedPlannedActivities.filter(a => a.status === 'planned' || a.status === 'not_now').length
-  const recentTimeline = timelineEvents.find(event => event.type === 'doing_now' || event.type === 'did' || event.type === 'sms_reply')
-  const recentActivity = recentTimeline?.text
-    ? recentTimeline.text
-    : displayActivities[0]?.note?.trim() || displayActivities[0]?.label || 'No recent note yet'
-  const recentActivityTime = recentTimeline
-    ? (recentTimeline.type === 'doing_now' ? 'now' : 'earlier')
-    : displayActivities[0]
-    ? 'earlier'
-    : ''
-  const nextPlan = visiblePlannedActivities.find(item => item.status === 'planned' || item.status === 'not_now') ?? null
-  const nextPlanName = nextPlan?.note?.trim() || nextPlan?.label || 'Nothing waiting'
-  const nextPlanTime = nextPlan
-    ? formatTaskTiming(nextPlan.expected_time, nextPlan.expected_period).split(' · ')[0]
-    : ''
+  const normalizedAgendaTitle = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const todayCalendarEvents = calendarEvents
+    .filter(event => !event.hidden_at && getLocalDateKey(new Date(event.starts_at), profile.timezone) === todayKey)
+    .filter(event => !visiblePlannedActivities.some(plan => {
+      const taskTitle = plan.note?.trim() || plan.label
+      if (normalizedAgendaTitle(taskTitle) !== normalizedAgendaTitle(event.title)) return false
+      if (!plan.expected_time || event.all_day) return !plan.expected_time && event.all_day
+      const eventTime = new Date(event.starts_at).toLocaleTimeString('en-GB', {
+        hour: '2-digit', minute: '2-digit', hour12: false, timeZone: profile.timezone,
+      })
+      return plan.expected_time.slice(0, 5) === eventTime
+    }))
+    .sort((left, right) => Date.parse(left.starts_at) - Date.parse(right.starts_at))
   const carePartnerFirstName = carePartner?.display_name?.trim().split(/\s+/)[0] || 'care partner'
 
   function recoveryIntentTitle(intent: RecoveryIntent) {
@@ -689,14 +688,6 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             </div>
             <div className="flex items-center gap-2">
               <NotificationUpdates />
-              <Link
-                href="/mci-user/calendar"
-                className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
-                title="Calendar"
-                aria-label="Open calendar"
-              >
-                📅
-              </Link>
               <button
                 onClick={() => setShowHousehold(true)}
                 className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center text-lg hover:bg-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-300 transition-colors"
@@ -731,70 +722,38 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           onRecallRequested={openRecovery}
         />
 
-        <div className="rounded-[20px] border-2 border-cream-300 bg-white px-5 shadow-card">
-          <div className="flex items-center gap-3 py-4">
-            <span className="w-8 h-8 shrink-0 rounded-full bg-sage-100 text-sage-600 flex items-center justify-center font-semibold" aria-hidden="true">✓</span>
-            <p className="min-w-0 flex-1 text-base font-semibold leading-5 text-warm-900 break-words">{recentActivity}</p>
-            {recentActivityTime && <span className="text-sm font-semibold text-warm-400">{recentActivityTime}</span>}
-          </div>
-          <div className="flex items-center gap-3 border-t border-cream-200 py-4">
-            <span className="w-8 h-8 shrink-0 rounded-full bg-cream-200 text-terracotta-600 flex items-center justify-center font-semibold" aria-hidden="true">→</span>
-            <p className="min-w-0 flex-1 text-base font-semibold leading-5 text-warm-900 break-words">{nextPlanName}</p>
-            {nextPlanTime && <span className="text-sm font-semibold text-warm-400">{nextPlanTime}</span>}
-          </div>
-        </div>
-
-        <CalendarCard
-          role="mci_user"
-          ownerProfileId={profile.id}
-          ownerName={profile.display_name}
-          enabled={calendar.enabled}
-          connection={calendarConnection}
-          events={calendarEvents}
-          timeZone={profile.timezone}
-          onCalendarUpdated={nextCalendar => {
-            setCalendarConnection(nextCalendar.connection)
-            setCalendarEvents(nextCalendar.events)
-          }}
-          onPlannedActivityAdded={activity => {
-            if (!isPlanForDisplayedDate(activity.planned_for, todayKey)) return
-            setPlannedActivities(current => current.some(item => item.id === activity.id) ? current : [...current, activity])
-          }}
-        />
-
-        <div className="space-y-3">
-          <button
-            type="button"
-            onClick={openRecovery}
-            className="w-full min-h-[68px] rounded-[18px] bg-sage-600 px-5 text-xl font-semibold text-white shadow-card active:scale-[0.99] focus:outline-none focus:ring-4 focus:ring-sage-300/70 transition-all"
-          >
-            Need Help Remembering?
-          </button>
-          {carePartner?.phone_e164 ? (
-            <a
-              href={`tel:${carePartner.phone_e164}`}
-              className="w-full min-h-[60px] rounded-[18px] border-2 border-cream-300 bg-cream-200 px-5 text-lg font-semibold text-warm-900 flex items-center justify-center gap-2 active:scale-[0.99] focus:outline-none focus:ring-4 focus:ring-sage-300/60 transition-all"
-            >
-              <span aria-hidden="true">☎</span>
-              Call {carePartnerFirstName}
-            </a>
-          ) : null}
-        </div>
-
         {/* Today's Plan */}
-        <div id="todays-plan" tabIndex={-1} className="animate-fade-up scroll-mt-4 focus:outline-none">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-warm-500 text-sm font-medium">Today's plan</p>
+        <div id="todays-plan" tabIndex={-1} className="animate-fade-up scroll-mt-4 rounded-[20px] border-2 border-cream-300 bg-white p-4 shadow-card focus:outline-none">
+          <div className="flex items-center justify-between border-b border-cream-200 pb-3">
+            <h2 className="font-serif text-2xl font-semibold text-warm-900">Today</h2>
             {openPlannedCount > 0 && (
               <span className="text-xs text-warm-400">{openPlannedCount} waiting</span>
             )}
           </div>
-          {visiblePlannedActivities.length === 0 ? (
-            <div className="card p-5 text-center border border-cream-100">
+          {todayCalendarEvents.length > 0 && (
+            <div className="divide-y divide-cream-200">
+              {todayCalendarEvents.map(event => (
+                <div key={event.id} className="flex items-start gap-3 py-4">
+                  <p className="w-[70px] shrink-0 text-sm font-semibold text-warm-500">
+                    {event.all_day ? 'All day' : new Date(event.starts_at).toLocaleTimeString('en-US', {
+                      hour: 'numeric', minute: '2-digit', hour12: true, timeZone: profile.timezone,
+                    })}
+                  </p>
+                  <span className="text-lg" aria-hidden="true">📅</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words text-base font-semibold text-warm-900">{event.title}</p>
+                    <p className="mt-1 text-xs text-warm-400">Google Calendar{event.location ? ` · ${event.location}` : ''}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {visiblePlannedActivities.length === 0 && todayCalendarEvents.length === 0 ? (
+            <div className="py-5 text-center">
               <p className="text-warm-400 text-sm">Nothing planned yet.</p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className={`space-y-2 ${todayCalendarEvents.length > 0 ? 'border-t border-cream-200 pt-3' : 'pt-3'}`}>
               {visiblePlannedActivities.map(item => {
                 const tile = ACTIVITY_TILES.find(t => t.category === item.category)
                 const isSkipped = item.status === 'skipped'
@@ -878,6 +837,52 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               })}
             </div>
           )}
+          <Link
+            href="/mci-user/calendar"
+            className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+          >
+            <span aria-hidden="true">📅</span>
+            View full calendar
+          </Link>
+        </div>
+
+        {!calendarConnection && (
+          <CalendarCard
+            role="mci_user"
+            ownerProfileId={profile.id}
+            ownerName={profile.display_name}
+            enabled={calendar.enabled}
+            connection={calendarConnection}
+            events={calendarEvents}
+            timeZone={profile.timezone}
+            onCalendarUpdated={nextCalendar => {
+              setCalendarConnection(nextCalendar.connection)
+              setCalendarEvents(nextCalendar.events)
+            }}
+            onPlannedActivityAdded={activity => {
+              if (!isPlanForDisplayedDate(activity.planned_for, todayKey)) return
+              setPlannedActivities(current => current.some(item => item.id === activity.id) ? current : [...current, activity])
+            }}
+          />
+        )}
+
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={openRecovery}
+            className="w-full min-h-[68px] rounded-[18px] bg-sage-600 px-5 text-xl font-semibold text-white shadow-card active:scale-[0.99] focus:outline-none focus:ring-4 focus:ring-sage-300/70 transition-all"
+          >
+            Need Help Remembering?
+          </button>
+          {carePartner?.phone_e164 ? (
+            <a
+              href={`tel:${carePartner.phone_e164}`}
+              className="w-full min-h-[60px] rounded-[18px] border-2 border-cream-300 bg-cream-200 px-5 text-lg font-semibold text-warm-900 flex items-center justify-center gap-2 active:scale-[0.99] focus:outline-none focus:ring-4 focus:ring-sage-300/60 transition-all"
+            >
+              <span aria-hidden="true">☎</span>
+              Call {carePartnerFirstName}
+            </a>
+          ) : null}
         </div>
 
         {sortedPlannedActivities.some(item => item.status === 'confirmed') && (
