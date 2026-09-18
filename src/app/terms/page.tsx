@@ -11,7 +11,7 @@ export default function TermsPage() {
             Context
           </a>
           <h1 className="font-serif text-3xl font-semibold text-warm-900">Terms and Conditions</h1>
-          <p className="text-sm text-warm-400">Last updated: August 26, 2026</p>
+          <p className="text-sm text-warm-400">Last updated: September 18, 2026</p>
         </header>
 
         <section className="card space-y-5 p-6 text-warm-700">
@@ -55,10 +55,10 @@ export default function TermsPage() {
 
           <h2 className="font-serif text-xl font-semibold text-warm-900">Calendar Access</h2>
           <p>
-            If you connect Google Calendar or Google Tasks, Context uses read-only access. Context
-            can show calendar items and tasks inside the app, but it cannot edit or delete items in
-            Google Calendar or Google Tasks. You can disconnect calendar access in Context settings
-            or in your Google Account.
+            If you connect Google Calendar, Context uses read-only access. Context can show calendar
+            events inside the app, but it cannot create, edit, delete, or send events in Google
+            Calendar. You can disconnect calendar access in Context settings or in your Google
+            Account.
           </p>
 
           <h2 className="font-serif text-xl font-semibold text-warm-900">Care Partner Sharing</h2>

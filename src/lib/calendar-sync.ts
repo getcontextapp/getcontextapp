@@ -7,8 +7,7 @@ import { getLinkedMciProfile } from '@/lib/household-links'
 import type { CalendarConnectionSummary, CalendarEvent, Profile } from '@/types'
 
 export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
-export const GOOGLE_TASKS_SCOPE = 'https://www.googleapis.com/auth/tasks.readonly'
-const GOOGLE_OAUTH_SCOPES = [GOOGLE_CALENDAR_SCOPE, GOOGLE_TASKS_SCOPE].join(' ')
+const GOOGLE_OAUTH_SCOPES = GOOGLE_CALENDAR_SCOPE
 const STATE_MAX_AGE_MS = 15 * 60 * 1000
 
 type CalendarState = {
@@ -66,33 +65,6 @@ type GoogleCalendarListEntry = {
 
 type GoogleCalendarListResponse = {
   items?: GoogleCalendarListEntry[]
-  error?: { message?: string }
-}
-
-type GoogleTaskList = {
-  id: string
-  title?: string
-}
-
-type GoogleTaskListResponse = {
-  items?: GoogleTaskList[]
-  error?: { message?: string }
-}
-
-type GoogleTask = {
-  id: string
-  title?: string
-  notes?: string
-  status?: string
-  due?: string
-  updated?: string
-  deleted?: boolean
-  hidden?: boolean
-  webViewLink?: string
-}
-
-type GoogleTasksResponse = {
-  items?: GoogleTask[]
   error?: { message?: string }
 }
 
@@ -260,10 +232,6 @@ function tokenExpiry(expiresInSeconds?: number) {
   return new Date(Date.now() + seconds * 1000).toISOString()
 }
 
-function hasGoogleScope(scope: string | null | undefined, requiredScope: string) {
-  return (scope ?? '').split(/\s+/).includes(requiredScope)
-}
-
 async function usableGoogleToken(service: SupabaseClient, connectionId: string) {
   const { data: tokenRow, error } = await service
     .from('calendar_connection_tokens')
@@ -371,8 +339,8 @@ function parseGoogleDate(value: { dateTime?: string; date?: string } | undefined
   return null
 }
 
-function providerEventId(source: 'calendar' | 'task', containerId: string, itemId: string) {
-  return `${source}:${base64url(containerId)}:${itemId}`
+function providerEventId(containerId: string, itemId: string) {
+  return `calendar:${base64url(containerId)}:${itemId}`
 }
 
 function isBirthdayCalendar(calendar: GoogleCalendarListEntry) {
@@ -408,53 +376,6 @@ async function googleCalendarEvents(accessToken: string, calendarId: string, win
   const result = await response.json() as GoogleEventsResponse
   if (!response.ok || result.error) throw new Error(result.error?.message || 'Google calendar sync failed.')
   return result.items ?? []
-}
-
-async function googleTaskLists(accessToken: string) {
-  const response = await fetch('https://tasks.googleapis.com/tasks/v1/users/@me/lists', {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  const result = await response.json() as GoogleTaskListResponse
-  if (!response.ok || result.error) throw new Error(result.error?.message || 'Google task list sync failed.')
-  return (result.items ?? []).filter(list => list.id)
-}
-
-async function googleTasksForList(accessToken: string, taskListId: string, window: { start: string; end: string }) {
-  const url = new URL(`https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(taskListId)}/tasks`)
-  url.searchParams.set('dueMin', window.start)
-  url.searchParams.set('dueMax', window.end)
-  url.searchParams.set('showCompleted', 'false')
-  url.searchParams.set('showDeleted', 'false')
-  url.searchParams.set('showHidden', 'false')
-  url.searchParams.set('maxResults', '30')
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  const result = await response.json() as GoogleTasksResponse
-  if (!response.ok || result.error) throw new Error(result.error?.message || 'Google tasks sync failed.')
-  return result.items ?? []
-}
-
-function parseGoogleTaskDue(task: GoogleTask, ownerProfile: Profile) {
-  if (!task.due) return null
-  const due = new Date(task.due)
-  if (Number.isNaN(due.getTime())) return null
-  const dateKey = task.due.slice(0, 10)
-  const todayKey = getLocalDateKey(new Date(), ownerProfile.timezone)
-
-  // Google Tasks only exposes the due date through the public API, even when
-  // the Calendar app displays a reminder time. Keep tasks as all-day evidence
-  // so Context does not invent a time Google did not provide.
-  if (dateKey === todayKey) return {
-    startsAt: getUtcRangeForLocalDateKey(todayKey, ownerProfile.timezone).start,
-    allDay: true,
-  }
-
-  return {
-    startsAt: `${dateKey}T00:00:00.000Z`,
-    allDay: true,
-  }
 }
 
 async function markMissingCalendarEventsCancelled({
@@ -561,7 +482,7 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
       const allDay = Boolean(item.start?.date)
       const startsAt = parseGoogleDate(item.start, allDay, ownerProfile.timezone)
       if (!startsAt) continue
-      const id = providerEventId('calendar', calendar.id, item.id)
+      const id = providerEventId(calendar.id, item.id)
       activeProviderIds.add(id)
       rows.push({
         household_id: ownerProfile.household_id,
@@ -580,41 +501,6 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
         synced_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
-    }
-  }
-
-  if (hasGoogleScope(token.scope, GOOGLE_TASKS_SCOPE)) {
-    try {
-      const taskLists = await googleTaskLists(token.accessToken)
-      for (const taskList of taskLists) {
-        const tasks = await googleTasksForList(token.accessToken, taskList.id, window)
-        for (const task of tasks) {
-          if (!task.id || !task.due || task.deleted || task.hidden || task.status === 'completed') continue
-          const parsedDue = parseGoogleTaskDue(task, ownerProfile)
-          if (!parsedDue) continue
-          const id = providerEventId('task', taskList.id, task.id)
-          activeProviderIds.add(id)
-          rows.push({
-            household_id: ownerProfile.household_id,
-            owner_profile_id: ownerProfile.id,
-            connection_id: connection.id,
-            provider: 'google',
-            provider_event_id: id,
-            title: (task.title || 'Google task').slice(0, 160),
-            description: task.notes ?? null,
-            location: null,
-            starts_at: parsedDue.startsAt,
-            ends_at: null,
-            all_day: parsedDue.allDay,
-            status: 'confirmed',
-            html_link: task.webViewLink ?? null,
-            synced_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-        }
-      }
-    } catch (error) {
-      console.error('[Calendar] Google Tasks sync skipped:', error instanceof Error ? error.message : error)
     }
   }
 

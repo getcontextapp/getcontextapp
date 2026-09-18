@@ -11,7 +11,7 @@ export default function PrivacyPage() {
             Context
           </a>
           <h1 className="font-serif text-3xl font-semibold text-warm-900">Privacy Policy</h1>
-          <p className="text-sm text-warm-400">Last updated: August 26, 2026</p>
+          <p className="text-sm text-warm-400">Last updated: September 18, 2026</p>
         </header>
 
         <section className="card space-y-5 p-6 text-warm-700">
@@ -97,15 +97,25 @@ export default function PrivacyPage() {
           <h2 className="font-serif text-xl font-semibold text-warm-900">Calendar Access</h2>
           <p>
             If you connect Google Calendar, Context asks for read-only access so it can show helpful
-            calendar items inside Context. Context can see calendar events and Google Tasks you
-            choose to sync. Context cannot edit or delete anything in your Google Calendar or Google
-            Tasks.
+            calendar events inside Context. Context cannot create, edit, delete, or send events in
+            your Google Calendar.
           </p>
           <p>
             Calendar data is used only to provide and improve visible Context features, including
-            the calendar card, care partner calendar preview, and ContextRank suggestions. We do not
-            sell Google user data, use it for advertising, or use it to train general-purpose AI
-            models. You can disconnect calendar access in Context settings or in your Google Account.
+            the calendar card, care partner calendar preview, and ContextRank suggestions. Context
+            may send a limited portion of Google Calendar data, such as an event title and source
+            label, to the Anthropic commercial API to normalize activity wording for ContextRank.
+            Context uses Anthropic&apos;s Build tier and does not send Google OAuth tokens, attendee
+            lists, or the complete calendar record for this purpose. Anthropic states that commercial
+            API inputs and outputs are not used to train its models by default. Unless a different
+            contractual retention setting applies, Anthropic may retain API inputs and outputs for
+            up to 30 days. We do not sell Google user data, use it for advertising, or use it to train
+            general-purpose AI models. You can disconnect calendar access in Context settings or in
+            your Google Account.
+          </p>
+          <p>
+            Context&apos;s use and transfer of information received from Google APIs adheres to the
+            Google API Services User Data Policy, including the Limited Use requirements.
           </p>
 
           <h2 className="font-serif text-xl font-semibold text-warm-900">Research and Pilot Use</h2>
