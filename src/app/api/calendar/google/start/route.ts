@@ -30,9 +30,9 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => ({})) as { owner_profile_id?: string }
-  const ownerProfile = await resolveCalendarOwnerProfile(supabase, profile, body.owner_profile_id)
+  const ownerProfile = await resolveCalendarOwnerProfile(supabase, profile, body.owner_profile_id, true)
   if (!ownerProfile?.household_id || ownerProfile.household_id !== profile.household_id) {
-    return NextResponse.json({ error: 'Calendar owner was not found.' }, { status: 403 })
+    return NextResponse.json({ error: 'Calendar management is not enabled for this care partner.' }, { status: 403 })
   }
 
   const enabled = await isCalendarEnabledForHousehold(supabase, ownerProfile.household_id)

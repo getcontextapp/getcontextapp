@@ -7,6 +7,7 @@ import {
   saveGoogleCalendarConnection,
   verifyCalendarOAuthState,
 } from '@/lib/calendar-sync'
+import { canManageParticipantSchedule } from '@/lib/care-partner-access'
 
 function redirectWithStatus(request: NextRequest, path: string, status: 'connected' | 'error') {
   const url = new URL(path, request.url)
@@ -52,6 +53,9 @@ export async function GET(request: NextRequest) {
     .single()
 
   if (!ownerProfile?.household_id) {
+    return redirectWithStatus(request, returnTo, 'error')
+  }
+  if (!canManageParticipantSchedule(connectedByProfile, ownerProfile)) {
     return redirectWithStatus(request, returnTo, 'error')
   }
 

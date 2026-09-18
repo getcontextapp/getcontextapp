@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { trackEvent } from '@/lib/analytics'
 import { periodForTime } from '@/lib/task-scheduling'
+import { resolveParticipantScheduleOwner } from '@/lib/care-partner-access'
 import { ensureNextOccurrence, findMatchingRepeatFamily, findMatchingRepeatOccurrence, retireRepeatFamily } from '@/lib/task-scheduling-server'
 import type { CreatePlannedActivityPayload, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 
@@ -26,6 +27,10 @@ export async function POST(request: NextRequest) {
   const { supabase, user, profile } = await getCurrentProfile()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!profile?.household_id) return NextResponse.json({ error: 'No household linked' }, { status: 400 })
+  const ownerProfile = await resolveParticipantScheduleOwner(supabase, profile, null, true)
+  if (!ownerProfile) {
+    return NextResponse.json({ error: 'Task management is not enabled for this care partner.' }, { status: 403 })
+  }
 
   const body: CreatePlannedActivityPayload = await request.json()
   if (!body.planned_for) {
@@ -37,7 +42,7 @@ export async function POST(request: NextRequest) {
   const candidate = {
     household_id: profile.household_id,
     created_by: profile.id,
-    assigned_to: profile.id,
+    assigned_to: ownerProfile.id,
     category: body.category,
     label: body.label,
     note: body.note?.trim() || null,
@@ -96,6 +101,10 @@ export async function PATCH(request: NextRequest) {
   const { supabase, user, profile } = await getCurrentProfile()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!profile?.household_id) return NextResponse.json({ error: 'No household linked' }, { status: 400 })
+  const ownerProfile = await resolveParticipantScheduleOwner(supabase, profile, null, true)
+  if (!ownerProfile) {
+    return NextResponse.json({ error: 'Task management is not enabled for this care partner.' }, { status: 403 })
+  }
 
   const body: {
     id?: string
@@ -118,6 +127,7 @@ export async function PATCH(request: NextRequest) {
     .select('*')
     .eq('id', body.id)
     .eq('household_id', profile.household_id)
+    .eq('assigned_to', ownerProfile.id)
     .single()
 
   if (fetchError || !plannedActivity) {

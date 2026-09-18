@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient } from '@/lib/supabase-server'
 import { getLocalDateKey, getUtcRangeForLocalDateKey } from '@/lib/dates'
 import { calendarPlanTiming } from '@/lib/calendar-plan'
-import { getLinkedMciProfile } from '@/lib/household-links'
+import { resolveParticipantScheduleOwner } from '@/lib/care-partner-access'
 import type { CalendarConnectionSummary, CalendarEvent, Profile } from '@/types'
 
 export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
@@ -167,12 +167,9 @@ export async function resolveCalendarOwnerProfile(
   supabase: SupabaseClient,
   currentProfile: Profile,
   ownerProfileId?: string | null,
+  requireManage = false,
 ) {
-  if (currentProfile.role === 'mci_user') return currentProfile
-  const linked = await getLinkedMciProfile(supabase, currentProfile.household_id, currentProfile.id)
-  if (!linked) return null
-  if (ownerProfileId && ownerProfileId !== linked.id) return null
-  return linked
+  return resolveParticipantScheduleOwner(supabase, currentProfile, ownerProfileId, requireManage)
 }
 
 function dayWindowForProfile(profile: Profile) {

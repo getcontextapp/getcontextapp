@@ -30,6 +30,7 @@ export default function ReminderSettings({ profile, carePartner, onOpenHousehold
   const [summaryTime, setSummaryTime] = useState(profile.daily_summary_time || DEFAULT_SUMMARY_TIME)
   const [phone, setPhone] = useState(profile.phone_e164 ?? '')
   const [smsConsent, setSmsConsent] = useState(Boolean(profile.phone_e164))
+  const [carePartnerCanManage, setCarePartnerCanManage] = useState(profile.care_partner_calendar_management)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -58,6 +59,7 @@ export default function ReminderSettings({ profile, carePartner, onOpenHousehold
         reminder_gap_minutes: gap,
         daily_summary_time: summaryTime,
         phone_e164: phoneE164,
+        care_partner_calendar_management: carePartnerCanManage,
       })
       .eq('id', profile.id)
     setSaving(false)
@@ -107,6 +109,31 @@ export default function ReminderSettings({ profile, carePartner, onOpenHousehold
                 {carePartner ? 'View shared household' : 'Invite someone to support me'}
               </button>
             </div>
+            {carePartner && (
+              <div className="mt-3 rounded-2xl border border-cream-300 bg-white p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="font-medium text-warm-900">Let {carePartner.display_name.split(/\s+/)[0]} manage my calendar</p>
+                    <p className="mt-1 text-xs leading-5 text-warm-400">
+                      When on, they can add or change Context tasks and connect, change, or remove Google Calendar. When off, they can only view your schedule.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={carePartnerCanManage}
+                    aria-label={`Allow ${carePartner.display_name.split(/\s+/)[0]} to manage my calendar`}
+                    onClick={() => setCarePartnerCanManage(current => !current)}
+                    className={`relative mt-1 h-8 w-14 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-4 focus:ring-sage-300/60 ${carePartnerCanManage ? 'bg-sage-600' : 'bg-warm-300'}`}
+                  >
+                    <span className={`absolute left-1 top-1 h-6 w-6 rounded-full bg-white shadow transition-transform ${carePartnerCanManage ? 'translate-x-6' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+                <p className={`mt-3 text-sm font-semibold ${carePartnerCanManage ? 'text-sage-700' : 'text-warm-500'}`}>
+                  {carePartnerCanManage ? 'On — calendar management allowed' : 'Off — view only'}
+                </p>
+              </div>
+            )}
           </div>
 
           <div>

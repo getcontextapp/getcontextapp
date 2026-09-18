@@ -13,6 +13,8 @@ type Props = {
   plans: PlannedActivity[]
   linkedPlanIds: string[]
   connected: boolean
+  homeHref?: string
+  viewLabel?: string
 }
 
 function readableDate(dateKey: string, options?: Intl.DateTimeFormatOptions) {
@@ -21,7 +23,7 @@ function readableDate(dateKey: string, options?: Intl.DateTimeFormatOptions) {
   })
 }
 
-export default function CalendarView({ firstName, todayKey, timeZone, events, plans, linkedPlanIds, connected }: Props) {
+export default function CalendarView({ firstName, todayKey, timeZone, events, plans, linkedPlanIds, connected, homeHref = '/mci-user', viewLabel = 'Your schedule' }: Props) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [selectedDate, setSelectedDate] = useState(todayKey)
   const items = useMemo(
@@ -47,12 +49,12 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
     <main className="min-h-svh bg-cream-50 pb-10 safe-bottom">
       <header className="border-b border-cream-200 bg-cream-100 safe-top">
         <div className="mx-auto max-w-lg px-5 py-5">
-          <Link href="/mci-user" className="inline-flex min-h-11 items-center text-base font-semibold text-sage-700 focus:outline-none focus:ring-2 focus:ring-sage-300">
+          <Link href={homeHref} className="inline-flex min-h-11 items-center text-base font-semibold text-sage-700 focus:outline-none focus:ring-2 focus:ring-sage-300">
             ← Home
           </Link>
           <div className="mt-3 flex items-end justify-between gap-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-sage-600">Your schedule</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-sage-600">{viewLabel}</p>
               <h1 className="mt-1 font-serif text-3xl font-semibold text-warm-900">Calendar</h1>
               <p className="mt-1 text-sm text-warm-500">Context and linked calendars, together.</p>
             </div>

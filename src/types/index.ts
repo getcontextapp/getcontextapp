@@ -12,6 +12,7 @@ export interface Profile {
   reminder_gap_minutes: number   // minutes between SMS nudges while planned activity is pending
   daily_summary_time: string     // HH:MM in user local time, e.g. "20:00"
   timezone: string               // IANA tz string
+  care_partner_calendar_management?: boolean
   created_at: string
 }
 

@@ -1,0 +1,52 @@
+import { redirect } from 'next/navigation'
+import { getLocalDateKey, getUtcRangeForLocalDateKey } from '@/lib/dates'
+import { getCalendarRangeData } from '@/lib/calendar-sync'
+import { getLinkedMciProfile } from '@/lib/household-links'
+import { createServerClient } from '@/lib/supabase-server'
+import type { PlannedActivity } from '@/types'
+import CalendarView from '@/app/mci-user/calendar/CalendarView'
+
+function dateOffset(dateKey: string, amount: number) {
+  const date = new Date(`${dateKey}T12:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() + amount)
+  return date.toISOString().slice(0, 10)
+}
+
+export default async function CarePartnerCalendarPage() {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/auth/login')
+
+  const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
+  if (!profile || profile.role !== 'care_partner') redirect('/')
+  const participant = await getLinkedMciProfile(supabase, profile.household_id, profile.id)
+  if (!participant) redirect('/care-partner')
+
+  const todayKey = getLocalDateKey(new Date(), participant.timezone)
+  const startKey = dateOffset(todayKey, -35)
+  const endKey = dateOffset(todayKey, 70)
+  const start = getUtcRangeForLocalDateKey(startKey, participant.timezone).start
+  const end = getUtcRangeForLocalDateKey(endKey, participant.timezone).start
+  const [calendar, planResult] = await Promise.all([
+    getCalendarRangeData(supabase, participant, start, end),
+    supabase.from('planned_activities').select('*')
+      .eq('household_id', participant.household_id)
+      .eq('assigned_to', participant.id)
+      .gte('planned_for', startKey).lt('planned_for', endKey)
+      .neq('status', 'abandoned').order('planned_for', { ascending: true }).limit(1000),
+  ])
+
+  return (
+    <CalendarView
+      firstName={profile.display_name.trim().split(/\s+/)[0] || profile.display_name}
+      todayKey={todayKey}
+      timeZone={participant.timezone}
+      events={calendar.events}
+      plans={(planResult.data ?? []) as PlannedActivity[]}
+      linkedPlanIds={calendar.linkedPlanIds}
+      connected={Boolean(calendar.connection)}
+      homeHref="/care-partner"
+      viewLabel={`${participant.display_name}'s schedule`}
+    />
+  )
+}

@@ -1,4 +1,5 @@
 'use client'
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { trackClientEvent } from '@/lib/client-analytics'
@@ -7,6 +8,7 @@ import { suppressNearbyDuplicateActivities } from '@/lib/activity-display'
 import { getPhoneSaveErrorMessage, normalizePhone } from '@/lib/sms'
 import { formatTaskTiming, REPEAT_LABELS } from '@/lib/task-scheduling'
 import CalendarCard from '@/components/calendar/CalendarCard'
+import EditTaskSheet from '@/components/mci/EditTaskSheet'
 import { isPlanForDisplayedDate } from '@/lib/calendar-plan'
 import ReadOnlyDailyReflection from '@/components/mci/ReadOnlyDailyReflection'
 import NotificationUpdates from '@/components/notifications/NotificationUpdates'
@@ -102,7 +104,6 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>(initialPlannedActivities)
   const [calendarConnection, setCalendarConnection] = useState(calendar.connection)
   const [calendarEvents, setCalendarEvents] = useState(calendar.events)
-  const [skippedActivitiesOpen, setSkippedActivitiesOpen] = useState(false)
   const [testSending, setTestSending] = useState(false)
   const [testSent, setTestSent] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -114,6 +115,11 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const [carePhoneSaving, setCarePhoneSaving] = useState(false)
   const [carePhoneSaved, setCarePhoneSaved] = useState(false)
   const [carePhoneError, setCarePhoneError] = useState<string | null>(null)
+  const [addingTask, setAddingTask] = useState(false)
+  const [newTaskName, setNewTaskName] = useState('')
+  const [taskSaving, setTaskSaving] = useState(false)
+  const [taskError, setTaskError] = useState<string | null>(null)
+  const [editCandidate, setEditCandidate] = useState<PlannedActivity | null>(null)
 
   const displayActivities = suppressNearbyDuplicateActivities(activities, plannedActivities)
   const confirmedEntries = getConfirmedEntries(displayActivities, plannedActivities, careProfile.timezone)
@@ -144,8 +150,49 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
   const waitingActivities = sortedPlannedActivities.filter(
     item => item.status === 'planned' || item.status === 'not_now',
   )
-  const skippedActivities = sortedPlannedActivities.filter(item => item.status === 'skipped')
   const visibleCompletedEntries = todayConfirmedEntries
+  const canManageSchedule = Boolean(mciProfile?.care_partner_calendar_management)
+  const todayCalendarEvents = calendarEvents
+    .filter(event => !event.hidden_at && getLocalDateKey(new Date(event.starts_at), mciProfile?.timezone) === todayKey)
+    .sort((left, right) => Date.parse(left.starts_at) - Date.parse(right.starts_at))
+
+  async function addTask() {
+    if (!newTaskName.trim()) return
+    setTaskSaving(true)
+    setTaskError(null)
+    const response = await fetch('/api/planned-activities', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category: 'custom', label: newTaskName.trim(), note: newTaskName.trim(),
+        expected_period: 'anytime', expected_time: null, planned_for: todayKey, repeat_rule: 'none',
+      }),
+    })
+    const result = await response.json().catch(() => ({}))
+    setTaskSaving(false)
+    if (!response.ok) {
+      setTaskError(result.error || 'Could not add this task.')
+      return
+    }
+    setPlannedActivities(current => [...current, result])
+    setNewTaskName('')
+    setAddingTask(false)
+  }
+
+  async function deleteTask(task: PlannedActivity, action: 'delete' | 'remove_today' | 'stop_repeating' = 'delete') {
+    const response = await fetch('/api/planned-activities', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: task.id, action }),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      setTaskError(result.error || 'Could not change this task.')
+      return
+    }
+    const removed = new Set(result.deleted_planned_activity_ids ?? [task.id])
+    setPlannedActivities(current => current.filter(item => !removed.has(item.id)))
+    setEditCandidate(null)
+  }
 
   async function sendTestSummary() {
     if (!careProfile.phone_e164 && !carePhone.trim()) return
@@ -295,97 +342,82 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
           </div>
         )}
 
-        {mciProfile && (
-          <CalendarCard
-            role="care_partner"
-            ownerProfileId={mciProfile.id}
-            ownerName={mciProfile.display_name}
-            enabled={calendar.enabled}
-            connection={calendarConnection}
-            events={calendarEvents}
-            timeZone={mciProfile.timezone}
-            onCalendarUpdated={nextCalendar => {
-              setCalendarConnection(nextCalendar.connection)
-              setCalendarEvents(nextCalendar.events)
-            }}
-            onPlannedActivityAdded={activity => {
-              if (!isPlanForDisplayedDate(activity.planned_for, todayKey)) return
-              setPlannedActivities(current => current.some(item => item.id === activity.id) ? current : [...current, activity])
-            }}
-          />
+        {mciProfile && canManageSchedule && (
+          <div className="animate-fade-up">
+            {!addingTask ? (
+              <button type="button" onClick={() => setAddingTask(true)}
+                className="w-full min-h-14 rounded-pill border-2 border-cream-300 bg-white px-5 py-3 shadow-card flex items-center gap-3 text-left focus:outline-none focus:ring-2 focus:ring-sage-300">
+                <span className="text-lg" aria-hidden="true">＋</span>
+                <span className="flex-1 text-base font-medium text-warm-600">Add a task for {mciProfile.display_name.split(/\s+/)[0]}...</span>
+                <span className="w-9 h-9 rounded-full bg-warm-700 text-cream-50 flex items-center justify-center" aria-hidden="true">→</span>
+              </button>
+            ) : (
+              <div className="rounded-[20px] border-2 border-cream-300 bg-white p-4 shadow-card">
+                <label htmlFor="cp-new-task" className="text-sm font-semibold text-warm-700">What should be added today?</label>
+                <input id="cp-new-task" autoFocus value={newTaskName} onChange={event => setNewTaskName(event.target.value)} maxLength={160}
+                  className="mt-2 min-h-12 w-full rounded-xl border border-cream-300 px-4 text-base text-warm-900" />
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => { setAddingTask(false); setNewTaskName(''); setTaskError(null) }} className="min-h-12 rounded-xl border border-cream-300 text-warm-600">Cancel</button>
+                  <button type="button" onClick={addTask} disabled={taskSaving || !newTaskName.trim()} className="min-h-12 rounded-xl bg-warm-700 text-cream-50 disabled:opacity-50">{taskSaving ? 'Adding...' : 'Add task'}</button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
-        {/* Planned today */}
-        <div className="animate-fade-up delay-100">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-warm-900 text-lg font-semibold">Planned today</p>
-          </div>
-          {waitingActivities.length === 0 ? (
-            <div className="card p-5 text-center">
-              <p className="text-warm-400 text-sm">No plans are showing for the rest of today.</p>
+        {mciProfile && (
+          <div className="animate-fade-up delay-100 rounded-[20px] border-2 border-cream-300 bg-white p-4 shadow-card">
+            <div className="flex items-center justify-between border-b border-cream-200 pb-3">
+              <h2 className="font-serif text-2xl font-semibold text-warm-900">Today</h2>
+              {waitingActivities.length > 0 && <span className="text-xs text-warm-400">{waitingActivities.length} waiting</span>}
             </div>
-          ) : (
-            <div className="space-y-2">
-              {waitingActivities.map(item => {
-                const tile = ACTIVITY_TILES.find(t => t.category === item.category)
-                const taskName = item.note?.trim() || item.label
-                const categoryName = tile?.label ?? item.label
-                return (
-                  <div key={item.id} className="bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-100">
-                    <div className="flex items-start gap-3">
-                      <span className="text-xl mt-0.5">{tile?.icon ?? '📌'}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="text-base font-semibold leading-5 text-warm-900 whitespace-normal break-words">{taskName}</p>
-                            <p className="text-xs leading-5 text-warm-400 mt-1">
-                              {item.category !== 'custom' && `${categoryName} · `}
-                              {formatTaskTiming(item.expected_time, item.expected_period)}
-                              {item.repeat_rule && item.repeat_rule !== 'none' ? ` · ${REPEAT_LABELS[item.repeat_rule]}` : ''}
-                            </p>
-                          </div>
-                          <span className="text-[11px] rounded-pill px-2 py-0.5 whitespace-nowrap bg-cream-200 text-warm-600">
-                            {item.status === 'not_now' ? 'Later' : 'Planned'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+            {todayCalendarEvents.length > 0 && (
+              <div className="divide-y divide-cream-200">
+                {todayCalendarEvents.map(event => (
+                  <div key={event.id} className="flex items-start gap-3 py-4">
+                    <p className="w-[70px] shrink-0 text-sm font-semibold text-warm-500">{event.all_day ? 'All day' : new Date(event.starts_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: mciProfile.timezone })}</p>
+                    <span className="text-lg" aria-hidden="true">📅</span>
+                    <div className="min-w-0 flex-1"><p className="break-words text-base font-semibold text-warm-900">{event.title}</p><p className="mt-1 text-xs text-warm-400">Google Calendar{event.location ? ` · ${event.location}` : ''}</p></div>
                   </div>
-                )
-              })}
-            </div>
-          )}
-          {skippedActivities.length > 0 && (
-            <div className="mt-3">
-              <button
-                type="button"
-                onClick={() => setSkippedActivitiesOpen(current => !current)}
-                className="w-full min-h-11 rounded-xl border border-cream-300 bg-cream-100 px-4 py-2.5 flex items-center justify-between gap-3 text-left"
-                aria-expanded={skippedActivitiesOpen}
-                aria-controls="skipped-activities"
-              >
-                <span className="text-sm font-medium text-warm-600">
-                  Other plans from today
-                </span>
-                <span className="text-warm-400" aria-hidden="true">{skippedActivitiesOpen ? '⌃' : '⌄'}</span>
-              </button>
-              {skippedActivitiesOpen && (
-                <div id="skipped-activities" className="mt-2 space-y-2">
-                  {skippedActivities.map(item => (
-                    <div key={item.id} className="rounded-xl border border-cream-200 bg-cream-100 px-4 py-3">
-                      <p className="text-sm font-medium text-warm-600 whitespace-normal break-words">
-                        {item.note?.trim() || item.label}
-                      </p>
-                      <p className="text-xs text-warm-400 mt-1">
-                        {formatTaskTiming(item.expected_time, item.expected_period)}
-                      </p>
+                ))}
+              </div>
+            )}
+            {waitingActivities.length === 0 && todayCalendarEvents.length === 0 ? (
+              <p className="py-5 text-center text-sm text-warm-400">Nothing planned yet.</p>
+            ) : (
+              <div className={`space-y-2 ${todayCalendarEvents.length ? 'border-t border-cream-200 pt-3' : 'pt-3'}`}>
+                {waitingActivities.map(item => {
+                  const tile = ACTIVITY_TILES.find(t => t.category === item.category)
+                  return (
+                    <div key={item.id} className="rounded-xl border border-cream-100 bg-white px-4 py-3 shadow-sm">
+                      <div className="flex items-start gap-3">
+                        <span className="text-xl">{tile?.icon ?? '📌'}</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-base font-semibold text-warm-900">{item.note?.trim() || item.label}</p>
+                          <p className="mt-1 text-xs text-warm-400">Context · {formatTaskTiming(item.expected_time, item.expected_period)}{item.repeat_rule !== 'none' ? ` · ${REPEAT_LABELS[item.repeat_rule]}` : ''}</p>
+                        </div>
+                        <span className="rounded-pill bg-cream-200 px-2 py-0.5 text-[11px] text-warm-600">{item.status === 'not_now' ? 'Later' : 'Planned'}</span>
+                      </div>
+                      {canManageSchedule && <button type="button" onClick={() => setEditCandidate(item)} className="mt-3 min-h-11 w-full rounded-xl border border-cream-300 text-sm font-semibold text-warm-700">Edit task</button>}
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+                  )
+                })}
+              </div>
+            )}
+            <Link href="/care-partner/calendar" className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60">
+              <span aria-hidden="true">📅</span>View full calendar
+            </Link>
+            {!canManageSchedule && <p className="mt-3 text-center text-xs leading-5 text-warm-400">View only. {mciProfile.display_name.split(/\s+/)[0]} controls editing access in Settings.</p>}
+            {taskError && <p className="mt-3 rounded-xl bg-cream-100 px-4 py-3 text-sm text-terracotta-700">{taskError}</p>}
+          </div>
+        )}
+
+        {mciProfile && !calendarConnection && (
+          <CalendarCard role="care_partner" ownerProfileId={mciProfile.id} ownerName={mciProfile.display_name}
+            enabled={calendar.enabled} canManage={canManageSchedule} connection={calendarConnection} events={calendarEvents} timeZone={mciProfile.timezone}
+            onCalendarUpdated={nextCalendar => { setCalendarConnection(nextCalendar.connection); setCalendarEvents(nextCalendar.events) }}
+            onPlannedActivityAdded={activity => { if (isPlanForDisplayedDate(activity.planned_for, todayKey)) setPlannedActivities(current => [...current, activity]) }} />
+        )}
 
         {/* Completed today */}
         <div className="animate-fade-up delay-200">
@@ -571,6 +603,21 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
             </div>
           </div>
         </div>
+      )}
+
+      {editCandidate && (
+        <EditTaskSheet
+          task={editCandidate}
+          onSaved={(updated, removedTaskIds = []) => {
+            const removed = new Set(removedTaskIds)
+            setPlannedActivities(current => current
+              .filter(item => !removed.has(item.id))
+              .map(item => item.id === updated.id ? updated : item))
+            setEditCandidate(null)
+          }}
+          onClose={() => setEditCandidate(null)}
+          onDelete={action => void deleteTask(editCandidate, action)}
+        />
       )}
     </div>
   )

@@ -11,6 +11,7 @@ type CalendarCardProps = {
   ownerProfileId: string
   ownerName: string
   enabled: boolean
+  canManage?: boolean
   connection: CalendarConnectionSummary | null
   events: CalendarEvent[]
   timeZone?: string | null
@@ -112,6 +113,7 @@ export default function CalendarCard({
   ownerProfileId,
   ownerName,
   enabled,
+  canManage = true,
   connection,
   events,
   timeZone,
@@ -232,6 +234,17 @@ export default function CalendarCard({
   }
 
   if (!connection) {
+    if (!canManage) {
+      return (
+        <section className="rounded-[20px] border-2 border-cream-300 bg-white p-5 shadow-card" aria-label="Calendar setup">
+          <p className="text-xs font-semibold uppercase tracking-wide text-sage-600">Calendar</p>
+          <h2 className="mt-2 font-serif text-xl font-semibold leading-7 text-warm-900">No linked calendar yet</h2>
+          <p className="mt-2 text-base leading-6 text-warm-500">
+            {ownerName} can connect a calendar, or allow you to manage it from their Settings.
+          </p>
+        </section>
+      )
+    }
     return (
       <section className="rounded-[20px] border-2 border-cream-300 bg-white p-5 shadow-card" aria-label="Calendar setup">
         <p className="text-xs font-semibold uppercase tracking-wide text-sage-600">Calendar</p>
@@ -294,7 +307,7 @@ export default function CalendarCard({
                 {formatEventDay(event, timeZone)}
                 {event.location ? ` · ${event.location}` : ''}
               </p>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              {canManage && <div className="mt-3 grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => addCalendarEventToContext(event)}
@@ -311,19 +324,19 @@ export default function CalendarCard({
                 >
                   {eventBusy === `hide:${event.id}` ? 'Hiding' : 'Hide'}
                 </button>
-              </div>
+              </div>}
             </div>
           ))}
         </div>
       )}
-      <button
+      {canManage && <button
         type="button"
         onClick={() => setSettingsOpen(current => !current)}
         className="mt-4 min-h-[52px] w-full rounded-xl border border-cream-300 bg-white px-3 text-sm font-semibold text-warm-600 focus:outline-none focus:ring-4 focus:ring-sage-300/50"
       >
         Calendar settings
-      </button>
-      {settingsOpen && (
+      </button>}
+      {canManage && settingsOpen && (
         <div className="mt-2 rounded-xl bg-cream-100 p-2">
           <button
             type="button"
