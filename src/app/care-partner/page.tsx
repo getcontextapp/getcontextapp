@@ -35,7 +35,7 @@ export default async function CarePartnerPage({
   await linkSavedPhoneToAuth(user.id, user.phone, profile.phone_e164)
 
   const linkedProfile = await getLinkedMciProfile(supabase, profile.household_id, profile.id)
-  const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  const todayKey = getLocalDateKey(new Date(), linkedProfile?.timezone ?? profile.timezone)
   await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
 
   // Fetch last 7 days of activities
