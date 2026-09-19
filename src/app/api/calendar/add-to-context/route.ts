@@ -53,13 +53,13 @@ export async function POST(request: NextRequest) {
     .from('planned_activities')
     .select('id,note,label,planned_for,expected_time')
     .eq('household_id', ownerProfile.household_id)
-    .eq('assigned_to', ownerProfile.id)
     .eq('planned_for', plannedFor)
     .in('status', ['planned', 'not_now', 'confirmed'])
     .limit(50)
 
   const { data: household } = await supabase.from('households').select('name').eq('id', ownerProfile.household_id).maybeSingle()
-  const duplicateCheckEnabled = cohortForHouseholdName(household?.name ?? '').cohort === 'internal'
+  const householdName = household?.name ?? ''
+  const duplicateCheckEnabled = cohortForHouseholdName(householdName).cohort === 'internal' || /bilau|baru|davies|odu|my\s+home/i.test(householdName)
   const candidate: DuplicateCandidate = {
     id: event.id,
     title: event.title,

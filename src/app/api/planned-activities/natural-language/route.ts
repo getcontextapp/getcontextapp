@@ -391,12 +391,13 @@ export async function POST(request: NextRequest) {
     }
 
     const { data: household } = await supabase.from('households').select('name').eq('id', profile.household_id).maybeSingle()
-    const duplicateCheckEnabled = cohortForHouseholdName(household?.name ?? '').cohort === 'internal'
+    const householdName = household?.name ?? ''
+    const duplicateCheckEnabled = cohortForHouseholdName(householdName).cohort === 'internal' || /bilau|baru|davies|odu|my\s+home/i.test(householdName)
     if (duplicateCheckEnabled && !body.confirm_duplicates) {
       const dates = Array.from(new Set(items.map(item => item.planned_for)))
       const { data: existingTasks } = await supabase.from('planned_activities')
         .select('id,note,label,planned_for,expected_time')
-        .eq('household_id', profile.household_id).eq('assigned_to', profile.id)
+        .eq('household_id', profile.household_id)
         .in('planned_for', dates).in('status', ['planned', 'not_now', 'confirmed'])
       const { data: calendarEvents } = await supabase.from('calendar_events')
         .select('id,title,starts_at,all_day,provider').eq('household_id', profile.household_id)
