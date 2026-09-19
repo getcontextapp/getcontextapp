@@ -27,6 +27,15 @@ interface DraftModification extends DraftPlan {
   planned_for?: string
 }
 
+interface DuplicateWarning {
+  input_title: string
+  id: string
+  title: string
+  source: 'Context' | 'Google Calendar'
+  planned_for: string
+  expected_time: string | null
+}
+
 interface Props {
   plannedFor: string
   onSaved: (items: PlannedActivity[]) => void
@@ -49,6 +58,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
   const [cancelPrompt, setCancelPrompt] = useState(false)
   const [savingExact, setSavingExact] = useState(false)
   const [exactSaved, setExactSaved] = useState(false)
+  const [duplicateWarning, setDuplicateWarning] = useState<DuplicateWarning[]>([])
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const inputModeRef = useRef<'keyboard' | 'voice'>('keyboard')
   const parsedDraftsRef = useRef('')
@@ -69,6 +79,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
 
     setParsing(true)
     setError(null)
+    setDuplicateWarning([])
     setSavedCapture(null)
     try {
       const response = await fetch('/api/planned-activities/natural-language', {
@@ -199,11 +210,17 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
           planned_for: plannedFor,
           input_mode: inputModeRef.current,
           was_corrected: parsedDraftsRef.current !== JSON.stringify(validDrafts),
+          confirm_duplicates: duplicateWarning.length > 0,
           items: validDrafts.map(item => ({ ...item, planned_for: item.planned_for ?? plannedFor })),
         }),
       })
       const result = await response.json()
       if (!response.ok) {
+        if (response.status === 409 && result.duplicate_warning) {
+          setDuplicateWarning(result.duplicates ?? [])
+          setError(null)
+          return
+        }
         setError(result.error ?? 'Context could not save these plans.')
         return
       }
@@ -211,6 +228,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
       onSaved(result.items)
       setMessage('')
       setDrafts([])
+      setDuplicateWarning([])
       setClarification(null)
       setExpanded(false)
     } catch {
@@ -257,6 +275,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
   }
 
   function updateDraft(index: number, patch: Partial<DraftPlan>) {
+    setDuplicateWarning([])
     setDrafts(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
   }
 
@@ -424,6 +443,13 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
               })}
             </div>
 
+            {duplicateWarning.length > 0 && <div className="mt-4 rounded-2xl border-2 border-terracotta-200 bg-terracotta-50 p-4">
+              <p className="font-semibold text-warm-900">This looks like something already planned.</p>
+              <p className="mt-1 text-sm leading-5 text-warm-600">Keep one to avoid duplicate reminders, or keep both if they are separate.</p>
+              <div className="mt-3 space-y-2">
+                {duplicateWarning.map(candidate => <p key={`${candidate.input_title}-${candidate.id}`} className="text-sm text-warm-700"><strong>{candidate.input_title}</strong> matches “{candidate.title}” ({candidate.source}).</p>)}
+              </div>
+            </div>}
             {error && <p className="text-sm text-terracotta-600 mt-3">{error}</p>}
             <button
               type="button"
@@ -431,7 +457,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
               disabled={saving || drafts.length === 0}
               className="w-full rounded-xl bg-warm-700 py-3.5 mt-5 text-base font-medium text-cream-50 disabled:opacity-50"
             >
-              {saving ? 'Adding plans...' : `Add ${drafts.length} ${drafts.length === 1 ? 'plan' : 'plans'} to Context`}
+              {saving ? 'Adding plans...' : duplicateWarning.length > 0 ? 'Keep both and add' : `Add ${drafts.length} ${drafts.length === 1 ? 'plan' : 'plans'} to Context`}
             </button>
             <button
               type="button"

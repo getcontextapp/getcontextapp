@@ -18,6 +18,8 @@ import {
   splitPlanClauses,
 } from '@/lib/natural-language-input'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
+import { isLikelyDuplicate, type DuplicateCandidate } from '@/lib/duplicate-detection'
+import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 
 const VALID_CATEGORIES = new Set(ACTIVITY_TILES.map(tile => tile.category))
 const VALID_PERIODS = new Set<ExpectedPeriod>(['morning', 'afternoon', 'evening', 'anytime'])
@@ -124,6 +126,7 @@ export async function POST(request: NextRequest) {
     planned_for?: string
     input_mode?: 'keyboard' | 'voice'
     was_corrected?: boolean
+    confirm_duplicates?: boolean
     items?: Array<{
       category?: ActivityCategory
       note?: string
@@ -385,6 +388,31 @@ export async function POST(request: NextRequest) {
 
     if (items.length === 0 || items.some(item => !item.planned_for)) {
       return NextResponse.json({ error: 'Keep at least one plan before saving.' }, { status: 400 })
+    }
+
+    const { data: household } = await supabase.from('households').select('name').eq('id', profile.household_id).maybeSingle()
+    const duplicateCheckEnabled = cohortForHouseholdName(household?.name ?? '').cohort === 'internal'
+    if (duplicateCheckEnabled && !body.confirm_duplicates) {
+      const dates = Array.from(new Set(items.map(item => item.planned_for)))
+      const { data: existingTasks } = await supabase.from('planned_activities')
+        .select('id,note,label,planned_for,expected_time')
+        .eq('household_id', profile.household_id).eq('assigned_to', profile.id)
+        .in('planned_for', dates).in('status', ['planned', 'not_now', 'confirmed'])
+      const { data: calendarEvents } = await supabase.from('calendar_events')
+        .select('id,title,starts_at,all_day,provider').eq('household_id', profile.household_id)
+        .eq('owner_profile_id', profile.id).eq('status', 'confirmed').is('hidden_at', null)
+      const candidates: DuplicateCandidate[] = [
+        ...(existingTasks ?? []).map(task => ({ id: task.id, title: task.note || task.label, source: 'Context' as const, planned_for: task.planned_for, expected_time: task.expected_time })),
+        ...(calendarEvents ?? []).map(event => ({
+          id: event.id,
+          title: event.title,
+          source: 'Google Calendar' as const,
+          planned_for: getLocalDateKey(new Date(event.starts_at), profile.timezone),
+          expected_time: event.all_day ? null : new Date(event.starts_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: profile.timezone }),
+        })),
+      ]
+      const duplicates = items.flatMap(item => candidates.filter(candidate => isLikelyDuplicate({ title: item.note, planned_for: item.planned_for, expected_time: item.expected_time }, candidate)).map(candidate => ({ input_title: item.note, ...candidate })))
+      if (duplicates.length > 0) return NextResponse.json({ duplicate_warning: true, duplicates }, { status: 409 })
     }
 
     const rows = items.map(item => ({

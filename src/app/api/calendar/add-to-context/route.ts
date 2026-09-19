@@ -4,6 +4,8 @@ import { getLocalDateKey } from '@/lib/dates'
 import { calendarPlanExistingMessage, calendarPlanTiming } from '@/lib/calendar-plan'
 import { getCalendarDashboardData, resolveCalendarOwnerProfile } from '@/lib/calendar-sync'
 import { createServerClient } from '@/lib/supabase-server'
+import { isLikelyDuplicate, type DuplicateCandidate } from '@/lib/duplicate-detection'
+import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -21,7 +23,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Household setup is needed first.' }, { status: 403 })
   }
 
-  const body = await request.json().catch(() => ({})) as { owner_profile_id?: string; event_id?: string }
+  const body = await request.json().catch(() => ({})) as { owner_profile_id?: string; event_id?: string; confirm_duplicates?: boolean }
   const ownerProfile = await resolveCalendarOwnerProfile(supabase, profile, body.owner_profile_id, true)
   if (!ownerProfile?.household_id || ownerProfile.household_id !== profile.household_id) {
     return NextResponse.json({ error: 'Calendar management is not enabled for this care partner.' }, { status: 403 })
@@ -49,17 +51,28 @@ export async function POST(request: NextRequest) {
 
   const { data: existingPlans } = await supabase
     .from('planned_activities')
-    .select('id')
+    .select('id,note,label,planned_for,expected_time')
     .eq('household_id', ownerProfile.household_id)
     .eq('assigned_to', ownerProfile.id)
     .eq('planned_for', plannedFor)
-    .ilike('label', event.title)
     .in('status', ['planned', 'not_now', 'confirmed'])
-    .limit(1)
+    .limit(50)
 
-  if (existingPlans && existingPlans.length > 0) {
+  const { data: household } = await supabase.from('households').select('name').eq('id', ownerProfile.household_id).maybeSingle()
+  const duplicateCheckEnabled = cohortForHouseholdName(household?.name ?? '').cohort === 'internal'
+  const candidate: DuplicateCandidate = {
+    id: event.id,
+    title: event.title,
+    source: 'Google Calendar',
+    planned_for: plannedFor,
+    expected_time: expectedTime,
+  }
+  const taskDuplicate = (existingPlans ?? []).find(plan => isLikelyDuplicate({ title: plan.note || plan.label, planned_for: plan.planned_for, expected_time: plan.expected_time }, candidate))
+  if (duplicateCheckEnabled && !body.confirm_duplicates && taskDuplicate) {
     const todayKey = getLocalDateKey(new Date(), ownerProfile.timezone)
     return NextResponse.json({
+      duplicate_warning: true,
+      duplicates: [{ input_title: event.title, id: taskDuplicate.id, title: taskDuplicate.note || taskDuplicate.label, source: 'Context', planned_for: plannedFor, expected_time: expectedTime }],
       error: calendarPlanExistingMessage(plannedFor, todayKey),
     }, { status: 409 })
   }

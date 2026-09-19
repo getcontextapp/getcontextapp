@@ -124,6 +124,7 @@ export default function CalendarCard({
   const [eventBusy, setEventBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [duplicateEvent, setDuplicateEvent] = useState<CalendarEvent | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const displayEvents = useMemo(() => displayCalendarEvents(events, timeZone), [events, timeZone])
 
@@ -191,7 +192,7 @@ export default function CalendarCard({
     const response = await fetch('/api/calendar/add-to-context', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ owner_profile_id: ownerProfileId, event_id: event.id }),
+      body: JSON.stringify({ owner_profile_id: ownerProfileId, event_id: event.id, confirm_duplicates: duplicateEvent?.id === event.id }),
     })
     const result = await response.json().catch(() => ({})) as {
       calendar?: CalendarDashboardData
@@ -200,10 +201,16 @@ export default function CalendarCard({
     }
     setEventBusy(null)
     if (!response.ok || !result.calendar) {
+      if (response.status === 409 && (result as { duplicate_warning?: boolean }).duplicate_warning) {
+        setDuplicateEvent(event)
+        setError(null)
+        return
+      }
       setError(result.error || 'Could not add this to Context.')
       return
     }
     onCalendarUpdated?.(result.calendar)
+    setDuplicateEvent(null)
     if (result.plannedActivity) {
       onPlannedActivityAdded?.(result.plannedActivity)
       setMessage(calendarPlanAddedMessage(
@@ -307,6 +314,11 @@ export default function CalendarCard({
                 {formatEventDay(event, timeZone)}
                 {event.location ? ` · ${event.location}` : ''}
               </p>
+              {duplicateEvent?.id === event.id && <div className="mt-3 rounded-xl border-2 border-terracotta-200 bg-terracotta-50 p-3 text-sm text-warm-700">
+                <p className="font-semibold text-warm-900">This looks like an existing Context task.</p>
+                <p className="mt-1">Keep one to avoid duplicate reminders, or keep both if they are separate.</p>
+                <button type="button" onClick={() => addCalendarEventToContext(event)} className="mt-3 min-h-11 w-full rounded-xl bg-warm-700 px-3 text-sm font-semibold text-white">Keep both and add</button>
+              </div>}
               {canManage && <div className="mt-3 grid grid-cols-2 gap-2">
                 <button
                   type="button"
