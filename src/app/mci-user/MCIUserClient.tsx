@@ -33,6 +33,7 @@ interface Props {
   dashboardSource: 'sms_link' | 'direct' | 'home_screen'
   initialNotificationTaskId: string | null
   initialNotificationEventId: string | null
+  unifiedTodayEnabled?: boolean
 }
 
 const PERIOD_ORDER: Record<string, number> = {
@@ -65,7 +66,7 @@ const VISIBLE_PLAN_STATUSES = new Set(['planned', 'not_now', 'confirmed'])
 type PlanAction = 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'remove_today' | 'stop_repeating'
 type TaskRemovalAction = 'remove_today' | 'stop_repeating' | 'delete'
 
-export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource, initialNotificationTaskId, initialNotificationEventId }: Props) {
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource, initialNotificationTaskId, initialNotificationEventId, unifiedTodayEnabled = false }: Props) {
   const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
@@ -739,7 +740,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           onRecallRequested={openRecovery}
         />
 
-        <section id="todays-plan" tabIndex={-1} className="rounded-[20px] border-2 border-cream-300 bg-white p-4 shadow-card focus:outline-none">
+        {unifiedTodayEnabled && <section id="todays-plan" tabIndex={-1} className="rounded-[20px] border-2 border-cream-300 bg-white p-4 shadow-card focus:outline-none">
           <div className="flex items-center justify-between border-b border-cream-200 pb-3">
             <h2 className="font-serif text-2xl font-semibold text-warm-900">Today</h2>
             <span className="text-xs text-warm-400">{agendaItems.length} items</span>
@@ -765,9 +766,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             </div>
           )}
           <Link href="/mci-user/calendar" className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800"><span aria-hidden="true">📅</span>View full calendar</Link>
-        </section>
+        </section>}
 
-        <div aria-hidden="true" className="hidden">
+        <div aria-hidden={unifiedTodayEnabled} className={unifiedTodayEnabled ? 'hidden' : ''}>
         {/* Legacy Today's Plan retained for action compatibility during rollout. */}
         <div id="todays-plan" tabIndex={-1} className="animate-fade-up scroll-mt-4 rounded-[20px] border-2 border-cream-300 bg-white p-4 shadow-card focus:outline-none">
           <div className="flex items-center justify-between border-b border-cream-200 pb-3">

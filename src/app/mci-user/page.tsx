@@ -86,6 +86,12 @@ export default async function MCIUserPage({
   const members = await getHouseholdMembers(supabase, profile.household_id, profile.id)
   const carePartner = members.carePartners.find(member => member.phone_e164) ?? members.carePartners[0] ?? null
   const calendar = await getCalendarDashboardData(supabase, profile)
+  const { data: unifiedTodayFlag } = await supabase
+    .from('household_feature_flags')
+    .select('enabled')
+    .eq('household_id', profile.household_id)
+    .eq('feature_key', 'unified_today_view')
+    .maybeSingle()
 
   return (
     <MCIUserClient
@@ -100,6 +106,7 @@ export default async function MCIUserPage({
       dashboardSource={dashboardSource(params?.source)}
       initialNotificationTaskId={firstParam(params?.notificationTask)}
       initialNotificationEventId={firstParam(params?.notificationEvent)}
+      unifiedTodayEnabled={unifiedTodayFlag?.enabled === true}
     />
   )
 }
