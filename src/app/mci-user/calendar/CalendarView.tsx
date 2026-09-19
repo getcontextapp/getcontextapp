@@ -34,7 +34,9 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState({ title: '', time: '', date: '' })
   const [busy, setBusy] = useState(false)
+  const [connectionBusy, setConnectionBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [homePending, setHomePending] = useState(false)
   const items = useMemo(
     () => buildUnifiedCalendarItems({ events, plans: localPlans, linkedPlanIds, timeZone }),
     [events, localPlans, linkedPlanIds, timeZone],
@@ -95,12 +97,28 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
     window.location.reload()
   }
 
+  async function connectGoogleCalendar() {
+    setConnectionBusy(true); setError(null)
+    const response = await fetch('/api/calendar/google/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ owner_profile_id: ownerProfileId }) })
+    const result = await response.json().catch(() => ({})) as { url?: string; error?: string }
+    if (!response.ok || !result.url) { setConnectionBusy(false); setError(result.error || 'Could not start Google Calendar setup.'); return }
+    window.location.href = result.url
+  }
+
+  async function disconnectGoogleCalendar() {
+    setConnectionBusy(true); setError(null)
+    const response = await fetch('/api/calendar/disconnect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ owner_profile_id: ownerProfileId }) })
+    const result = await response.json().catch(() => ({})) as { error?: string }
+    if (!response.ok) { setConnectionBusy(false); setError(result.error || 'Could not disconnect Google Calendar.'); return }
+    window.location.reload()
+  }
+
   return (
     <main className="min-h-svh bg-cream-50 pb-10 safe-bottom">
       <header className="border-b border-cream-200 bg-cream-100 safe-top">
         <div className="mx-auto max-w-lg px-5 py-5">
-          <Link href={homeHref} className="inline-flex min-h-11 items-center text-base font-semibold text-sage-700 focus:outline-none focus:ring-2 focus:ring-sage-300">
-            ← Home
+          <Link href={homeHref} onClick={() => setHomePending(true)} className="inline-flex min-h-11 items-center text-base font-semibold text-sage-700 active:scale-[0.98] transition-transform focus:outline-none focus:ring-2 focus:ring-sage-300" aria-busy={homePending}>
+            ← {homePending ? 'Opening Home…' : 'Home'}
           </Link>
           <div className="mt-3 flex items-end justify-between gap-4">
             <div>
@@ -115,6 +133,15 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
       </header>
 
       <div className="mx-auto max-w-lg space-y-4 px-5 pt-5">
+        <section className="rounded-[22px] border-2 border-cream-300 bg-white p-4 shadow-card" aria-label="Google Calendar connection">
+          <p className="text-xs font-semibold uppercase tracking-wide text-sage-600">Google Calendar</p>
+          <h2 className="mt-1 font-serif text-xl font-semibold text-warm-900">{connected ? 'Connected' : 'Not connected'}</h2>
+          <p className="mt-1 text-sm leading-5 text-warm-500">Context can display linked events, but cannot edit Google Calendar events.</p>
+          {canManage ? <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={() => void connectGoogleCalendar()} disabled={connectionBusy} className="min-h-12 rounded-xl bg-warm-700 px-3 text-sm font-semibold text-white active:scale-[0.99] transition-transform disabled:opacity-60">{connectionBusy && !connected ? 'Opening Google…' : connected ? 'Change Google account' : 'Connect Google Calendar'}</button>
+            {connected && <button type="button" onClick={() => void disconnectGoogleCalendar()} disabled={connectionBusy} className="min-h-12 rounded-xl border border-terracotta-200 bg-white px-3 text-sm font-semibold text-terracotta-700 active:scale-[0.99] transition-transform disabled:opacity-60">{connectionBusy ? 'Disconnecting…' : 'Disconnect calendar'}</button>}
+          </div> : <p className="mt-3 rounded-xl bg-cream-100 px-3 py-3 text-sm font-medium text-warm-600">View only. The primary participant controls this connection in Settings.</p>}
+        </section>
         {showAdd && canManage && <section className="rounded-[22px] border-2 border-cream-300 bg-white p-4 shadow-card" aria-label="Add Context task">
           <p className="text-sm font-semibold text-sage-700">Add to Context calendar</p>
           <p className="mt-1 text-sm text-warm-500">This is a Context task with a Done button. Google events remain read-only.</p>
