@@ -46,6 +46,8 @@ export default async function CalendarPage() {
       plans={(planResult.data ?? []) as PlannedActivity[]}
       linkedPlanIds={calendar.linkedPlanIds}
       connected={Boolean(calendar.connection)}
+      canManage
+      ownerProfileId={profile.id}
     />
   )
 }

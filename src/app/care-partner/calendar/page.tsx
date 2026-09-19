@@ -45,6 +45,8 @@ export default async function CarePartnerCalendarPage() {
       plans={(planResult.data ?? []) as PlannedActivity[]}
       linkedPlanIds={calendar.linkedPlanIds}
       connected={Boolean(calendar.connection)}
+      canManage={Boolean(participant.care_partner_calendar_management)}
+      ownerProfileId={participant.id}
       homeHref="/care-partner"
       viewLabel={`${participant.display_name}'s schedule`}
     />

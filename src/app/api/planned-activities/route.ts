@@ -309,9 +309,11 @@ export async function PATCH(request: NextRequest) {
       ? body.repeat_rule as RepeatRule
       : plannedActivity.repeat_rule ?? 'none'
     const updateValues = {
+      label: body.note?.trim().slice(0, 160) || plannedActivity.label,
       note: body.note?.trim().slice(0, 160) || plannedActivity.note,
       expected_period: expectedTime ? periodForTime(expectedTime) : body.expected_period ?? plannedActivity.expected_period,
       expected_time: expectedTime,
+      ...(body.planned_for ? { planned_for: body.planned_for } : {}),
       repeat_rule: repeatRule,
       series_id: repeatRule === 'none' ? null : plannedActivity.series_id ?? plannedActivity.id,
       updated_at: new Date().toISOString(),

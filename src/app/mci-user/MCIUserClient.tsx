@@ -765,7 +765,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               })}
             </div>
           )}
-          <Link href="/mci-user/calendar" className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800"><span aria-hidden="true">📅</span>View full calendar</Link>
+          <Link prefetch href="/mci-user/calendar" className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800 active:scale-[0.99] transition-transform"><span aria-hidden="true">📅</span>View full calendar</Link>
         </section>}
 
         <div aria-hidden={unifiedTodayEnabled} className={unifiedTodayEnabled ? 'hidden' : ''}>
@@ -884,9 +884,9 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               })}
             </div>
           )}
-          <Link
+          <Link prefetch
             href="/mci-user/calendar"
-            className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60"
+            className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800 active:scale-[0.99] transition-transform focus:outline-none focus:ring-4 focus:ring-sage-300/60"
           >
             <span aria-hidden="true">📅</span>
             View full calendar

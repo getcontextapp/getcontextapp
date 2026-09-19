@@ -404,7 +404,7 @@ export default function CarePartnerClient({ careProfile, mciProfile, initialActi
                 })}
               </div>
             )}
-            <Link href="/care-partner/calendar" className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800 focus:outline-none focus:ring-4 focus:ring-sage-300/60">
+            <Link prefetch href="/care-partner/calendar" className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800 active:scale-[0.99] transition-transform focus:outline-none focus:ring-4 focus:ring-sage-300/60">
               <span aria-hidden="true">📅</span>View full calendar
             </Link>
             {!canManageSchedule && <p className="mt-3 text-center text-xs leading-5 text-warm-400">View only. {mciProfile.display_name.split(/\s+/)[0]} controls editing access in Settings.</p>}

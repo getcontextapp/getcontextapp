@@ -13,6 +13,8 @@ type Props = {
   plans: PlannedActivity[]
   linkedPlanIds: string[]
   connected: boolean
+  canManage: boolean
+  ownerProfileId: string
   homeHref?: string
   viewLabel?: string
 }
@@ -23,12 +25,19 @@ function readableDate(dateKey: string, options?: Intl.DateTimeFormatOptions) {
   })
 }
 
-export default function CalendarView({ firstName, todayKey, timeZone, events, plans, linkedPlanIds, connected, homeHref = '/mci-user', viewLabel = 'Your schedule' }: Props) {
+export default function CalendarView({ firstName, todayKey, timeZone, events, plans, linkedPlanIds, connected, canManage, ownerProfileId, homeHref = '/mci-user', viewLabel = 'Your schedule' }: Props) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [selectedDate, setSelectedDate] = useState(todayKey)
+  const [localPlans, setLocalPlans] = useState(plans)
+  const [showAdd, setShowAdd] = useState(false)
+  const [draft, setDraft] = useState({ title: '', time: '' })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState({ title: '', time: '', date: '' })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const items = useMemo(
-    () => buildUnifiedCalendarItems({ events, plans, linkedPlanIds, timeZone }),
-    [events, plans, linkedPlanIds, timeZone],
+    () => buildUnifiedCalendarItems({ events, plans: localPlans, linkedPlanIds, timeZone }),
+    [events, localPlans, linkedPlanIds, timeZone],
   )
   const selectedItems = items.filter(item => item.dateKey === selectedDate)
   const weekStart = startOfWeek(selectedDate)
@@ -43,6 +52,47 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
       date.setUTCMonth(date.getUTCMonth() + direction, 1)
       setSelectedDate(date.toISOString().slice(0, 10))
     }
+  }
+
+  function periodForTime(time: string) {
+    if (!time) return 'anytime'
+    const hour = Number(time.slice(0, 2))
+    return hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'
+  }
+
+  async function addContextTask() {
+    if (!draft.title.trim()) return
+    setBusy(true); setError(null)
+    const response = await fetch('/api/planned-activities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: 'custom', label: draft.title.trim(), note: draft.title.trim(), planned_for: selectedDate, expected_time: draft.time || null, expected_period: periodForTime(draft.time), repeat_rule: 'none' }) })
+    const result = await response.json().catch(() => ({}))
+    setBusy(false)
+    if (!response.ok) { setError(result.error || 'Could not add this task.'); return }
+    setLocalPlans(current => [...current, result]); setDraft({ title: '', time: '' }); setShowAdd(false)
+  }
+
+  async function updateContextTask() {
+    if (!editingId || !editDraft.title.trim()) return
+    setBusy(true); setError(null)
+    const response = await fetch('/api/planned-activities', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: editingId, action: 'update', note: editDraft.title.trim(), planned_for: editDraft.date, expected_time: editDraft.time || null, expected_period: periodForTime(editDraft.time), repeat_rule: 'none' }) })
+    const result = await response.json().catch(() => ({})); setBusy(false)
+    if (!response.ok) { setError(result.error || 'Could not update this task.'); return }
+    setLocalPlans(current => current.map(plan => plan.id === editingId ? result.plannedActivity : plan)); setEditingId(null)
+  }
+
+  async function deleteContextTask(id: string) {
+    setBusy(true); setError(null)
+    const response = await fetch('/api/planned-activities', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action: 'delete' }) })
+    const result = await response.json().catch(() => ({})); setBusy(false)
+    if (!response.ok) { setError(result.error || 'Could not delete this task.'); return }
+    setLocalPlans(current => current.filter(plan => plan.id !== id))
+  }
+
+  async function hideGoogleEvent(id: string) {
+    setBusy(true); setError(null)
+    const response = await fetch('/api/calendar/hide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ owner_profile_id: ownerProfileId, event_id: id }) })
+    const result = await response.json().catch(() => ({})); setBusy(false)
+    if (!response.ok) { setError(result.error || 'Could not hide this calendar event.'); return }
+    window.location.reload()
   }
 
   return (
@@ -60,10 +110,19 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
             </div>
             <span className="text-3xl" aria-hidden="true">📅</span>
           </div>
+          {canManage && <button type="button" onClick={() => { setShowAdd(current => !current); setError(null) }} className="mt-4 min-h-12 w-full rounded-xl bg-warm-700 px-4 text-base font-semibold text-white active:scale-[0.99] transition-transform">{showAdd ? 'Close add form' : '+ Add to Context calendar'}</button>}
         </div>
       </header>
 
       <div className="mx-auto max-w-lg space-y-4 px-5 pt-5">
+        {showAdd && canManage && <section className="rounded-[22px] border-2 border-cream-300 bg-white p-4 shadow-card" aria-label="Add Context task">
+          <p className="text-sm font-semibold text-sage-700">Add to Context calendar</p>
+          <p className="mt-1 text-sm text-warm-500">This is a Context task with a Done button. Google events remain read-only.</p>
+          <input value={draft.title} onChange={event => setDraft(current => ({ ...current, title: event.target.value }))} placeholder="What needs to be done?" className="mt-3 min-h-12 w-full rounded-xl border border-cream-300 bg-cream-50 px-4 text-base" />
+          <div className="mt-3 grid grid-cols-2 gap-2"><input type="date" value={selectedDate} onChange={event => setSelectedDate(event.target.value)} className="min-h-12 rounded-xl border border-cream-300 bg-cream-50 px-3 text-base" /><input type="time" value={draft.time} onChange={event => setDraft(current => ({ ...current, time: event.target.value }))} className="min-h-12 rounded-xl border border-cream-300 bg-cream-50 px-3 text-base" /></div>
+          <button type="button" onClick={() => void addContextTask()} disabled={busy || !draft.title.trim()} className="mt-3 min-h-12 w-full rounded-xl bg-sage-600 px-4 text-base font-semibold text-white disabled:opacity-50">{busy ? 'Saving…' : 'Save task'}</button>
+        </section>}
+        {error && <p className="rounded-xl bg-cream-100 px-4 py-3 text-sm font-medium text-terracotta-700">{error}</p>}
         <div className="grid grid-cols-2 rounded-2xl bg-cream-200 p-1" aria-label="Calendar view">
           {(['week', 'month'] as const).map(option => (
             <button key={option} type="button" onClick={() => setView(option)} aria-pressed={view === option}
@@ -148,6 +207,9 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
                     {item.status === 'confirmed' && <span className="rounded-full bg-sage-100 px-3 py-1 text-xs font-semibold text-sage-700">Done</span>}
                     {item.status === 'not_now' && <span className="rounded-full bg-cream-200 px-3 py-1 text-xs font-semibold text-warm-600">Later</span>}
                   </div>
+                  {canManage && item.source === 'context' && item.status !== 'confirmed' && <div className="mt-3 flex gap-2"><button type="button" onClick={() => { const plan = localPlans.find(candidate => candidate.id === item.id.replace(/^context:/, '')); setEditingId(item.id.replace(/^context:/, '')); setEditDraft({ title: item.title, time: plan?.expected_time ?? '', date: item.dateKey }) }} className="min-h-11 flex-1 rounded-xl border border-cream-300 bg-white px-3 text-sm font-semibold text-warm-700">Edit</button><button type="button" onClick={() => void deleteContextTask(item.id.replace(/^context:/, ''))} disabled={busy} className="min-h-11 flex-1 rounded-xl border border-terracotta-200 bg-white px-3 text-sm font-semibold text-terracotta-700">Delete</button></div>}
+                  {canManage && item.source === 'google' && <button type="button" onClick={() => void hideGoogleEvent(item.id.replace(/^google:/, ''))} disabled={busy} className="mt-3 min-h-11 w-full rounded-xl border border-cream-300 bg-white px-3 text-sm font-semibold text-warm-600">Hide from Context</button>}
+                  {editingId === item.id.replace(/^context:/, '') && <div className="mt-3 rounded-xl bg-white p-3"><input value={editDraft.title} onChange={event => setEditDraft(current => ({ ...current, title: event.target.value }))} className="min-h-11 w-full rounded-xl border border-cream-300 px-3 text-base" /><div className="mt-2 grid grid-cols-2 gap-2"><input type="date" value={editDraft.date} onChange={event => setEditDraft(current => ({ ...current, date: event.target.value }))} className="min-h-11 rounded-xl border border-cream-300 px-2" /><input type="time" value={editDraft.time} onChange={event => setEditDraft(current => ({ ...current, time: event.target.value }))} className="min-h-11 rounded-xl border border-cream-300 px-2" /></div><div className="mt-2 flex gap-2"><button type="button" onClick={() => void updateContextTask()} disabled={busy} className="min-h-11 flex-1 rounded-xl bg-sage-600 text-sm font-semibold text-white">Save</button><button type="button" onClick={() => setEditingId(null)} className="min-h-11 flex-1 rounded-xl border border-cream-300 text-sm font-semibold">Cancel</button></div></div>}
                 </article>
               ))}
             </div>
