@@ -11,3 +11,7 @@ test('matches similar same-time titles but not different times', () => {
   assert.equal(isLikelyDuplicate(input, { id: '1', title: 'Call pharmacy', source: 'Context', planned_for: '2026-09-19', expected_time: '14:00' }), true)
   assert.equal(isLikelyDuplicate(input, { id: '2', title: 'Call pharmacy', source: 'Context', planned_for: '2026-09-19', expected_time: '15:00' }), false)
 })
+
+test('warns when a matching same-day item has no explicit time', () => {
+  assert.equal(isLikelyDuplicate({ title: 'Trying Context', planned_for: '2026-09-19', expected_time: null }, { id: '1', title: 'Trying Context', source: 'Google Calendar', planned_for: '2026-09-19', expected_time: '14:10' }), true)
+})

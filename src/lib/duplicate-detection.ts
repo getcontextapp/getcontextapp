@@ -20,8 +20,12 @@ function similarity(left: string, right: string) {
 
 export function isLikelyDuplicate(input: { title: string; planned_for: string; expected_time: string | null }, candidate: DuplicateCandidate) {
   if (input.planned_for !== candidate.planned_for) return false
-  if (!input.expected_time || !candidate.expected_time || input.expected_time.slice(0, 5) !== candidate.expected_time.slice(0, 5)) return false
   const left = normalizeDuplicateTitle(input.title)
   const right = normalizeDuplicateTitle(candidate.title)
-  return left === right || similarity(left, right) >= 0.6
+  const titleMatches = left === right || similarity(left, right) >= 0.6
+  if (!titleMatches) return false
+  // If either side is untimed, warn rather than silently creating a second
+  // same-day item. The user can still explicitly keep both.
+  if (!input.expected_time || !candidate.expected_time) return true
+  return input.expected_time.slice(0, 5) === candidate.expected_time.slice(0, 5)
 }
