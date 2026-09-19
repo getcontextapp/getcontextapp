@@ -20,6 +20,7 @@ import { isPlanForDisplayedDate } from '@/lib/calendar-plan'
 import type { ContinuityCard, RecoveryIntent, RecoverySession, ScoredCandidate } from '@/lib/context-rank'
 import type { CalendarDashboardData } from '@/lib/calendar-sync'
 import ActionPair from '@/components/today/ActionPair'
+import FeatureDiscoveryCard from '@/components/mci/FeatureDiscoveryCard'
 
 interface Props {
   profile: Profile
@@ -34,6 +35,7 @@ interface Props {
   initialNotificationTaskId: string | null
   initialNotificationEventId: string | null
   unifiedTodayEnabled?: boolean
+  featureDiscoveryEnabled?: boolean
 }
 
 const PERIOD_ORDER: Record<string, number> = {
@@ -66,7 +68,7 @@ const VISIBLE_PLAN_STATUSES = new Set(['planned', 'not_now', 'confirmed'])
 type PlanAction = 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'remove_today' | 'stop_repeating'
 type TaskRemovalAction = 'remove_today' | 'stop_repeating' | 'delete'
 
-export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource, initialNotificationTaskId, initialNotificationEventId, unifiedTodayEnabled = false }: Props) {
+export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource, initialNotificationTaskId, initialNotificationEventId, unifiedTodayEnabled = false, featureDiscoveryEnabled = false }: Props) {
   const [supabase] = useState(createClient)
 
   const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
@@ -75,6 +77,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [calendarConnection, setCalendarConnection] = useState(calendar.connection)
   const [calendarEvents, setCalendarEvents] = useState(calendar.events)
   const [showSettings, setShowSettings] = useState(false)
+  const [discoveryReset, setDiscoveryReset] = useState(0)
   const [showHousehold, setShowHousehold] = useState(false)
   const [deleteCandidate, setDeleteCandidate] = useState<{ task: PlannedActivity; action: TaskRemovalAction } | null>(null)
   const [editCandidate, setEditCandidate] = useState<PlannedActivity | null>(null)
@@ -733,12 +736,14 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
       <div className="max-w-lg mx-auto px-5 space-y-5 pt-5">
 
-        <NaturalLanguagePlanComposer
+        <div id="capture-entry"><NaturalLanguagePlanComposer
           plannedFor={todayKey}
           onSaved={handleNaturalPlansSaved}
           onTimelineSaved={handleTimelineSaved}
           onRecallRequested={openRecovery}
-        />
+        /></div>
+
+        {featureDiscoveryEnabled && <FeatureDiscoveryCard profileId={profile.id} resetToken={discoveryReset} />}
 
         {unifiedTodayEnabled && <section id="todays-plan" tabIndex={-1} className="rounded-[20px] border-2 border-cream-300 bg-white p-4 shadow-card focus:outline-none">
           <div className="flex items-center justify-between border-b border-cream-200 pb-3">
@@ -917,6 +922,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         <div className="space-y-3">
           <button
             type="button"
+            id="recovery-entry"
             onClick={openRecovery}
             className="w-full min-h-[68px] rounded-[18px] bg-sage-600 px-5 text-xl font-semibold text-white shadow-card active:scale-[0.99] focus:outline-none focus:ring-4 focus:ring-sage-300/70 transition-all"
           >
@@ -1136,6 +1142,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           }}
           onClose={() => setShowSettings(false)}
           onSignOut={handleSignOut}
+          onOpenDiscovery={() => setDiscoveryReset(current => current + 1)}
         />
       )}
 

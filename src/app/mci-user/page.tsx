@@ -108,6 +108,7 @@ export default async function MCIUserPage({
       initialNotificationTaskId={firstParam(params?.notificationTask)}
       initialNotificationEventId={firstParam(params?.notificationEvent)}
       unifiedTodayEnabled={unifiedTodayFlag?.enabled === true || cohortForHouseholdName(household?.name ?? '').cohort === 'internal'}
+      featureDiscoveryEnabled={cohortForHouseholdName(household?.name ?? '').cohort === 'internal'}
     />
   )
 }

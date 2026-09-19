@@ -10,6 +10,7 @@ interface Props {
   onOpenHousehold: () => void
   onClose: () => void
   onSignOut: () => void
+  onOpenDiscovery?: () => void
 }
 
 const GAP_OPTIONS = [
@@ -23,7 +24,7 @@ const GAP_OPTIONS = [
 
 const DEFAULT_SUMMARY_TIME = '20:00'
 
-export default function ReminderSettings({ profile, carePartner, onOpenHousehold, onClose, onSignOut }: Props) {
+export default function ReminderSettings({ profile, carePartner, onOpenHousehold, onClose, onSignOut, onOpenDiscovery }: Props) {
   const supabase = createClient()
   const [firstName, setFirstName] = useState(profile.display_name)
   const [gap, setGap] = useState(profile.reminder_gap_minutes)
@@ -92,6 +93,7 @@ export default function ReminderSettings({ profile, carePartner, onOpenHousehold
         </div>
 
         <div className="space-y-6">
+          {onOpenDiscovery && <button type="button" onClick={() => { onClose(); onOpenDiscovery() }} className="min-h-12 w-full rounded-xl border border-sage-300 bg-sage-50 px-4 text-sm font-semibold text-sage-800">Show Getting started again</button>}
           <div>
             <p className="block text-sm font-medium text-warm-700 mb-1">People using Context</p>
             <div className="mt-3 rounded-2xl border border-cream-300 bg-white p-4">
