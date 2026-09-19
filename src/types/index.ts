@@ -66,6 +66,13 @@ export interface PlannedActivity {
   confirmed_activity_log_id: string | null
   confirmed_at: string | null
   source: PlannedActivitySource
+  provider?: CalendarProvider | null
+  external_event_id?: string | null
+  sync_direction?: 'read' | 'read_write'
+  link_decision?: 'linked' | 'separate' | null
+  mark_state?: 'done' | 'attended' | 'deferred' | null
+  marked_at?: string | null
+  reminder_owner?: 'context' | 'external' | null
   created_at: string
   updated_at: string
 }
@@ -196,6 +203,9 @@ export interface CalendarEvent {
   synced_at: string
   created_at: string
   updated_at: string
+  mark_state?: 'attended' | 'deferred' | null
+  marked_at?: string | null
+  follow_up_at?: string | null
 }
 
 // ─── API Payloads ─────────────────────────────────────────────────────────────

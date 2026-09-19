@@ -19,6 +19,7 @@ import { buildRecoveryAnswerText } from '@/lib/recovery-copy'
 import { isPlanForDisplayedDate } from '@/lib/calendar-plan'
 import type { ContinuityCard, RecoveryIntent, RecoverySession, ScoredCandidate } from '@/lib/context-rank'
 import type { CalendarDashboardData } from '@/lib/calendar-sync'
+import ActionPair from '@/components/today/ActionPair'
 
 interface Props {
   profile: Profile
@@ -98,6 +99,8 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [notificationEventId, setNotificationEventId] = useState<string | null>(initialNotificationEventId)
   const [notificationActionSaving, setNotificationActionSaving] = useState(false)
   const [notificationActionError, setNotificationActionError] = useState<string | null>(null)
+  const [appointmentSavingIds, setAppointmentSavingIds] = useState<string[]>([])
+  const [completedOpen, setCompletedOpen] = useState(false)
 
   const localHour = Number(clockNow.toLocaleString('en-US', {
     timeZone: profile.timezone,
@@ -533,23 +536,37 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     item.status === 'planned' || item.status === 'not_now',
   )
   const openPlannedCount = sortedPlannedActivities.filter(a => a.status === 'planned' || a.status === 'not_now').length
-  const normalizedAgendaTitle = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
   const todayCalendarEvents = calendarEvents
     .filter(event => !event.hidden_at && getLocalDateKey(new Date(event.starts_at), profile.timezone) === todayKey)
-    .filter(event => !visiblePlannedActivities.some(plan => {
-      const taskTitle = plan.note?.trim() || plan.label
-      if (normalizedAgendaTitle(taskTitle) !== normalizedAgendaTitle(event.title)) return false
-      if (!plan.expected_time || event.all_day) return !plan.expected_time && event.all_day
-      const eventTime = new Date(event.starts_at).toLocaleTimeString('en-GB', {
-        hour: '2-digit', minute: '2-digit', hour12: false, timeZone: profile.timezone,
-      })
-      return plan.expected_time.slice(0, 5) === eventTime
-    }))
     .sort((left, right) => Date.parse(left.starts_at) - Date.parse(right.starts_at))
+  const linkedEventIds = new Set(visiblePlannedActivities.flatMap(item => item.external_event_id ? [item.external_event_id] : []))
+  const agendaItems = [
+    ...todayCalendarEvents
+      .filter(event => !linkedEventIds.has(event.id))
+      .map(event => ({ kind: 'appointment' as const, event, time: event.all_day ? null : Date.parse(event.starts_at) })),
+    ...visiblePlannedActivities.map(task => ({ kind: 'task' as const, task, time: task.expected_time ? Date.parse(`${task.planned_for}T${task.expected_time}:00`) : null })),
+  ].sort((left, right) => {
+    if (left.time === null && right.time !== null) return 1
+    if (left.time !== null && right.time === null) return -1
+    if (left.time !== null && right.time !== null) return left.time - right.time
+    return 0
+  })
   const carePartnerFirstName = carePartner?.display_name?.trim().split(/\s+/)[0] || 'care partner'
 
   function recoveryIntentTitle(intent: RecoveryIntent) {
     return [...PRIMARY_RECOVERY_INTENTS, ...MORE_RECOVERY_INTENTS].find(item => item.intent === intent)?.label ?? 'Memory help'
+  }
+
+  async function handleAppointmentMark(eventId: string, markState: 'attended' | 'deferred') {
+    if (appointmentSavingIds.includes(eventId)) return
+    setAppointmentSavingIds(current => [...current, eventId])
+    const response = await fetch('/api/calendar/mark', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_id: eventId, mark_state: markState }),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (response.ok && result.calendar?.events) setCalendarEvents(result.calendar.events)
+    setAppointmentSavingIds(current => current.filter(id => id !== eventId))
   }
 
   function recoveryConfidenceLabel(candidate: ScoredCandidate) {
@@ -722,7 +739,36 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
           onRecallRequested={openRecovery}
         />
 
-        {/* Today's Plan */}
+        <section id="todays-plan" tabIndex={-1} className="rounded-[20px] border-2 border-cream-300 bg-white p-4 shadow-card focus:outline-none">
+          <div className="flex items-center justify-between border-b border-cream-200 pb-3">
+            <h2 className="font-serif text-2xl font-semibold text-warm-900">Today</h2>
+            <span className="text-xs text-warm-400">{agendaItems.length} items</span>
+          </div>
+          {agendaItems.length === 0 ? <p className="py-5 text-center text-sm text-warm-400">Nothing planned yet.</p> : (
+            <div className="space-y-3 pt-3">
+              {agendaItems.map(item => {
+                if (item.kind === 'appointment') {
+                  const time = item.event.all_day ? 'All day' : new Date(item.event.starts_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: profile.timezone })
+                  return <div key={`calendar-${item.event.id}`} className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3">
+                    <div className="flex items-start gap-3"><span className="w-[70px] shrink-0 text-sm font-semibold text-warm-500">{time}</span><div className="min-w-0 flex-1"><p className="break-words text-base font-semibold text-warm-900">{item.event.title}</p><div className="mt-1 flex flex-wrap gap-1"><span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">Appointment</span><span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-warm-500">Google Calendar</span></div>{item.event.location && <p className="mt-1 text-xs text-warm-400">{item.event.location}</p>}</div></div>
+                    {item.event.mark_state === 'attended' ? <p className="mt-3 text-sm font-semibold text-sage-700">Attended</p> : item.event.mark_state === 'deferred' ? <p className="mt-3 text-sm font-semibold text-warm-600">Not yet — Context will follow up</p> : <ActionPair primary={{ label: 'I went', onClick: () => void handleAppointmentMark(item.event.id, 'attended'), disabled: appointmentSavingIds.includes(item.event.id) }} secondary={{ label: 'Not yet', onClick: () => void handleAppointmentMark(item.event.id, 'deferred'), disabled: appointmentSavingIds.includes(item.event.id) }} />}
+                  </div>
+                }
+                const task = item.task
+                return <div key={`task-${task.id}`} className="rounded-xl border border-cream-100 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex items-start gap-3"><span className="text-xl">{ACTIVITY_TILES.find(tile => tile.category === task.category)?.icon ?? '📌'}</span><div className="min-w-0 flex-1"><p className="break-words text-base font-semibold text-warm-900">{task.note?.trim() || task.label}</p><div className="mt-1 flex flex-wrap gap-1"><span className="rounded-full bg-sage-100 px-2 py-0.5 text-xs font-semibold text-sage-700">Context task</span><span className="text-xs text-warm-400">{formatTaskTiming(task.expected_time, task.expected_period)}{task.repeat_rule !== 'none' ? ` · ${REPEAT_LABELS[task.repeat_rule]}` : ''}</span></div></div></div>
+                  <ActionPair primary={{ label: confirmingPlanIds.includes(task.id) ? 'Saving…' : 'Done', onClick: () => void handlePlanAction(task, 'confirm'), disabled: confirmingPlanIds.includes(task.id) }} secondary={{ label: 'Move', onClick: () => { setMoveCandidate(task); setMoveDate(tomorrowKey); setMoveError(null) } }} />
+                  <button type="button" onClick={() => setOpenMoreId(current => current === task.id ? null : task.id)} className="mt-2 min-h-10 w-full text-sm font-semibold text-warm-600 underline underline-offset-4">More choices</button>
+                  {openMoreId === task.id && <div className="mt-2 rounded-xl bg-cream-100 p-2"><button type="button" onClick={() => { setEditCandidate(task); setOpenMoreId(null) }} className="min-h-11 w-full rounded-lg bg-white text-sm font-medium text-warm-700">Edit task</button><button type="button" onClick={() => setDeleteCandidate({ task, action: task.repeat_rule !== 'none' ? 'stop_repeating' : 'delete' })} className="mt-2 min-h-11 w-full rounded-lg bg-white text-sm font-medium text-terracotta-700">{task.repeat_rule !== 'none' ? 'Stop repeating' : 'Delete task'}</button></div>}
+                </div>
+              })}
+            </div>
+          )}
+          <Link href="/mci-user/calendar" className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800"><span aria-hidden="true">📅</span>View full calendar</Link>
+        </section>
+
+        <div aria-hidden="true" className="hidden">
+        {/* Legacy Today's Plan retained for action compatibility during rollout. */}
         <div id="todays-plan" tabIndex={-1} className="animate-fade-up scroll-mt-4 rounded-[20px] border-2 border-cream-300 bg-white p-4 shadow-card focus:outline-none">
           <div className="flex items-center justify-between border-b border-cream-200 pb-3">
             <h2 className="font-serif text-2xl font-semibold text-warm-900">Today</h2>
@@ -845,6 +891,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
             View full calendar
           </Link>
         </div>
+        </div>
 
         {!calendarConnection && (
           <CalendarCard
@@ -887,10 +934,11 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
         {sortedPlannedActivities.some(item => item.status === 'confirmed') && (
           <div className="animate-fade-up">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-warm-500 text-sm font-medium">Completed today</p>
-            </div>
-            <div className="space-y-2">
+            <button type="button" onClick={() => setCompletedOpen(open => !open)} aria-expanded={completedOpen} className="flex min-h-12 w-full items-center justify-between rounded-xl border border-sage-200 bg-sage-50 px-4 text-left focus:outline-none focus:ring-2 focus:ring-sage-300">
+              <span className="text-warm-600 text-sm font-semibold">Completed today ({sortedPlannedActivities.filter(item => item.status === 'confirmed').length})</span>
+              <span className="text-warm-500" aria-hidden="true">{completedOpen ? '⌃' : '⌄'}</span>
+            </button>
+            {completedOpen && <div className="mt-3 space-y-2">
               {sortedPlannedActivities.filter(item => item.status === 'confirmed').map(item => {
                 const tile = ACTIVITY_TILES.find(t => t.category === item.category)
                 const taskName = item.note?.trim() || item.label
@@ -938,7 +986,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                   </div>
                 )
               })}
-            </div>
+            </div>}
           </div>
         )}
 

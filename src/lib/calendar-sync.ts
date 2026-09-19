@@ -75,6 +75,21 @@ export type CalendarDashboardData = {
   linkedPlanIds?: string[]
 }
 
+async function attachCalendarMarks(supabase: SupabaseClient, ownerProfile: Profile, events: CalendarEvent[]) {
+  if (events.length === 0) return events
+  const { data, error } = await supabase
+    .from('calendar_event_marks')
+    .select('calendar_event_id,mark_state,marked_at,follow_up_at')
+    .eq('profile_id', ownerProfile.id)
+    .in('calendar_event_id', events.map(event => event.id))
+  if (error) {
+    if (!isMissingTableError(error)) console.error('[Calendar] Could not load appointment marks:', error.message)
+    return events
+  }
+  const marks = new Map((data ?? []).map(mark => [mark.calendar_event_id, mark]))
+  return events.map(event => ({ ...event, ...(marks.get(event.id) ?? {}) }))
+}
+
 export type CalendarRangeData = CalendarDashboardData & {
   linkedPlanIds: string[]
 }
@@ -607,7 +622,7 @@ export async function getCalendarDashboardData(
   return {
     enabled,
     connection: (connection as CalendarConnectionSummary | null) ?? null,
-    events: ((events ?? []) as CalendarEvent[]).filter(event => !event.hidden_at),
+    events: await attachCalendarMarks(supabase, ownerProfile, ((events ?? []) as CalendarEvent[]).filter(event => !event.hidden_at)),
     linkedPlanIds: await linkedCalendarPlanIds(supabase, ownerProfile.household_id),
   }
 }
@@ -636,7 +651,7 @@ export async function getCalendarRangeData(
   if (error) console.error('[Calendar] Range lookup failed:', error.message)
   return {
     ...dashboard,
-    events: ((events ?? []) as CalendarEvent[]).filter(event => !event.hidden_at),
+    events: await attachCalendarMarks(supabase, ownerProfile, ((events ?? []) as CalendarEvent[]).filter(event => !event.hidden_at)),
     linkedPlanIds: dashboard.linkedPlanIds ?? [],
   }
 }

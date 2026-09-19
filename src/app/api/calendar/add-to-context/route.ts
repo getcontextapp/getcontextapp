@@ -78,6 +78,10 @@ export async function POST(request: NextRequest) {
       planned_for: plannedFor,
       repeat_rule: 'none',
       source: 'manual',
+      external_event_id: event.id,
+      provider: event.provider,
+      link_decision: 'linked',
+      reminder_owner: 'external',
     })
     .select('*')
     .single()
