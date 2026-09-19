@@ -6,6 +6,7 @@ import { getHouseholdMembers } from '@/lib/household-links'
 import { reflectionToClient } from '@/lib/reflections'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import { getCalendarDashboardData } from '@/lib/calendar-sync'
+import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 import MCIUserClient from './MCIUserClient'
 
 function dashboardSource(value: string | string[] | undefined) {
@@ -106,7 +107,7 @@ export default async function MCIUserPage({
       dashboardSource={dashboardSource(params?.source)}
       initialNotificationTaskId={firstParam(params?.notificationTask)}
       initialNotificationEventId={firstParam(params?.notificationEvent)}
-      unifiedTodayEnabled={unifiedTodayFlag?.enabled === true}
+      unifiedTodayEnabled={unifiedTodayFlag?.enabled === true || cohortForHouseholdName(household?.name ?? '').cohort === 'internal'}
     />
   )
 }
