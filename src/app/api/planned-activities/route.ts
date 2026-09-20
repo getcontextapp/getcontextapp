@@ -113,6 +113,8 @@ export async function PATCH(request: NextRequest) {
     note?: string
     expected_period?: ExpectedPeriod
     expected_time?: string | null
+    reminder_window_start?: string | null
+    reminder_window_end?: string | null
     repeat_rule?: RepeatRule
     series_scope?: 'one' | 'future'
     source?: 'notification_action'
@@ -305,6 +307,8 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Completed tasks cannot be edited.' }, { status: 400 })
     }
     const expectedTime = body.expected_time && /^\d{2}:\d{2}$/.test(body.expected_time) ? body.expected_time : null
+    const windowStart = body.reminder_window_start && /^\d{2}:\d{2}$/.test(body.reminder_window_start) ? body.reminder_window_start : null
+    const windowEnd = body.reminder_window_end && /^\d{2}:\d{2}$/.test(body.reminder_window_end) ? body.reminder_window_end : null
     const repeatRule = REPEAT_RULES.has(body.repeat_rule as RepeatRule)
       ? body.repeat_rule as RepeatRule
       : plannedActivity.repeat_rule ?? 'none'
@@ -313,6 +317,8 @@ export async function PATCH(request: NextRequest) {
       note: body.note?.trim().slice(0, 160) || plannedActivity.note,
       expected_period: expectedTime ? periodForTime(expectedTime) : body.expected_period ?? plannedActivity.expected_period,
       expected_time: expectedTime,
+      reminder_window_start: windowStart,
+      reminder_window_end: windowEnd,
       ...(body.planned_for ? { planned_for: body.planned_for } : {}),
       repeat_rule: repeatRule,
       series_id: repeatRule === 'none' ? null : plannedActivity.series_id ?? plannedActivity.id,

@@ -437,9 +437,11 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
                         time={draft.expected_time ?? null}
                         windowStart={draft.reminder_window_start ?? null}
                         windowEnd={draft.reminder_window_end ?? null}
+                        onWindowStart={value => updateDraft(index, { reminder_window_start: value })}
+                        onWindowEnd={value => updateDraft(index, { reminder_window_end: value })}
                         repeat={draft.repeat_rule ?? 'none'}
                         onPeriod={value => updateDraft(index, { expected_period: value })}
-                        onTime={value => updateDraft(index, { expected_time: value })}
+                        onTime={value => updateDraft(index, { expected_time: value, reminder_window_start: null, reminder_window_end: null })}
                         onRepeat={value => updateDraft(index, { repeat_rule: value })}
                       />
                     </div>

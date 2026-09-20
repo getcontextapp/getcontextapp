@@ -17,6 +17,8 @@ export default function TaskScheduleFields({
   time,
   windowStart,
   windowEnd,
+  onWindowStart,
+  onWindowEnd,
   repeat,
   onPeriod,
   onTime,
@@ -26,6 +28,8 @@ export default function TaskScheduleFields({
   time: string | null
   windowStart?: string | null
   windowEnd?: string | null
+  onWindowStart?: (value: string | null) => void
+  onWindowEnd?: (value: string | null) => void
   repeat: RepeatRule
   onPeriod: (value: ExpectedPeriod) => void
   onTime: (value: string | null) => void
@@ -62,10 +66,20 @@ export default function TaskScheduleFields({
           <input type="time" value={time ?? ''} onChange={event => onTime(event.target.value || null)}
             className="bg-transparent text-base font-medium text-warm-800" />
         </label>
-        {windowStart && windowEnd && (
-          <p className="mt-2 rounded-xl bg-sage-50 px-3 py-2 text-sm font-medium text-sage-700">
-            Reminder window: {formatTime(windowStart)}–{formatTime(windowEnd)}
-          </p>
+        {windowStart && windowEnd && onWindowStart && onWindowEnd && (
+          <div className="mt-2 rounded-xl border border-sage-200 bg-sage-50 p-3">
+            <p className="mb-2 text-sm font-semibold text-sage-800">Reminder window</p>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="rounded-xl border border-sage-200 bg-white px-3 py-2 text-xs text-warm-500">
+                Start
+                <input type="time" value={windowStart} onChange={event => onWindowStart(event.target.value || null)} className="mt-1 block w-full bg-transparent text-base font-medium text-warm-800" />
+              </label>
+              <label className="rounded-xl border border-sage-200 bg-white px-3 py-2 text-xs text-warm-500">
+                End
+                <input type="time" value={windowEnd} onChange={event => onWindowEnd(event.target.value || null)} className="mt-1 block w-full bg-transparent text-base font-medium text-warm-800" />
+              </label>
+            </div>
+          </div>
         )}
       </div>
       <div>

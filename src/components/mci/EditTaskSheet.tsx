@@ -13,6 +13,8 @@ export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
   const [note, setNote] = useState(task.note || task.label)
   const [period, setPeriod] = useState<ExpectedPeriod>(task.expected_period)
   const [time, setTime] = useState<string | null>(task.expected_time)
+  const [windowStart, setWindowStart] = useState<string | null>(task.reminder_window_start ?? null)
+  const [windowEnd, setWindowEnd] = useState<string | null>(task.reminder_window_end ?? null)
   const [repeat, setRepeat] = useState<RepeatRule>(task.repeat_rule ?? 'none')
   const [seriesScope, setSeriesScope] = useState<'one' | 'future'>('one')
   const [saving, setSaving] = useState(false)
@@ -30,6 +32,8 @@ export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
         note,
         expected_period: period,
         expected_time: time,
+        reminder_window_start: windowStart,
+        reminder_window_end: windowEnd,
         repeat_rule: repeat,
         series_scope: seriesScope,
       }),
@@ -48,7 +52,7 @@ export default function EditTaskSheet({ task, onSaved, onClose, onDelete }: {
         <label className="mt-4 block text-sm font-medium text-warm-600" htmlFor="edit-task-name">Task name</label>
         <input id="edit-task-name" value={note} onChange={event => setNote(event.target.value)} maxLength={160}
           className="mb-5 mt-2 min-h-12 w-full rounded-xl border border-cream-300 bg-white px-4 text-base text-warm-800" />
-        <TaskScheduleFields period={period} time={time} repeat={repeat} onPeriod={setPeriod} onTime={setTime} onRepeat={setRepeat} />
+        <TaskScheduleFields period={period} time={time} windowStart={windowStart} windowEnd={windowEnd} repeat={repeat} onPeriod={setPeriod} onTime={value => { setTime(value); setWindowStart(null); setWindowEnd(null) }} onWindowStart={setWindowStart} onWindowEnd={setWindowEnd} onRepeat={setRepeat} />
         {isRepeatingTask && (
           <fieldset className="mt-5">
             <legend className="text-sm font-medium text-warm-600">Apply changes to</legend>
