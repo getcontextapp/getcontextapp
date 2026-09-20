@@ -68,6 +68,17 @@ const VISIBLE_PLAN_STATUSES = new Set(['planned', 'not_now', 'confirmed'])
 type PlanAction = 'confirm' | 'not_now' | 'skipped' | 'reopen' | 'delete' | 'remove_today' | 'stop_repeating'
 type TaskRemovalAction = 'remove_today' | 'stop_repeating' | 'delete'
 
+function formatReminderTiming(task: PlannedActivity) {
+  if (task.reminder_window_start && task.reminder_window_end) {
+    const format = (value: string) => {
+      const [hour, minute] = value.split(':').map(Number)
+      return new Date(2000, 0, 1, hour, minute).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    }
+    return `${format(task.reminder_window_start)}–${format(task.reminder_window_end)}`
+  }
+  return formatTaskTiming(task.expected_time, task.expected_period)
+}
+
 export default function MCIUserClient({ profile, initialActivities, initialPlannedActivities, initialTimelineEvents, initialReflection, carePartner, household, calendar, dashboardSource, initialNotificationTaskId, initialNotificationEventId, unifiedTodayEnabled = false, featureDiscoveryEnabled = false }: Props) {
   const [supabase] = useState(createClient)
 
@@ -104,6 +115,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
   const [notificationActionSaving, setNotificationActionSaving] = useState(false)
   const [notificationActionError, setNotificationActionError] = useState<string | null>(null)
   const [appointmentSavingIds, setAppointmentSavingIds] = useState<string[]>([])
+  const [appointmentError, setAppointmentError] = useState<string | null>(null)
   const [completedOpen, setCompletedOpen] = useState(false)
 
   const localHour = Number(clockNow.toLocaleString('en-US', {
@@ -563,13 +575,18 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   async function handleAppointmentMark(eventId: string, markState: 'attended' | 'deferred') {
     if (appointmentSavingIds.includes(eventId)) return
+    setAppointmentError(null)
     setAppointmentSavingIds(current => [...current, eventId])
     const response = await fetch('/api/calendar/mark', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ event_id: eventId, mark_state: markState }),
     })
     const result = await response.json().catch(() => ({}))
-    if (response.ok && result.calendar?.events) setCalendarEvents(result.calendar.events)
+    if (response.ok && result.calendar?.events) {
+      setCalendarEvents(result.calendar.events)
+    } else {
+      setAppointmentError(result.error ?? 'Context could not save that response. Please try again.')
+    }
     setAppointmentSavingIds(current => current.filter(id => id !== eventId))
   }
 
@@ -762,7 +779,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
                 }
                 const task = item.task
                 return <div key={`task-${task.id}`} className="rounded-xl border border-cream-100 bg-white px-4 py-3 shadow-sm">
-                  <div className="flex items-start gap-3"><span className="text-xl">{ACTIVITY_TILES.find(tile => tile.category === task.category)?.icon ?? '📌'}</span><div className="min-w-0 flex-1"><p className="break-words text-base font-semibold text-warm-900">{task.note?.trim() || task.label}</p><div className="mt-1 flex flex-wrap gap-1"><span className="rounded-full bg-sage-100 px-2 py-0.5 text-xs font-semibold text-sage-700">Context task</span><span className="text-xs text-warm-400">{formatTaskTiming(task.expected_time, task.expected_period)}{task.repeat_rule !== 'none' ? ` · ${REPEAT_LABELS[task.repeat_rule]}` : ''}</span></div></div></div>
+                  <div className="flex items-start gap-3"><span className="text-xl">{ACTIVITY_TILES.find(tile => tile.category === task.category)?.icon ?? '📌'}</span><div className="min-w-0 flex-1"><p className="break-words text-base font-semibold text-warm-900">{task.note?.trim() || task.label}</p><div className="mt-1 flex flex-wrap gap-1"><span className="rounded-full bg-sage-100 px-2 py-0.5 text-xs font-semibold text-sage-700">Context task</span><span className="text-xs text-warm-400">{formatReminderTiming(task)}{task.reminder_window_start && task.reminder_window_end ? ' reminder window' : ''}{task.repeat_rule !== 'none' ? ` · ${REPEAT_LABELS[task.repeat_rule]}` : ''}</span></div></div></div>
                   <ActionPair primary={{ label: confirmingPlanIds.includes(task.id) ? 'Saving…' : 'Done', onClick: () => void handlePlanAction(task, 'confirm'), disabled: confirmingPlanIds.includes(task.id) }} secondary={{ label: 'Move', onClick: () => { setMoveCandidate(task); setMoveDate(tomorrowKey); setMoveError(null) } }} />
                   <button type="button" onClick={() => setOpenMoreId(current => current === task.id ? null : task.id)} className="mt-2 min-h-10 w-full text-sm font-semibold text-warm-600 underline underline-offset-4">More options</button>
                   {openMoreId === task.id && <div className="mt-2 rounded-xl bg-cream-100 p-2"><button type="button" onClick={() => { setEditCandidate(task); setOpenMoreId(null) }} className="min-h-11 w-full rounded-lg bg-white text-sm font-medium text-warm-700">Edit task</button><button type="button" onClick={() => setDeleteCandidate({ task, action: task.repeat_rule !== 'none' ? 'stop_repeating' : 'delete' })} className="mt-2 min-h-11 w-full rounded-lg bg-white text-sm font-medium text-terracotta-700">{task.repeat_rule !== 'none' ? 'Stop repeating' : 'Delete task'}</button></div>}
@@ -770,6 +787,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
               })}
             </div>
           )}
+          {appointmentError && <p role="alert" className="mt-3 rounded-xl bg-terracotta-50 px-3 py-2 text-sm text-terracotta-700">{appointmentError}</p>}
           <Link prefetch href="/mci-user/calendar" className="mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-xl border-2 border-cream-300 bg-white px-4 text-base font-semibold text-warm-800 active:scale-[0.99] transition-transform"><span aria-hidden="true">📅</span>View full calendar</Link>
         </section>}
 
