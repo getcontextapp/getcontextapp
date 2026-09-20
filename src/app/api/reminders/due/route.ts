@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
-import { dueReminderCopy, dueReminderDetail, isDueReminderWindow, localDateAndMinute } from '@/lib/due-reminders'
+import { DUE_REMINDER_WINDOW_MINUTES, dueReminderCopy, dueReminderDetail, isDueReminderWindow, localDateAndMinute } from '@/lib/due-reminders'
 import { sendPushNotification } from '@/lib/push-notifications'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 import { buildDueReminderMessage, sendSMS } from '@/lib/twilio'
@@ -37,6 +37,9 @@ type DueTask = {
   label: string
   note: string | null
   expected_time: string
+  reminder_window_start: string | null
+  reminder_window_end: string | null
+  preparation_minutes: number
   planned_for: string
 }
 
@@ -75,7 +78,7 @@ export async function GET(request: NextRequest) {
 
   const [{ data: taskRows, error: taskError }, { data: preferenceRows, error: preferenceError }] = await Promise.all([
     service.from('planned_activities')
-      .select('id,household_id,created_by,assigned_to,category,label,note,expected_time,planned_for')
+      .select('id,household_id,created_by,assigned_to,category,label,note,expected_time,reminder_window_start,reminder_window_end,preparation_minutes,planned_for')
       .in('household_id', householdIds)
       .in('planned_for', localDates)
       .eq('status', 'planned')
@@ -122,7 +125,7 @@ export async function GET(request: NextRequest) {
 
     const timing = localContext.get(recipient.id)
     if (!timing || timing.dateKey !== task.planned_for ||
-      !isDueReminderWindow(task.expected_time, timing.minuteOfDay)) continue
+      !isDueReminderWindow(task.reminder_window_start ?? task.expected_time, timing.minuteOfDay, DUE_REMINDER_WINDOW_MINUTES, task.reminder_window_end, task.preparation_minutes)) continue
 
     const calendarDecision = nudgeRankCalendarDecision({
       calendarLinked: calendarLinkedByHousehold.get(task.household_id)?.has(task.id) ?? false,

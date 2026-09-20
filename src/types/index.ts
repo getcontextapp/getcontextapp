@@ -58,6 +58,9 @@ export interface PlannedActivity {
   note: string | null
   expected_period: ExpectedPeriod
   expected_time: string | null
+  reminder_window_start?: string | null
+  reminder_window_end?: string | null
+  preparation_minutes?: number
   repeat_rule: RepeatRule
   series_id: string | null
   moved_from_id: string | null
@@ -223,6 +226,9 @@ export interface CreatePlannedActivityPayload {
   note?: string
   expected_period: ExpectedPeriod
   expected_time?: string | null
+  reminder_window_start?: string | null
+  reminder_window_end?: string | null
+  preparation_minutes?: number
   repeat_rule?: RepeatRule
   planned_for?: string
 }

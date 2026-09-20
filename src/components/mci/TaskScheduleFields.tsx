@@ -15,6 +15,8 @@ const TIMES = ['08:00', '10:00', '12:00', '15:00', '18:00']
 export default function TaskScheduleFields({
   period,
   time,
+  windowStart,
+  windowEnd,
   repeat,
   onPeriod,
   onTime,
@@ -22,6 +24,8 @@ export default function TaskScheduleFields({
 }: {
   period: ExpectedPeriod
   time: string | null
+  windowStart?: string | null
+  windowEnd?: string | null
   repeat: RepeatRule
   onPeriod: (value: ExpectedPeriod) => void
   onTime: (value: string | null) => void
@@ -58,6 +62,11 @@ export default function TaskScheduleFields({
           <input type="time" value={time ?? ''} onChange={event => onTime(event.target.value || null)}
             className="bg-transparent text-base font-medium text-warm-800" />
         </label>
+        {windowStart && windowEnd && (
+          <p className="mt-2 rounded-xl bg-sage-50 px-3 py-2 text-sm font-medium text-sage-700">
+            Reminder window: {formatTime(windowStart)}–{formatTime(windowEnd)}
+          </p>
+        )}
       </div>
       <div>
         <label className="text-sm font-medium text-warm-600" htmlFor={repeatId}>Repeat</label>
@@ -70,4 +79,10 @@ export default function TaskScheduleFields({
       </div>
     </div>
   )
+}
+
+function formatTime(value: string) {
+  const [hour, minute] = value.split(':').map(Number)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return value
+  return new Date(2000, 0, 1, hour, minute).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }

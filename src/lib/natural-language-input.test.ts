@@ -5,6 +5,7 @@ import {
   countPlanWords,
   detectSafeTimelineCapture,
   plannedDateForText,
+  parseTimeRange,
   splitPlanClauses,
 } from './natural-language-input'
 
@@ -26,6 +27,11 @@ test('asks one clarification for an ambiguous spoken time range', () => {
       suggestedMessage: 'CEP from 9:00 AM to 2:30 PM then get ready tomorrow',
     },
   )
+})
+
+test('preserves an evening time range instead of collapsing it to the start time', () => {
+  assert.deepEqual(parseTimeRange('Go for dinner between 9 and 11'), { start: '21:00', end: '23:00' })
+  assert.deepEqual(parseTimeRange('go to the gym between 9 AM and 11 AM'), { start: '09:00', end: '11:00' })
 })
 
 test('separates sequential plans and assigns tomorrow locally', () => {

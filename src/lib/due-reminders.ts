@@ -34,9 +34,16 @@ export function isDueReminderWindow(
   expectedTime: string | null | undefined,
   minuteOfDay: number,
   windowMinutes = DUE_REMINDER_WINDOW_MINUTES,
+  rangeEnd?: string | null,
+  preparationMinutes = 0,
 ) {
   const expectedMinute = parseExpectedTime(expectedTime)
   if (expectedMinute === null) return false
+  const endMinute = parseExpectedTime(rangeEnd)
+  if (endMinute !== null) {
+    const start = Math.max(0, expectedMinute - preparationMinutes)
+    return minuteOfDay >= start && minuteOfDay <= endMinute
+  }
   const elapsed = minuteOfDay - expectedMinute
   return elapsed >= 0 && elapsed <= windowMinutes
 }

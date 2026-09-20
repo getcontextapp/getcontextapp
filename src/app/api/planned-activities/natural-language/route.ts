@@ -15,6 +15,7 @@ import {
   PLAN_PRESERVATION_LIMIT,
   PLAN_PROCESSING_WORD_LIMIT,
   plannedDateForText,
+  parseTimeRange,
   splitPlanClauses,
 } from '@/lib/natural-language-input'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
@@ -134,6 +135,9 @@ export async function POST(request: NextRequest) {
       expected_time?: string | null
       repeat_rule?: RepeatRule
       planned_for?: string
+      reminder_window_start?: string | null
+      reminder_window_end?: string | null
+      preparation_minutes?: number
     }>
     modification?: {
       id?: string
@@ -142,6 +146,9 @@ export async function POST(request: NextRequest) {
       expected_time?: string | null
       repeat_rule?: RepeatRule
       planned_for?: string
+      reminder_window_start?: string | null
+      reminder_window_end?: string | null
+      preparation_minutes?: number
     }
   } = await request.json()
 
@@ -252,6 +259,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Tell Context one thing you want to do today.' }, { status: 422 })
     }
 
+    const timeRange = parseTimeRange(message)
+    const itemsWithWindows = timeRange
+      ? items.map(item => ({ ...item, expected_time: timeRange.start, reminder_window_start: timeRange.start, reminder_window_end: timeRange.end }))
+      : items
+
     await trackEvent(supabase, {
       eventName: 'natural_language_plan_parsed',
       profile,
@@ -264,7 +276,7 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    return NextResponse.json({ items })
+    return NextResponse.json({ items: itemsWithWindows })
   }
 
   if (body.action === 'save_exact') {
@@ -383,6 +395,9 @@ export async function POST(request: NextRequest) {
         expected_time: /^\d{2}:\d{2}$/.test(item.expected_time ?? '') ? item.expected_time! : null,
         repeat_rule: VALID_REPEAT_RULES.has(item.repeat_rule as RepeatRule) ? item.repeat_rule as RepeatRule : 'none' as RepeatRule,
         planned_for: /^\d{4}-\d{2}-\d{2}$/.test(item.planned_for ?? '') ? item.planned_for! : body.planned_for ?? '',
+        reminder_window_start: /^\d{2}:\d{2}$/.test(item.reminder_window_start ?? '') ? item.reminder_window_start! : null,
+        reminder_window_end: /^\d{2}:\d{2}$/.test(item.reminder_window_end ?? '') ? item.reminder_window_end! : null,
+        preparation_minutes: Number.isFinite(item.preparation_minutes) ? Math.max(0, Math.min(1440, Number(item.preparation_minutes))) : 0,
       }))
       .filter(item => item.note.length > 0)
 
@@ -425,6 +440,9 @@ export async function POST(request: NextRequest) {
       note: item.note,
       expected_period: item.expected_period,
       expected_time: item.expected_time,
+      reminder_window_start: item.reminder_window_start,
+      reminder_window_end: item.reminder_window_end,
+      preparation_minutes: item.preparation_minutes,
       planned_for: item.planned_for,
       repeat_rule: item.repeat_rule,
       source: 'manual',

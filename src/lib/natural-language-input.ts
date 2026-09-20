@@ -65,6 +65,26 @@ export function ambiguousTimeRangeClarification(message: string) {
   }
 }
 
+export function parseTimeRange(message: string) {
+  const match = message.match(/\b(?:between\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*(?:to|until|and|-)\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\b/i)
+  if (!match) return null
+  const contextPm = /\b(dinner|tonight|evening|night|p\.?m\.?)\b/i.test(message)
+  const toMinutes = (hourRaw: string, minuteRaw: string | undefined, suffixRaw: string | undefined) => {
+    let hour = Number(hourRaw)
+    const minute = Number(minuteRaw ?? 0)
+    const suffix = suffixRaw?.toLowerCase().replace(/\./g, '')
+    if (suffix === 'pm' && hour < 12) hour += 12
+    if (suffix === 'am' && hour === 12) hour = 0
+    if (!suffixRaw && contextPm && hour < 12) hour += 12
+    return { hour, minute }
+  }
+  const start = toMinutes(match[1], match[2], match[3] ?? match[7])
+  const end = toMinutes(match[4], match[5], match[6] ?? match[7])
+  if (start.hour > 23 || end.hour > 23 || start.minute > 59 || end.minute > 59) return null
+  const format = (value: { hour: number; minute: number }) => `${String(value.hour).padStart(2, '0')}:${String(value.minute).padStart(2, '0')}`
+  return { start: format(start), end: format(end) }
+}
+
 export function splitPlanClauses(message: string) {
   return message
     .replace(/\b(?:and\s+then|then|after\s+that)\b/gi, '\n')

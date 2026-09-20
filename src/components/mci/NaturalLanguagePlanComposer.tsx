@@ -12,6 +12,9 @@ interface DraftPlan {
   note: string
   expected_period: ExpectedPeriod
   expected_time?: string | null
+  reminder_window_start?: string | null
+  reminder_window_end?: string | null
+  preparation_minutes?: number
   repeat_rule?: RepeatRule
   planned_for?: string
 }
@@ -432,6 +435,8 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
                       <TaskScheduleFields
                         period={draft.expected_period}
                         time={draft.expected_time ?? null}
+                        windowStart={draft.reminder_window_start ?? null}
+                        windowEnd={draft.reminder_window_end ?? null}
                         repeat={draft.repeat_rule ?? 'none'}
                         onPeriod={value => updateDraft(index, { expected_period: value })}
                         onTime={value => updateDraft(index, { expected_time: value })}
