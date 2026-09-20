@@ -196,10 +196,10 @@ export default function ReminderSettings({ profile, carePartner, onOpenHousehold
           {/* Re-entry reminder gap */}
           <div>
             <label className="block text-sm font-medium text-warm-700 mb-1">
-              Text reminder frequency
+              Follow-up reminder timing
             </label>
             <p className="text-xs text-warm-400 mb-3">
-              If something in today&apos;s plan is still waiting, send a gentle SMS reminder after this long.
+              If something is still waiting, Context gently checks back after this long. Mark it done, choose later, or leave it for the next check.
             </p>
             <div className="grid grid-cols-3 gap-2">
               {GAP_OPTIONS.map(opt => (

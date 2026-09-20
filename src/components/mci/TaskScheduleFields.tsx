@@ -5,7 +5,7 @@ import { REPEAT_LABELS } from '@/lib/task-scheduling'
 import type { ExpectedPeriod, RepeatRule } from '@/types'
 
 const PERIODS: Array<{ value: ExpectedPeriod; label: string }> = [
-  { value: 'anytime', label: 'Anytime' },
+  { value: 'anytime', label: 'Any time' },
   { value: 'morning', label: 'Morning' },
   { value: 'afternoon', label: 'Afternoon' },
   { value: 'evening', label: 'Evening' },
@@ -32,7 +32,8 @@ export default function TaskScheduleFields({
   return (
     <div className="space-y-4">
       <div>
-        <p className="mb-2 text-sm font-medium text-warm-600">When?</p>
+        <p className="mb-1 text-sm font-medium text-warm-600">When should Context bring this back?</p>
+        <p className="mb-2 text-xs leading-relaxed text-warm-400">Choose a helpful part of the day, or a specific time. You can change it later.</p>
         <div className="grid grid-cols-4 gap-1.5">
           {PERIODS.map(item => (
             <button key={item.value} type="button" onClick={() => { onPeriod(item.value); onTime(null) }}

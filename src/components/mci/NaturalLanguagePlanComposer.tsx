@@ -48,7 +48,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
   const [message, setMessage] = useState('')
   const [drafts, setDrafts] = useState<DraftPlan[]>([])
   const [modification, setModification] = useState<DraftModification | null>(null)
-  const [capture, setCapture] = useState<{ type: 'doing_now' | 'did'; text: string } | null>(null)
+  const [capture, setCapture] = useState<{ type: 'doing_now' | 'did'; text: string; originalText?: string } | null>(null)
   const [savedCapture, setSavedCapture] = useState<TimelineEvent | null>(null)
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -105,7 +105,7 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
         setModification(null)
         setDrafts([])
       } else if (result.capture) {
-        setCapture(result.capture)
+        setCapture({ ...result.capture, originalText: messageToInterpret })
         setModification(null)
         setDrafts([])
       } else if (result.modification) {
@@ -490,6 +490,12 @@ export default function NaturalLanguagePlanComposer({ plannedFor, onSaved, onTim
                 className="mt-4 min-h-12 w-full rounded-xl border border-cream-300 bg-cream-50 px-4 text-base font-semibold text-warm-900"
                 aria-label="What Context understood"
               />
+              {capture.originalText && capture.originalText.trim() !== capture.text.trim() && (
+                <details className="mt-3 rounded-xl border border-cream-200 bg-cream-50 px-3 py-2 text-sm text-warm-500">
+                  <summary className="cursor-pointer font-medium text-warm-600">Show my original words</summary>
+                  <p className="mt-2 leading-relaxed">{capture.originalText}</p>
+                </details>
+              )}
               <p className="mt-3 text-sm text-warm-400">
                 {capture.type === 'doing_now' ? 'Right now.' : 'Just now.'}
               </p>
