@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { createServiceClient } from '@/lib/supabase-server'
-import { sendSMS, buildDailySummaryMessage, buildPersonalDailySummaryMessage } from '@/lib/twilio'
+import { sendSMS, buildDailySummaryMessage, buildInternalPersonalDailySummaryMessage, buildPersonalDailySummaryMessage } from '@/lib/twilio'
 import { ACTIVITY_TILES } from '@/types'
 import { getLocalDateKey, getUtcRangeForLocalDay } from '@/lib/dates'
 import { trackEvent } from '@/lib/analytics'
@@ -9,6 +9,7 @@ import { getLinkedMciProfile } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import { runWeeklySummaryNotifications } from '@/lib/weekly-summary-notifications'
+import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
@@ -133,7 +134,7 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
 
   const { data: pendingItems } = await supabase
     .from('planned_activities')
-    .select('id')
+    .select('id,note,label')
     .eq('household_id', householdId)
     .eq('planned_for', todayKey)
     .in('status', ['planned', 'not_now'])
@@ -213,14 +214,24 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
       day: 'numeric',
       timeZone: mciProfile.timezone || undefined,
     })
-    const mciBody = buildPersonalDailySummaryMessage(
-      mciProfile.display_name,
-      mciDateStr,
-      activityList,
-      pendingItems?.length ?? 0,
-      APP_URL,
-      mciProfile.timezone,
-    )
+    const { data: householdRow } = await supabase.from('households').select('name').eq('id', householdId).maybeSingle()
+    const internal = cohortForHouseholdName(householdRow?.name ?? '').cohort === 'internal'
+    const mciBody = internal
+      ? buildInternalPersonalDailySummaryMessage(
+          mciProfile.display_name,
+          mciDateStr,
+          activityList,
+          (pendingItems ?? []).map(item => ({ id: item.id, label: item.note || item.label })),
+          APP_URL,
+        )
+      : buildPersonalDailySummaryMessage(
+          mciProfile.display_name,
+          mciDateStr,
+          activityList,
+          pendingItems?.length ?? 0,
+          APP_URL,
+          mciProfile.timezone,
+        )
     const mciResult = await sendSMS(mciProfile.phone_e164, mciBody)
     mciStatus = mciResult.status
 
@@ -238,6 +249,8 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
         pending_count: pendingItems?.length ?? 0,
         recipient_role: 'mci_user',
         reflection_prompt: true,
+        combined_evening_prompt: internal,
+        prompt_item_ids: internal ? (pendingItems ?? []).slice(0, 3).map(item => item.id) : undefined,
       },
     })
 

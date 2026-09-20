@@ -1065,7 +1065,7 @@ export async function POST(request: NextRequest) {
     const carrySelection = parseCarryOverMoveSelection(body)
     if (carrySelection) {
       const recentPrompt = await supabase.from('sms_messages').select('metadata')
-        .eq('profile_id', profile.id).eq('purpose', 'carry_over')
+        .eq('profile_id', profile.id).in('purpose', ['carry_over', 'daily_summary'])
         .order('created_at', { ascending: false }).limit(1).maybeSingle()
       const ids = Array.isArray(recentPrompt.data?.metadata?.prompt_item_ids)
         ? recentPrompt.data.metadata.prompt_item_ids as string[]

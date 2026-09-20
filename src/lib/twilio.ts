@@ -163,6 +163,28 @@ export function buildPersonalDailySummaryMessage(
   ].filter(Boolean).join('\n')
 }
 
+export function buildInternalPersonalDailySummaryMessage(
+  displayName: string,
+  date: string,
+  activities: Array<{ icon: string; label: string; occurred_at: string }>,
+  pendingItems: Array<{ id: string; label: string }>,
+  appUrl: string,
+) {
+  const examples = activities.slice(0, 3).map(activity => activity.label)
+  const pending = pendingItems.slice(0, 3)
+  return [
+    `Good evening, ${displayName}.`,
+    examples.length > 0
+      ? `You completed ${activities.length} ${activities.length === 1 ? 'thing' : 'things'} today, including ${examples.join(', ')}.`
+      : `Context did not record any completed activities today.`,
+    pending.length > 0
+      ? `Still waiting:\n${pending.map((item, index) => `${index + 1}. ${item.label}`).join('\n')}`
+      : `Everything in today's plan is settled.`,
+    `What would you like Context to do? Reply naturally—for example, “move 1 to tomorrow,” “I also visited Sarah,” or “I finished 2.”`,
+    `Tap here to move tasks or add today's reflection in Context:\n${sourcedDashboardUrl(appUrl, '/mci-user')}`,
+  ].join('\n\n')
+}
+
 export function buildPersonalWeeklySummaryMessage(
   dateLabel: string,
   completed: number,
