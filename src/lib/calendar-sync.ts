@@ -50,6 +50,7 @@ type GoogleEvent = {
 
 type GoogleEventsResponse = {
   items?: GoogleEvent[]
+  nextPageToken?: string
   error?: { message?: string }
 }
 
@@ -65,6 +66,7 @@ type GoogleCalendarListEntry = {
 
 type GoogleCalendarListResponse = {
   items?: GoogleCalendarListEntry[]
+  nextPageToken?: string
   error?: { message?: string }
 }
 
@@ -395,33 +397,47 @@ function isBirthdayCalendar(calendar: GoogleCalendarListEntry) {
 }
 
 async function googleCalendarList(accessToken: string) {
-  const url = new URL('https://www.googleapis.com/calendar/v3/users/me/calendarList')
-  url.searchParams.set('minAccessRole', 'reader')
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  const result = await response.json() as GoogleCalendarListResponse
-  if (!response.ok || result.error) throw new Error(result.error?.message || 'Google calendar list sync failed.')
-  const calendars = (result.items ?? [])
-    .filter(calendar => calendar.id && !calendar.deleted && !calendar.hidden && (calendar.primary || calendar.selected || isBirthdayCalendar(calendar)))
+  const calendars: GoogleCalendarListEntry[] = []
+  let pageToken: string | undefined
+  do {
+    const url = new URL('https://www.googleapis.com/calendar/v3/users/me/calendarList')
+    url.searchParams.set('minAccessRole', 'reader')
+    url.searchParams.set('maxResults', '250')
+    if (pageToken) url.searchParams.set('pageToken', pageToken)
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+    const result = await response.json() as GoogleCalendarListResponse
+    if (!response.ok || result.error) throw new Error(result.error?.message || 'Google calendar list sync failed.')
+    calendars.push(...(result.items ?? []))
+    pageToken = result.nextPageToken
+  } while (pageToken)
+
+  // Context follows the linked account's visible calendars, not only the
+  // calendar Google happens to mark as selected on this device. This prevents
+  // valid events from disappearing when they live on a secondary calendar.
+  const visibleCalendars = calendars
+    .filter(calendar => calendar.id && !calendar.deleted && !calendar.hidden)
   if (calendars.length === 0) return [{ id: 'primary', primary: true }]
-  return calendars
+  return visibleCalendars.length > 0 ? visibleCalendars : [{ id: 'primary', primary: true }]
 }
 
 async function googleCalendarEvents(accessToken: string, calendarId: string, window: { start: string; end: string }) {
-  const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`)
-  url.searchParams.set('timeMin', window.start)
-  url.searchParams.set('timeMax', window.end)
-  url.searchParams.set('singleEvents', 'true')
-  url.searchParams.set('orderBy', 'startTime')
-  url.searchParams.set('maxResults', '250')
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  const result = await response.json() as GoogleEventsResponse
-  if (!response.ok || result.error) throw new Error(result.error?.message || 'Google calendar sync failed.')
-  return result.items ?? []
+  const events: GoogleEvent[] = []
+  let pageToken: string | undefined
+  do {
+    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`)
+    url.searchParams.set('timeMin', window.start)
+    url.searchParams.set('timeMax', window.end)
+    url.searchParams.set('singleEvents', 'true')
+    url.searchParams.set('orderBy', 'startTime')
+    url.searchParams.set('maxResults', '250')
+    if (pageToken) url.searchParams.set('pageToken', pageToken)
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+    const result = await response.json() as GoogleEventsResponse
+    if (!response.ok || result.error) throw new Error(result.error?.message || 'Google calendar sync failed.')
+    events.push(...(result.items ?? []))
+    pageToken = result.nextPageToken
+  } while (pageToken)
+  return events
 }
 
 async function markMissingCalendarEventsCancelled({

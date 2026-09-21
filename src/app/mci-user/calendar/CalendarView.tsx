@@ -37,7 +37,6 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
   const [busy, setBusy] = useState(false)
   const [connectionBusy, setConnectionBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [homePending, setHomePending] = useState(false)
   const items = useMemo(
     () => buildUnifiedCalendarItems({ events, plans: localPlans, linkedPlanIds, timeZone }),
     [events, localPlans, linkedPlanIds, timeZone],
@@ -137,8 +136,8 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
     <main className="min-h-svh bg-cream-50 pb-10 safe-bottom">
       <header className="border-b border-cream-200 bg-cream-100 safe-top">
         <div className="mx-auto max-w-lg px-5 py-5">
-          <Link href={homeHref} onClick={() => setHomePending(true)} className="inline-flex min-h-11 items-center text-base font-semibold text-sage-700 active:scale-[0.98] transition-transform focus:outline-none focus:ring-2 focus:ring-sage-300" aria-busy={homePending}>
-            ← {homePending ? 'Opening Home…' : 'Home'}
+          <Link href={homeHref} className="inline-flex min-h-11 items-center text-base font-semibold text-sage-700 active:scale-[0.98] transition-transform focus:outline-none focus:ring-2 focus:ring-sage-300">
+            ← Home
           </Link>
           <div className="mt-3 flex items-end justify-between gap-4">
             <div>
@@ -147,12 +146,7 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
               <p className="mt-1 text-sm text-warm-500">Context and linked calendars, together.</p>
               <p className="mt-2 text-xs font-medium text-sage-700">{futureCalendarEnabled ? 'Showing plans and linked events up to one year ahead.' : 'Showing plans and linked events for the current study window.'}</p>
             </div>
-            <div className="flex flex-col items-end gap-2">
-              <span className="text-3xl" aria-hidden="true">📅</span>
-              <button type="button" onClick={refreshCalendar} disabled={connectionBusy} className="min-h-10 rounded-xl border border-cream-300 bg-white px-3 text-sm font-semibold text-warm-600 active:scale-[0.99] transition-transform disabled:opacity-60">
-                {connectionBusy ? 'Refreshing…' : 'Refresh calendar'}
-              </button>
-            </div>
+            <span className="text-3xl" aria-hidden="true">📅</span>
           </div>
           {canManage && <button type="button" onClick={() => { setShowAdd(current => !current); setError(null) }} className="mt-4 min-h-12 w-full rounded-xl bg-warm-700 px-4 text-base font-semibold text-white active:scale-[0.99] transition-transform">{showAdd ? 'Close add form' : '+ Add to Context calendar'}</button>}
         </div>
@@ -167,6 +161,9 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
             <button type="button" onClick={() => void connectGoogleCalendar()} disabled={connectionBusy} className="min-h-12 rounded-xl bg-warm-700 px-3 text-sm font-semibold text-white active:scale-[0.99] transition-transform disabled:opacity-60">{connectionBusy && !connected ? 'Opening Google…' : connected ? 'Change Google account' : 'Connect Google Calendar'}</button>
             {connected && <button type="button" onClick={() => void disconnectGoogleCalendar()} disabled={connectionBusy} className="min-h-12 rounded-xl border border-terracotta-200 bg-white px-3 text-sm font-semibold text-terracotta-700 active:scale-[0.99] transition-transform disabled:opacity-60">{connectionBusy ? 'Disconnecting…' : 'Disconnect calendar'}</button>}
           </div> : <p className="mt-3 rounded-xl bg-cream-100 px-3 py-3 text-sm font-medium text-warm-600">View only. The primary participant controls this connection in Settings.</p>}
+          {connected && <button type="button" onClick={refreshCalendar} disabled={connectionBusy} className="mt-3 min-h-11 w-full rounded-xl border border-cream-300 bg-cream-50 px-3 text-sm font-semibold text-warm-600 active:scale-[0.99] transition-transform disabled:opacity-60">
+            {connectionBusy ? 'Checking for new events…' : 'Check for new events'}
+          </button>}
         </section>
         {showAdd && canManage && <section className="rounded-[22px] border-2 border-cream-300 bg-white p-4 shadow-card" aria-label="Add Context task">
           <p className="text-sm font-semibold text-sage-700">Add to Context calendar</p>
