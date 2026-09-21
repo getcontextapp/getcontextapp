@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { addDays, buildUnifiedCalendarItems, monthGrid, startOfWeek } from '@/lib/unified-calendar'
 import type { CalendarEvent, PlannedActivity } from '@/types'
 
@@ -27,6 +28,7 @@ function readableDate(dateKey: string, options?: Intl.DateTimeFormatOptions) {
 }
 
 export default function CalendarView({ firstName, todayKey, timeZone, events, plans, linkedPlanIds, connected, canManage, ownerProfileId, homeHref = '/mci-user', viewLabel = 'Your schedule', futureCalendarEnabled = false }: Props) {
+  const router = useRouter()
   const [view, setView] = useState<'week' | 'month'>('week')
   const [selectedDate, setSelectedDate] = useState(todayKey)
   const [localPlans, setLocalPlans] = useState(plans)
@@ -46,6 +48,24 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
   const weekDays = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index))
   const monthDays = monthGrid(selectedDate)
   const activeMonth = selectedDate.slice(0, 7)
+
+  // Load the cached calendar immediately, then quietly check for new linked
+  // events. Users should not need to understand a refresh workflow just to
+  // see an appointment they recently added in Google Calendar.
+  useEffect(() => {
+    if (!connected) return
+    let cancelled = false
+    void fetch('/api/calendar/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner_profile_id: ownerProfileId, future_days: futureCalendarEnabled ? 365 : 70 }),
+    }).then(response => {
+      if (response.ok && !cancelled) router.refresh()
+    }).catch(() => {
+      // The cached calendar remains usable when the background check fails.
+    })
+    return () => { cancelled = true }
+  }, [connected, futureCalendarEnabled, ownerProfileId, router])
 
   function movePeriod(direction: -1 | 1) {
     if (view === 'week') setSelectedDate(current => addDays(current, direction * 7))
