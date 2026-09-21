@@ -2,7 +2,6 @@
 
 import Link from 'next/link'
 import { useMemo, useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { addDays, buildUnifiedCalendarItems, monthGrid, startOfWeek } from '@/lib/unified-calendar'
 import type { CalendarEvent, PlannedActivity } from '@/types'
 
@@ -28,9 +27,9 @@ function readableDate(dateKey: string, options?: Intl.DateTimeFormatOptions) {
 }
 
 export default function CalendarView({ firstName, todayKey, timeZone, events, plans, linkedPlanIds, connected, canManage, ownerProfileId, homeHref = '/mci-user', viewLabel = 'Your schedule', futureCalendarEnabled = false }: Props) {
-  const router = useRouter()
   const [view, setView] = useState<'week' | 'month'>('week')
   const [selectedDate, setSelectedDate] = useState(todayKey)
+  const [localEvents, setLocalEvents] = useState(events)
   const [localPlans, setLocalPlans] = useState(plans)
   const [showAdd, setShowAdd] = useState(false)
   const [draft, setDraft] = useState({ title: '', time: '' })
@@ -40,8 +39,8 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
   const [connectionBusy, setConnectionBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const items = useMemo(
-    () => buildUnifiedCalendarItems({ events, plans: localPlans, linkedPlanIds, timeZone }),
-    [events, localPlans, linkedPlanIds, timeZone],
+    () => buildUnifiedCalendarItems({ events: localEvents, plans: localPlans, linkedPlanIds, timeZone }),
+    [localEvents, localPlans, linkedPlanIds, timeZone],
   )
   const selectedItems = items.filter(item => item.dateKey === selectedDate)
   const weekStart = startOfWeek(selectedDate)
@@ -59,13 +58,16 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ owner_profile_id: ownerProfileId, future_days: futureCalendarEnabled ? 365 : 70 }),
-    }).then(response => {
-      if (response.ok && !cancelled) router.refresh()
+    }).then(async response => {
+      if (response.ok && !cancelled) {
+        const result = await response.json().catch(() => null) as { events?: CalendarEvent[] } | null
+        if (result?.events) setLocalEvents(result.events)
+      }
     }).catch(() => {
       // The cached calendar remains usable when the background check fails.
     })
     return () => { cancelled = true }
-  }, [connected, futureCalendarEnabled, ownerProfileId, router])
+  }, [connected, futureCalendarEnabled, ownerProfileId])
 
   function movePeriod(direction: -1 | 1) {
     if (view === 'week') setSelectedDate(current => addDays(current, direction * 7))
@@ -145,7 +147,9 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
         const result = await response.json().catch(() => ({})) as { error?: string }
         throw new Error(result.error || 'Could not refresh calendar.')
       }
-      window.location.reload()
+      const result = await response.json().catch(() => null) as { events?: CalendarEvent[] } | null
+      if (result?.events) setLocalEvents(result.events)
+      setConnectionBusy(false)
     }).catch(error => {
       setConnectionBusy(false)
       setError(error instanceof Error ? error.message : 'Could not refresh calendar.')
