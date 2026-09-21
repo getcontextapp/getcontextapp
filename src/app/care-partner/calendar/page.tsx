@@ -3,6 +3,7 @@ import { getLocalDateKey, getUtcRangeForLocalDateKey } from '@/lib/dates'
 import { getCalendarRangeData } from '@/lib/calendar-sync'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import { createServerClient } from '@/lib/supabase-server'
+import { latestFeatureRolloutEnabled } from '@/lib/feature-rollout'
 import type { PlannedActivity } from '@/types'
 import CalendarView from '@/app/mci-user/calendar/CalendarView'
 
@@ -23,12 +24,18 @@ export default async function CarePartnerCalendarPage() {
   if (!participant) redirect('/care-partner')
 
   const todayKey = getLocalDateKey(new Date(), participant.timezone)
+  const { data: household } = await supabase.from('households').select('name,created_at').eq('id', participant.household_id).single()
+  const householdOnboardingAt = household?.created_at && participant.created_at
+    ? new Date(Math.min(new Date(household.created_at).getTime(), new Date(participant.created_at).getTime())).toISOString()
+    : household?.created_at ?? participant.created_at
+  const futureCalendarEnabled = latestFeatureRolloutEnabled(household?.name ?? '', householdOnboardingAt)
+  const futureDays = futureCalendarEnabled ? 365 : 70
   const startKey = dateOffset(todayKey, -35)
-  const endKey = dateOffset(todayKey, 70)
+  const endKey = dateOffset(todayKey, futureDays)
   const start = getUtcRangeForLocalDateKey(startKey, participant.timezone).start
   const end = getUtcRangeForLocalDateKey(endKey, participant.timezone).start
   const [calendar, planResult] = await Promise.all([
-    getCalendarRangeData(supabase, participant, start, end),
+    getCalendarRangeData(supabase, participant, start, end, futureDays),
     supabase.from('planned_activities').select('*')
       .eq('household_id', participant.household_id)
       .eq('assigned_to', participant.id)
@@ -49,6 +56,7 @@ export default async function CarePartnerCalendarPage() {
       ownerProfileId={participant.id}
       homeHref="/care-partner"
       viewLabel={`${participant.display_name}'s schedule`}
+      futureCalendarEnabled={futureCalendarEnabled}
     />
   )
 }

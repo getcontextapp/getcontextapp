@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { getLocalDateKey, getUtcRangeForLocalDateKey } from '@/lib/dates'
 import { getCalendarRangeData } from '@/lib/calendar-sync'
 import { createServerClient } from '@/lib/supabase-server'
+import { latestFeatureRolloutEnabled } from '@/lib/feature-rollout'
 import type { PlannedActivity } from '@/types'
 import CalendarView from './CalendarView'
 
@@ -20,12 +21,18 @@ export default async function CalendarPage() {
   if (!profile || profile.role !== 'mci_user') redirect('/')
 
   const todayKey = getLocalDateKey(new Date(), profile.timezone)
+  const household = await supabase.from('households').select('name,created_at').eq('id', profile.household_id).single()
+  const householdOnboardingAt = household.data?.created_at && profile.created_at
+    ? new Date(Math.min(new Date(household.data.created_at).getTime(), new Date(profile.created_at).getTime())).toISOString()
+    : household.data?.created_at ?? profile.created_at
+  const futureCalendarEnabled = latestFeatureRolloutEnabled(household.data?.name ?? '', householdOnboardingAt)
+  const futureDays = futureCalendarEnabled ? 365 : 70
   const startKey = dateOffset(todayKey, -35)
-  const endKey = dateOffset(todayKey, 70)
+  const endKey = dateOffset(todayKey, futureDays)
   const start = getUtcRangeForLocalDateKey(startKey, profile.timezone).start
   const end = getUtcRangeForLocalDateKey(endKey, profile.timezone).start
   const [calendar, planResult] = await Promise.all([
-    getCalendarRangeData(supabase, profile, start, end),
+    getCalendarRangeData(supabase, profile, start, end, futureDays),
     supabase
       .from('planned_activities')
       .select('*')
@@ -48,6 +55,7 @@ export default async function CalendarPage() {
       connected={Boolean(calendar.connection)}
       canManage
       ownerProfileId={profile.id}
+      futureCalendarEnabled={futureCalendarEnabled}
     />
   )
 }

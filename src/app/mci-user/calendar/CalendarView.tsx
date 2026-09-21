@@ -17,6 +17,7 @@ type Props = {
   ownerProfileId: string
   homeHref?: string
   viewLabel?: string
+  futureCalendarEnabled?: boolean
 }
 
 function readableDate(dateKey: string, options?: Intl.DateTimeFormatOptions) {
@@ -25,7 +26,7 @@ function readableDate(dateKey: string, options?: Intl.DateTimeFormatOptions) {
   })
 }
 
-export default function CalendarView({ firstName, todayKey, timeZone, events, plans, linkedPlanIds, connected, canManage, ownerProfileId, homeHref = '/mci-user', viewLabel = 'Your schedule' }: Props) {
+export default function CalendarView({ firstName, todayKey, timeZone, events, plans, linkedPlanIds, connected, canManage, ownerProfileId, homeHref = '/mci-user', viewLabel = 'Your schedule', futureCalendarEnabled = false }: Props) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [selectedDate, setSelectedDate] = useState(todayKey)
   const [localPlans, setLocalPlans] = useState(plans)
@@ -125,6 +126,7 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
               <p className="text-xs font-semibold uppercase tracking-wide text-sage-600">{viewLabel}</p>
               <h1 className="mt-1 font-serif text-3xl font-semibold text-warm-900">Calendar</h1>
               <p className="mt-1 text-sm text-warm-500">Context and linked calendars, together.</p>
+              <p className="mt-2 text-xs font-medium text-sage-700">{futureCalendarEnabled ? 'Showing plans and linked events up to one year ahead.' : 'Showing plans and linked events for the current study window.'}</p>
             </div>
             <span className="text-3xl" aria-hidden="true">📅</span>
           </div>

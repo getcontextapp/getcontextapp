@@ -198,12 +198,12 @@ function dayWindowForProfile(profile: Profile) {
   }
 }
 
-function calendarSyncWindowForProfile(profile: Profile) {
+function calendarSyncWindowForProfile(profile: Profile, futureDays = 70) {
   const todayKey = getLocalDateKey(new Date(), profile.timezone)
   const startDate = new Date(`${todayKey}T12:00:00.000Z`)
   startDate.setUTCDate(startDate.getUTCDate() - 35)
   const endDate = new Date(`${todayKey}T12:00:00.000Z`)
-  endDate.setUTCDate(endDate.getUTCDate() + 70)
+  endDate.setUTCDate(endDate.getUTCDate() + futureDays)
   return {
     start: getUtcRangeForLocalDateKey(startDate.toISOString().slice(0, 10), profile.timezone).start,
     end: getUtcRangeForLocalDateKey(endDate.toISOString().slice(0, 10), profile.timezone).start,
@@ -512,11 +512,11 @@ async function syncCalendarLinkedPlans(
   }))
 }
 
-export async function syncGoogleCalendarConnection(ownerProfile: Profile, connection: CalendarConnectionSummary) {
+export async function syncGoogleCalendarConnection(ownerProfile: Profile, connection: CalendarConnectionSummary, futureDays = 70) {
   if (!googleCalendarConfigured()) return
   const service = createServiceClient()
   const token = await usableGoogleToken(service, connection.id)
-  const window = calendarSyncWindowForProfile(ownerProfile)
+  const window = calendarSyncWindowForProfile(ownerProfile, futureDays)
   const rows: Array<Record<string, string | boolean | null>> = []
   const activeProviderIds = new Set<string>()
 
@@ -576,6 +576,7 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
 export async function getCalendarDashboardData(
   supabase: SupabaseClient,
   ownerProfile: Profile | null,
+  futureDays = 70,
 ): Promise<CalendarDashboardData> {
   if (!ownerProfile?.household_id) return { enabled: false, connection: null, events: [] }
   const enabled = await isCalendarEnabledForHousehold(supabase, ownerProfile.household_id)
@@ -597,7 +598,7 @@ export async function getCalendarDashboardData(
 
   if (connection && googleCalendarConfigured()) {
     try {
-      await syncGoogleCalendarConnection(ownerProfile, connection as CalendarConnectionSummary)
+      await syncGoogleCalendarConnection(ownerProfile, connection as CalendarConnectionSummary, futureDays)
     } catch (error) {
       console.error('[Calendar] Sync failed:', error instanceof Error ? error.message : error)
     }
@@ -632,8 +633,9 @@ export async function getCalendarRangeData(
   ownerProfile: Profile,
   start: string,
   end: string,
+  futureDays = 70,
 ): Promise<CalendarRangeData> {
-  const dashboard = await getCalendarDashboardData(supabase, ownerProfile)
+  const dashboard = await getCalendarDashboardData(supabase, ownerProfile, futureDays)
   if (!dashboard.enabled || !dashboard.connection) {
     return { ...dashboard, linkedPlanIds: dashboard.linkedPlanIds ?? [] }
   }
