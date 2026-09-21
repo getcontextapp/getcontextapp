@@ -1,90 +1,254 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
+import styles from './visualizations.module.css'
 
 type AnalyticsData = Awaited<ReturnType<typeof import('@/lib/pilot-analytics').loadPilotAnalytics>>
 type Dyad = AnalyticsData['perDyad'][number]
+type Arc = AnalyticsData['studyArc'][number]
+type ViewKey = 'overview' | 'engagement' | 'journeys'
 
-function pct(numerator: number, denominator: number) {
-  return denominator ? `${Math.round((numerator / denominator) * 100)}%` : '—'
+const SIGNAL_LABELS = ['Captures', 'Completions', 'SMS replies', 'App views', 'Calendar']
+const SIGNAL_COLORS = ['#356859', '#8bb36e', '#d5a34f', '#7283a7', '#ba7b72']
+
+function rate(numerator: number, denominator: number) {
+  return denominator > 0 ? Math.round((numerator / denominator) * 100) : null
 }
 
-function Card({ label, value, note }: { label: string; value: string | number; note?: string }) {
-  return <article className="viz-card"><span>{label}</span><strong>{value}</strong>{note ? <small>{note}</small> : null}</article>
+function percent(value: number | null) {
+  return value === null ? '—' : `${value}%`
 }
 
-function Section({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) {
-  return <section className="viz-panel"><div className="viz-heading"><p>{eyebrow}</p><h2>{title}</h2></div>{children}</section>
+function signalTotal(day: Arc['days'][number]) {
+  return day.planLogged + day.planCompleted + day.smsReplied + day.contextViewed + day.calendarItem
 }
 
-function LineChart({ values, labels, color = '#547a46' }: { values: number[]; labels: string[]; color?: string }) {
-  const width = 720
-  const height = 230
-  const max = Math.max(1, ...values)
-  const points = values.map((value, index) => `${(index / Math.max(1, values.length - 1)) * (width - 36) + 18},${height - 28 - (value / max) * (height - 56)}`).join(' ')
-  return <div className="chart-wrap"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Engagement trend line chart">
-    <line x1="18" y1="202" x2="702" y2="202" stroke="#decfaf" />
-    <line x1="18" y1="28" x2="18" y2="202" stroke="#decfaf" />
-    <polyline points={points} fill="none" stroke={color} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
-    {values.map((value, index) => { const [x, y] = points.split(' ')[index].split(','); return <circle key={index} cx={x} cy={y} r="5" fill={color}><title>{`${labels[index]}: ${value}`}</title></circle> })}
-    {labels.map((label, index) => index % Math.max(1, Math.ceil(labels.length / 6)) === 0 ? <text key={label} x={(index / Math.max(1, labels.length - 1)) * (width - 36) + 18} y="222" textAnchor="middle" fontSize="12" fill="#746a5b">{label}</text> : null)}
-  </svg></div>
+function KpiCard({ label, value, note, tone = 'green' }: { label: string; value: string | number; note: string; tone?: 'green' | 'gold' | 'blue' | 'rose' }) {
+  return <article className={`${styles.kpiCard} ${styles[`tone${tone[0].toUpperCase()}${tone.slice(1)}`]}`}>
+    <div className={styles.kpiTop}><span>{label}</span><i /></div>
+    <strong>{value}</strong>
+    <small>{note}</small>
+  </article>
 }
 
-function Bars({ rows, suffix = '' }: { rows: Array<{ label: string; value: number }>; suffix?: string }) {
+function Panel({ eyebrow, title, action, children, className = '' }: { eyebrow: string; title: string; action?: ReactNode; children: ReactNode; className?: string }) {
+  return <section className={`${styles.panel} ${className}`}>
+    <header className={styles.panelHeader}><div><p>{eyebrow}</p><h2>{title}</h2></div>{action}</header>
+    {children}
+  </section>
+}
+
+function RetentionChart({ values }: { values: Array<number | null> }) {
+  const width = 900
+  const height = 300
+  const plotLeft = 48
+  const plotRight = 880
+  const plotTop = 24
+  const plotBottom = 248
+  const valid = values.map((value, index) => ({ value, index })).filter((point): point is { value: number; index: number } => point.value !== null)
+  const point = ({ value, index }: { value: number; index: number }) => ({
+    x: plotLeft + (index / Math.max(1, values.length - 1)) * (plotRight - plotLeft),
+    y: plotBottom - (value / 100) * (plotBottom - plotTop),
+  })
+  const line = valid.map(item => { const p = point(item); return `${p.x},${p.y}` }).join(' ')
+  const area = valid.length ? `M ${point(valid[0]).x} ${plotBottom} L ${valid.map(item => { const p = point(item); return `${p.x} ${p.y}` }).join(' L ')} L ${point(valid[valid.length - 1]).x} ${plotBottom} Z` : ''
+
+  return <div className={styles.chartFrame}>
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Percentage of eligible households active by study day">
+      <defs><linearGradient id="retentionArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4f7c6d" stopOpacity=".28" /><stop offset="100%" stopColor="#4f7c6d" stopOpacity=".02" /></linearGradient></defs>
+      {[0, 25, 50, 75, 100].map(value => { const y = plotBottom - (value / 100) * (plotBottom - plotTop); return <g key={value}><line x1={plotLeft} y1={y} x2={plotRight} y2={y} stroke="#e6e9e4" strokeDasharray={value === 0 ? '0' : '4 6'} /><text x="38" y={y + 4} textAnchor="end" className={styles.axisText}>{value}%</text></g> })}
+      {area ? <path d={area} fill="url(#retentionArea)" /> : null}
+      <polyline points={line} fill="none" stroke="#356859" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      {valid.map(item => { const p = point(item); return <circle key={item.index} cx={p.x} cy={p.y} r="5" fill="#fff" stroke="#356859" strokeWidth="3"><title>{`Day ${item.index + 1}: ${item.value}% active`}</title></circle> })}
+      {[1, 7, 14, 21, 28].map(day => <text key={day} x={plotLeft + ((day - 1) / 27) * (plotRight - plotLeft)} y="278" textAnchor="middle" className={styles.axisText}>Day {day}</text>)}
+    </svg>
+  </div>
+}
+
+function AdoptionBars({ rows }: { rows: Array<{ label: string; value: number; count: number }> }) {
+  return <div className={styles.adoptionList}>{rows.map(row => <div className={styles.adoptionRow} key={row.label}>
+    <div><span>{row.label}</span><strong>{row.value}% <small>{row.count} households</small></strong></div>
+    <div className={styles.barTrack}><i style={{ width: `${row.value}%` }} /></div>
+  </div>)}</div>
+}
+
+function LoopChart({ captured, completed, moved, unresolved }: { captured: number; completed: number; moved: number; unresolved: number }) {
+  const knownOutcomes = completed + moved + unresolved
+  const rows = [
+    { label: 'Captured intentions', value: captured, color: '#356859' },
+    { label: 'Completed', value: completed, color: '#7aa05e' },
+    { label: 'Moved or closed', value: moved, color: '#d5a34f' },
+    { label: 'Past and unresolved', value: unresolved, color: '#ba6f67' },
+  ]
   const max = Math.max(1, ...rows.map(row => row.value))
-  return <div className="bar-list">{rows.map(row => <div className="bar-row" key={row.label}><div><span>{row.label}</span><strong>{row.value}{suffix}</strong></div><div className="bar-track"><i style={{ width: `${Math.max(2, (row.value / max) * 100)}%` }} /></div></div>)}</div>
+  return <div className={styles.loopBlock}>
+    <div className={styles.loopBars}>{rows.map(row => <div key={row.label}><span>{row.label}</span><div><i style={{ width: `${Math.max(3, (row.value / max) * 100)}%`, background: row.color }} /></div><strong>{row.value}</strong></div>)}</div>
+    <div className={styles.definitionNote}><strong>{percent(rate(completed, knownOutcomes))}</strong><span>of tasks with a known outcome were completed. This denominator prevents impossible rates above 100%.</span></div>
+  </div>
 }
 
-function Funnel({ rows }: { rows: Array<{ label: string; value: number }> }) {
-  const max = Math.max(1, ...rows.map(row => row.value))
-  return <div className="funnel">{rows.map(row => <div className="funnel-row" key={row.label} style={{ width: `${Math.max(35, (row.value / max) * 100)}%` }}><span>{row.label}</span><strong>{row.value}</strong></div>)}</div>
+function RoleDonut({ participant, partner }: { participant: number; partner: number }) {
+  const total = participant + partner
+  const participantRate = rate(participant, total) ?? 0
+  return <div className={styles.donutLayout}>
+    <div className={styles.donut} style={{ background: `conic-gradient(#356859 0 ${participantRate}%, #d9b36a ${participantRate}% 100%)` }}><div><strong>{participantRate}%</strong><span>self-captured</span></div></div>
+    <div className={styles.legendList}><span><i style={{ background: '#356859' }} />Participant<strong>{participant}</strong></span><span><i style={{ background: '#d9b36a' }} />Care partner<strong>{partner}</strong></span></div>
+  </div>
 }
 
-function ActivityHeatmap({ arcs, dyads }: { arcs: AnalyticsData['studyArc']; dyads: Dyad[] }) {
-  return <div className="heatmap-wrap"><div className="heatmap-header"><span>Household</span>{Array.from({ length: 28 }, (_, index) => <b key={index}>{index + 1}</b>)}</div>{arcs.filter(arc => dyads.some(dyad => dyad.id === arc.householdId)).map(arc => <div className="heatmap-row" key={arc.householdId}><span title={arc.householdName}>{arc.householdName}</span>{arc.days.map(day => { const activity = day.planLogged + day.planCompleted + day.smsReplied + day.contextViewed + day.calendarItem; return <i key={day.day} className={`heat-${Math.min(4, activity)}`} title={`Day ${day.day}: ${activity} signals`} /> })}</div>)}</div>
+function Heatmap({ arcs, dyads }: { arcs: AnalyticsData['studyArc']; dyads: Dyad[] }) {
+  return <div className={styles.heatmapScroller}>
+    <div className={styles.heatmap}>
+      <div className={styles.heatHeader}><span>Household</span>{Array.from({ length: 28 }, (_, index) => <b key={index}>{index + 1}</b>)}</div>
+      {arcs.filter(arc => dyads.some(dyad => dyad.id === arc.householdId)).map(arc => <div className={styles.heatRow} key={arc.householdId}>
+        <span>{dyads.find(dyad => dyad.id === arc.householdId)?.code ?? arc.householdName}</span>
+        {arc.days.map(day => { const value = signalTotal(day); const level = value === 0 ? 0 : value < 4 ? 1 : value < 10 ? 2 : value < 25 ? 3 : 4; return <i key={day.day} data-level={level}><title>{`${arc.householdName}, Day ${day.day}: ${value} meaningful signals`}</title></i> })}
+      </div>)}
+    </div>
+    <div className={styles.heatLegend}><span>Less</span>{[0, 1, 2, 3, 4].map(level => <i key={level} data-level={level} />)}<span>More</span></div>
+  </div>
+}
+
+function SignalMix({ dyads, arcs }: { dyads: Dyad[]; arcs: AnalyticsData['studyArc'] }) {
+  const totals = [0, 0, 0, 0, 0]
+  arcs.filter(arc => dyads.some(dyad => dyad.id === arc.householdId)).forEach(arc => arc.days.forEach(day => {
+    totals[0] += day.planLogged
+    totals[1] += day.planCompleted
+    totals[2] += day.smsReplied
+    totals[3] += day.contextViewed
+    totals[4] += day.calendarItem
+  }))
+  const total = totals.reduce((sum, value) => sum + value, 0)
+  return <div className={styles.mixBlock}>
+    <div className={styles.mixBar}>{totals.map((value, index) => <i key={SIGNAL_LABELS[index]} style={{ width: `${rate(value, total) ?? 0}%`, background: SIGNAL_COLORS[index] }}><title>{`${SIGNAL_LABELS[index]}: ${value}`}</title></i>)}</div>
+    <div className={styles.mixLegend}>{totals.map((value, index) => <span key={SIGNAL_LABELS[index]}><i style={{ background: SIGNAL_COLORS[index] }} /><b>{SIGNAL_LABELS[index]}</b><strong>{value}</strong></span>)}</div>
+  </div>
 }
 
 export default function VisualizationDashboard({ data }: { data: AnalyticsData }) {
-  const [selectedHousehold, setSelectedHousehold] = useState('all')
-  const dyads = useMemo(() => data.perDyad.filter(dyad => selectedHousehold === 'all' || dyad.id === selectedHousehold), [data.perDyad, selectedHousehold])
+  const [view, setView] = useState<ViewKey>('overview')
+  const [cohort, setCohort] = useState('pilot-1')
+  const [mode, setMode] = useState('all')
+  const [household, setHousehold] = useState('all')
+
+  const dyads = useMemo(() => data.perDyad.filter(dyad =>
+    (cohort === 'all' || dyad.cohort === cohort) &&
+    (mode === 'all' || dyad.accountMode === mode) &&
+    (household === 'all' || dyad.id === household)
+  ), [data.perDyad, cohort, mode, household])
+
   const arcs = data.studyArc
-  const activeByDay = Array.from({ length: 28 }, (_, index) => arcs.filter(arc => dyads.some(dyad => dyad.id === arc.householdId) && (arc.days[index]?.planLogged ?? 0) + (arc.days[index]?.planCompleted ?? 0) + (arc.days[index]?.smsReplied ?? 0) + (arc.days[index]?.contextViewed ?? 0) + (arc.days[index]?.calendarItem ?? 0) > 0).length)
-  const labels = activeByDay.map((_, index) => `D${index + 1}`)
-  const features = data.features.slice(0, 10).map(feature => ({ label: feature.label, value: feature.count }))
-  const totalDyads = dyads.length
-  const captureTotal = data.capture.saved
-  const completionTotal = data.threads.completed
-  const outcomeRows = data.outcomeRows.filter(row => dyads.some(dyad => dyad.id === row.householdId))
-  const independenceRows = [
-    { label: 'Participant-created plans', value: data.independence.mciPlansCreated },
-    { label: 'Care-partner-created plans', value: data.independence.cpPlansCreated },
-    { label: 'Participant completions', value: data.independence.mciCompletions },
-    { label: 'Care-partner completions', value: data.independence.cpCompletions },
-  ]
-  const journeyDyad = dyads[0]
-  const journeyArc = journeyDyad ? arcs.find(arc => arc.householdId === journeyDyad.id) : null
+  const totals = useMemo(() => ({
+    captured: dyads.reduce((sum, dyad) => sum + dyad.captured, 0),
+    completed: dyads.reduce((sum, dyad) => sum + dyad.completed, 0),
+    moved: dyads.reduce((sum, dyad) => sum + dyad.features.filter(feature => ['planned_activity_moved', 'planned_activity_deleted'].includes(feature.name)).reduce((n, feature) => n + feature.count, 0), 0),
+    unresolved: dyads.reduce((sum, dyad) => sum + dyad.unresolved, 0),
+    mciPlans: dyads.reduce((sum, dyad) => sum + dyad.mciPlansCreated, 0),
+    cpPlans: dyads.reduce((sum, dyad) => sum + dyad.cpPlansCreated, 0),
+    recoveryAttempts: dyads.reduce((sum, dyad) => sum + dyad.attempts, 0),
+    recoveryResumed: dyads.reduce((sum, dyad) => sum + dyad.resumed, 0),
+    prompts: dyads.reduce((sum, dyad) => sum + dyad.smsPromptSent, 0),
+    promptReplies: dyads.reduce((sum, dyad) => sum + dyad.smsPromptAnswered, 0),
+  }), [dyads])
 
-  return <main className="viz-shell">
-    <header className="viz-hero"><div><p>Context admin · investor and research view</p><h1>Product signals</h1><span>Visualize the loop from capture to follow-through and independence.</span></div><a href="/admin/analytics">Back to analytics</a></header>
-    <section className="viz-scope"><label htmlFor="viz-household">Household detail</label><select id="viz-household" value={selectedHousehold} onChange={event => setSelectedHousehold(event.target.value)}><option value="all">All households</option>{data.perDyad.map(dyad => <option key={dyad.id} value={dyad.id}>{dyad.displayLabel}</option>)}</select><small>Aggregate charts are safe for investor reporting; individual views are for authorized research use.</small></section>
+  const activation = rate(dyads.filter(dyad => dyad.captured > 0 || dyad.attempts > 0).length, dyads.length)
+  const retained14Eligible = dyads.filter(dyad => dyad.currentStudyDay >= 14)
+  const retained14 = retained14Eligible.filter(dyad => {
+    const arc = arcs.find(item => item.householdId === dyad.id)
+    return arc?.days.some(day => day.day >= 8 && day.day <= 14 && signalTotal(day) > 0)
+  }).length
+  const knownOutcomes = totals.completed + totals.moved + totals.unresolved
+  const retention = Array.from({ length: 28 }, (_, index) => {
+    const day = index + 1
+    const eligible = dyads.filter(dyad => dyad.currentStudyDay >= day)
+    if (!eligible.length) return null
+    const active = eligible.filter(dyad => arcs.find(arc => arc.householdId === dyad.id)?.days.some(item => item.day === day && signalTotal(item) > 0)).length
+    return rate(active, eligible.length)
+  })
 
-    <section className="viz-kpis"><Card label="Active households" value={totalDyads} note="Current analytics scope" /><Card label="Plans captured" value={captureTotal} note={`${data.capture.saved} saved`} /><Card label="Task completion" value={pct(completionTotal, captureTotal)} note={`${completionTotal} completed threads`} /><Card label="SMS response" value={`${data.sms.promptResponseRate}%`} note={`${data.sms.answeredPrompts} answered prompts`} /><Card label="Participant self-capture" value={data.independence.selfCaptureRate} note="Participant versus CP plan creation" /><Card label="Recovery resumed" value={pct(data.recovery.resumed, data.recovery.attempts)} note={`${data.recovery.resumed} of ${data.recovery.attempts} attempts`} /></section>
+  const adoption = [
+    { label: 'Captured a plan', count: dyads.filter(dyad => dyad.captured > 0).length },
+    { label: 'Completed a task', count: dyads.filter(dyad => dyad.completed > 0).length },
+    { label: 'Replied by SMS', count: dyads.filter(dyad => dyad.smsReplied > 0).length },
+    { label: 'Connected calendar', count: dyads.filter(dyad => dyad.calendarConnected).length },
+    { label: 'Used memory recovery', count: dyads.filter(dyad => dyad.attempts > 0).length },
+    { label: 'Saved a reflection', count: dyads.filter(dyad => dyad.reflectionsSaved > 0).length },
+  ].map(row => ({ ...row, value: rate(row.count, dyads.length) ?? 0 }))
 
-    <Section eyebrow="Engagement trend" title="Active households by study day"><p className="viz-caption">A household is active when it produces a meaningful signal: capture, completion, SMS reply, calendar signal, or dashboard use.</p><LineChart values={activeByDay} labels={labels} /></Section>
+  const selectedDyad = household === 'all' ? dyads[0] : dyads.find(dyad => dyad.id === household)
+  const selectedArc = selectedDyad ? arcs.find(arc => arc.householdId === selectedDyad.id) : null
+  const householdOptions = data.perDyad.filter(dyad => (cohort === 'all' || dyad.cohort === cohort) && (mode === 'all' || dyad.accountMode === mode))
 
-    <div className="viz-two-col"><Section eyebrow="Retention and persistence" title="Usage by household and day"><ActivityHeatmap arcs={arcs} dyads={dyads} /></Section><Section eyebrow="Feature adoption" title="What people actually use"><Bars rows={features} /></Section></div>
+  const changePeriod = (days: string) => {
+    const params = new URLSearchParams(window.location.search)
+    params.set('days', days)
+    window.location.search = params.toString()
+  }
 
-    <div className="viz-two-col"><Section eyebrow="Capture loop" title="Capture quality"><Funnel rows={[{ label: 'Input interpreted', value: data.capture.interpreted }, { label: 'Saved to Context', value: data.capture.saved }, { label: 'Corrected before save', value: data.capture.correctedBeforeSave }, { label: 'Fallback used', value: data.capture.fallbackUsed }]} /></Section><Section eyebrow="Follow-through" title="What happens after capture"><Funnel rows={[{ label: 'Captured threads', value: data.threads.captured }, { label: 'Completed', value: data.threads.completed }, { label: 'Moved or cancelled', value: data.threads.movedOrCancelled }, { label: 'Still unresolved', value: data.threads.startedUnresolved }]} /></Section></div>
+  return <main className={styles.shell}>
+    <header className={styles.topbar}>
+      <a className={styles.brand} href="/admin/analytics"><span>C</span><div><strong>Context</strong><small>Analytics</small></div></a>
+      <nav aria-label="Visualization sections">{([['overview', 'Executive overview'], ['engagement', 'Product engagement'], ['journeys', 'Participant journeys']] as const).map(([key, label]) => <button key={key} className={view === key ? styles.activeNav : ''} onClick={() => setView(key)}>{label}</button>)}</nav>
+      <a className={styles.backLink} href="/admin/analytics">Admin dashboard</a>
+    </header>
 
-    <div className="viz-two-col"><Section eyebrow="Independence" title="Who carries the work"><Bars rows={independenceRows} /></Section><Section eyebrow="Reminder value" title="Nudges and notification burden"><div className="viz-kpi-inline"><Card label="Nudges sent" value={data.nudges.sent} /><Card label="Responses within 2h" value={data.nudges.responsesWithin2h} /><Card label="Response rate" value={data.nudges.responseRate} /><Card label="Average notification load" value={data.nudges.averageLoadPerActiveDay} note="per active day" /></div><Bars rows={[{ label: 'SMS replies', value: data.sms.replied }, { label: 'SMS delivered', value: data.sms.delivered }, { label: 'Push sent', value: data.nudges.pushSent }]} /></Section></div>
+    <div className={styles.content}>
+      <section className={styles.pageIntro}>
+        <div><p>Evidence dashboard</p><h1>{view === 'overview' ? 'The state of Context' : view === 'engagement' ? 'How people use Context' : 'Household journeys'}</h1><span>{view === 'overview' ? 'A clear view of adoption, follow-through, and independence.' : view === 'engagement' ? 'Feature adoption, persistence, channels, and cognitive load.' : 'Understand individual engagement without exposing private content.'}</span></div>
+        <div className={styles.freshness}><i /><span>Data current</span><small>Updated {new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(data.generatedAt))}</small></div>
+      </section>
 
-    <Section eyebrow="Individual research view" title="Participant journey"><div className="journey-picker"><label htmlFor="journey-household">Choose a household</label><select id="journey-household" value={selectedHousehold === 'all' ? (data.perDyad[0]?.id ?? '') : selectedHousehold} onChange={event => setSelectedHousehold(event.target.value)}>{data.perDyad.map(dyad => <option key={dyad.id} value={dyad.id}>{dyad.displayLabel}</option>)}</select></div>{journeyDyad && journeyArc ? <><p className="viz-caption">{journeyDyad.displayLabel} · study day {journeyDyad.currentStudyDay} · no message or note content is displayed.</p><div className="journey-list">{journeyArc.days.filter(day => day.planLogged + day.planCompleted + day.smsReplied + day.contextViewed + day.calendarItem > 0).map(day => <article key={day.day}><strong>Day {day.day}</strong><span>{day.planLogged} captures · {day.planCompleted} completions · {day.smsReplied} SMS replies · {day.contextViewed} views · {day.calendarItem} calendar</span></article>)}</div></> : <p className="viz-empty">No activity in this scope yet.</p>}</Section>
+      <section className={styles.filters} aria-label="Analytics filters">
+        <label><span>Period</span><select value={String(data.filters.days)} onChange={event => changePeriod(event.target.value)}>{[7, 14, 30, 60, 90].map(days => <option key={days} value={days}>Last {days} days</option>)}</select></label>
+        <label><span>Cohort</span><select value={cohort} onChange={event => { setCohort(event.target.value); setHousehold('all') }}><option value="pilot-1">Participant pilot</option><option value="internal">Internal preview</option><option value="all">All cohorts</option></select></label>
+        <label><span>Account</span><select value={mode} onChange={event => { setMode(event.target.value); setHousehold('all') }}><option value="all">Solo and shared</option><option value="solo">Solo</option><option value="shared">Shared</option></select></label>
+        {view === 'journeys' ? <label className={styles.householdFilter}><span>Household</span><select value={household} onChange={event => setHousehold(event.target.value)}>{householdOptions.map(dyad => <option key={dyad.id} value={dyad.id}>{dyad.displayLabel}</option>)}</select></label> : null}
+      </section>
 
-    <Section eyebrow="Research outcomes" title="Pre/post signals"><div className="outcome-mini">{outcomeRows.length === 0 ? <p className="viz-empty">No outcome scores recorded yet.</p> : outcomeRows.map(row => <article key={row.householdId}><strong>{row.householdName}</strong>{row.scores.map(score => <span key={score.key}>{score.label}: {score.delta === null ? 'not complete' : `${score.delta > 0 ? '+' : ''}${score.delta}`}</span>)}</article>)}</div></Section>
-    <footer className="viz-footer">Charts are descriptive signals, not proof of causation. Use the Data health tab before interpreting missing values as zero.</footer>
-    <style jsx>{`
-      .viz-shell{max-width:1180px;margin:0 auto;padding:32px 22px 80px;color:#2b241b}.viz-hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;margin-bottom:22px}.viz-hero p,.viz-heading p{margin:0;color:#6b805d;font-weight:800;letter-spacing:.12em;text-transform:uppercase;font-size:.72rem}.viz-hero h1{font-family:Georgia,serif;font-size:clamp(2.2rem,5vw,4rem);margin:.25rem 0 .5rem}.viz-hero span{color:#756c5e}.viz-hero a{color:#45673b;font-weight:800;text-decoration:underline}.viz-scope{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#faf6ed;border:1px solid #ead8b6;border-radius:18px;padding:15px 18px;margin-bottom:20px}.viz-scope label,.journey-picker label{font-weight:800}.viz-scope select,.journey-picker select{min-height:44px;border:1px solid #ddceb8;border-radius:10px;background:#fff;padding:0 12px;font:inherit}.viz-scope small{color:#766c5e}.viz-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:20px}.viz-card{background:#fffdfa;border:1px solid #eadcc4;border-radius:16px;padding:16px;min-height:92px;display:flex;flex-direction:column;gap:5px}.viz-card span{font-size:.76rem;color:#776d60;font-weight:700}.viz-card strong{font-size:1.65rem}.viz-card small{color:#867a6a;font-size:.76rem}.viz-panel{background:#fffdfa;border:1px solid #ead8b6;border-radius:22px;padding:22px;margin-bottom:20px;box-shadow:0 10px 28px rgba(44,35,24,.05)}.viz-heading{margin-bottom:13px}.viz-heading h2{font-family:Georgia,serif;font-size:1.55rem;margin:.25rem 0}.viz-caption{color:#766c5e;margin:0 0 10px}.chart-wrap{width:100%;overflow:hidden}.chart-wrap svg{width:100%;min-height:210px}.viz-two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}.bar-list{display:grid;gap:14px}.bar-row>div:first-child{display:flex;justify-content:space-between;gap:12px;margin-bottom:6px}.bar-row span{font-weight:700}.bar-row strong{color:#657d57}.bar-track{height:12px;border-radius:99px;background:#efe5d4;overflow:hidden}.bar-track i{display:block;height:100%;border-radius:inherit;background:#719261}.funnel{display:grid;gap:7px;align-items:center}.funnel-row{background:#dfead9;color:#274422;min-height:42px;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;gap:12px;margin:auto}.funnel-row:nth-child(2){background:#cbdcc2}.funnel-row:nth-child(3){background:#b7d0ab}.funnel-row:nth-child(4){background:#9fbe91}.heatmap-wrap{overflow-x:auto}.heatmap-header,.heatmap-row{display:grid;grid-template-columns:145px repeat(28,18px);gap:4px;align-items:center;min-width:790px;margin-bottom:6px}.heatmap-header{color:#867a6a;font-size:.66rem;text-align:center}.heatmap-header span,.heatmap-row>span{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.heatmap-row>span{font-size:.78rem;font-weight:800}.heatmap-row i{display:block;width:18px;height:18px;border-radius:4px;background:#f0e8dc}.heatmap-row .heat-1{background:#dce8d6}.heatmap-row .heat-2{background:#b9d1ae}.heatmap-row .heat-3{background:#87aa78}.heatmap-row .heat-4{background:#547a46}.viz-kpi-inline{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}.viz-kpi-inline .viz-card{min-height:78px}.journey-picker{display:flex;align-items:center;gap:12px;margin-bottom:10px}.journey-list{display:grid;gap:8px}.journey-list article,.outcome-mini article{display:flex;gap:15px;align-items:center;border-top:1px solid #eee2d1;padding:11px 0}.journey-list article span,.outcome-mini article span{color:#756c5e}.outcome-mini{display:grid;gap:4px}.outcome-mini article{flex-wrap:wrap}.outcome-mini article strong{min-width:180px}.viz-empty{color:#817566}.viz-footer{color:#857969;font-size:.82rem;margin-top:5px}@media(max-width:900px){.viz-kpis{grid-template-columns:repeat(3,1fr)}.viz-two-col{grid-template-columns:1fr}}@media(max-width:560px){.viz-shell{padding:22px 14px 60px}.viz-hero{align-items:flex-start;flex-direction:column}.viz-kpis{grid-template-columns:repeat(2,1fr)}.viz-kpi-inline{grid-template-columns:repeat(2,1fr)}.viz-card strong{font-size:1.35rem}.journey-picker{align-items:flex-start;flex-direction:column}}
-    `}</style>
+      {view === 'overview' ? <>
+        <section className={styles.kpiGrid}>
+          <KpiCard label="Households" value={dyads.length} note={`${dyads.filter(dyad => dyad.accountMode === 'solo').length} solo · ${dyads.filter(dyad => dyad.accountMode === 'shared').length} shared`} />
+          <KpiCard label="Activation" value={percent(activation)} note="Captured a plan or used recovery" tone="blue" />
+          <KpiCard label="Week 2 retention" value={percent(rate(retained14, retained14Eligible.length))} note={`${retained14} of ${retained14Eligible.length} eligible households`} tone="gold" />
+          <KpiCard label="Known-task completion" value={percent(rate(totals.completed, knownOutcomes))} note={`${totals.completed} completed outcomes`} />
+          <KpiCard label="Participant self-capture" value={percent(rate(totals.mciPlans, totals.mciPlans + totals.cpPlans))} note={`${totals.mciPlans} participant-created plans`} tone="blue" />
+          <KpiCard label="Recovery resumed" value={percent(rate(totals.recoveryResumed, totals.recoveryAttempts))} note={`${totals.recoveryResumed} of ${totals.recoveryAttempts} attempts`} tone="rose" />
+        </section>
+
+        <div className={styles.featureGrid}>
+          <Panel eyebrow="Retention" title="Active households by study day" className={styles.widePanel} action={<span className={styles.metricPill}>Eligible households only</span>}><p className={styles.panelCopy}>The share of households producing at least one meaningful signal on each study day.</p><RetentionChart values={retention} /></Panel>
+          <Panel eyebrow="Core hypothesis" title="Closing the intention loop"><LoopChart captured={totals.captured} completed={totals.completed} moved={totals.moved} unresolved={totals.unresolved} /></Panel>
+        </div>
+
+        <div className={styles.equalGrid}>
+          <Panel eyebrow="Feature adoption" title="Breadth of product use"><AdoptionBars rows={adoption} /></Panel>
+          <Panel eyebrow="Independence" title="Who creates the plan?"><RoleDonut participant={totals.mciPlans} partner={totals.cpPlans} /><div className={styles.insight}><span>Interpretation</span><p>A higher participant share suggests self-management; it does not alone prove reduced care-partner burden.</p></div></Panel>
+        </div>
+      </> : null}
+
+      {view === 'engagement' ? <>
+        <section className={styles.kpiGrid}>
+          <KpiCard label="Meaningful captures" value={totals.captured} note="Plans and contextual records" />
+          <KpiCard label="SMS response" value={percent(rate(totals.promptReplies, totals.prompts))} note={`${totals.promptReplies} of ${totals.prompts} prompts`} tone="gold" />
+          <KpiCard label="Calendar adoption" value={percent(rate(dyads.filter(dyad => dyad.calendarConnected).length, dyads.length))} note={`${dyads.filter(dyad => dyad.calendarConnected).length} connected households`} tone="blue" />
+          <KpiCard label="Recovery adoption" value={percent(rate(dyads.filter(dyad => dyad.attempts > 0).length, dyads.length))} note="Used Need Help Remembering" tone="rose" />
+        </section>
+        <Panel eyebrow="Persistence" title="Daily engagement by household" action={<span className={styles.metricPill}>Study days 1–28</span>}><p className={styles.panelCopy}>Darker squares mean more meaningful signals. Hover for the exact count.</p><Heatmap arcs={arcs} dyads={dyads} /></Panel>
+        <div className={styles.equalGrid}>
+          <Panel eyebrow="Behavior mix" title="What engagement consists of"><SignalMix dyads={dyads} arcs={arcs} /></Panel>
+          <Panel eyebrow="Channels" title="Reminder effectiveness"><div className={styles.channelStats}><article><span>SMS delivered</span><strong>{dyads.reduce((sum, dyad) => sum + dyad.smsDelivered, 0)}</strong></article><article><span>SMS replies</span><strong>{dyads.reduce((sum, dyad) => sum + dyad.smsReplied, 0)}</strong></article><article><span>Push sent</span><strong>{dyads.reduce((sum, dyad) => sum + dyad.pushSent, 0)}</strong></article><article><span>2-hour nudge response</span><strong>{percent(rate(dyads.reduce((sum, dyad) => sum + dyad.nudgeResponsesWithin2h, 0), dyads.reduce((sum, dyad) => sum + dyad.nudgeSent, 0)))}</strong></article></div><div className={styles.insight}><span>Measurement note</span><p>Responses within two hours are associated with a nudge; they do not prove that the nudge caused the action.</p></div></Panel>
+        </div>
+      </> : null}
+
+      {view === 'journeys' ? <>
+        {selectedDyad && selectedArc ? <>
+          <section className={styles.journeyHero}><div><span>{selectedDyad.code}</span><h2>{selectedDyad.name}</h2><p>{selectedDyad.accountMode === 'solo' ? 'Solo account' : 'Shared account'} · Study day {selectedDyad.currentStudyDay} · {selectedDyad.studyPhase}</p></div><div className={styles.journeyStats}><span><small>Captured</small><strong>{selectedDyad.captured}</strong></span><span><small>Completed</small><strong>{selectedDyad.completed}</strong></span><span><small>Active days</small><strong>{selectedDyad.useDaysWeek1 + (selectedDyad.useDaysWeek2 ?? 0)}</strong></span><span><small>Recovery attempts</small><strong>{selectedDyad.attempts}</strong></span></div></section>
+          <Panel eyebrow="28-day journey" title="Engagement over time"><div className={styles.timelineBars}>{selectedArc.days.map(day => { const value = signalTotal(day); return <div key={day.day}><i style={{ height: `${Math.max(4, Math.min(100, value * 4))}%` }}><title>{`Day ${day.day}: ${value} signals`}</title></i><span>{day.day}</span></div> })}</div></Panel>
+          <div className={styles.equalGrid}><Panel eyebrow="Daily detail" title="Meaningful activity"><div className={styles.dayList}>{selectedArc.days.filter(day => signalTotal(day) > 0).map(day => <article key={day.day}><strong>Day {day.day}</strong><div><span>{day.planLogged} captures</span><span>{day.planCompleted} completions</span><span>{day.smsReplied} replies</span><span>{day.contextViewed} views</span><span>{day.calendarItem} calendar</span></div></article>)}</div></Panel><Panel eyebrow="Research guardrail" title="How to read this journey"><div className={styles.journeyNote}><strong>No private content is shown.</strong><p>This view displays event counts and timing only. Engagement is not automatically benefit, and silence is not automatically failure.</p><p>Use the interview evidence alongside this behavioral timeline.</p></div></Panel></div>
+        </> : <div className={styles.emptyState}>No household is available in this scope.</div>}
+      </> : null}
+
+      <footer className={styles.footer}><span>Context analytics</span><p>Descriptive evidence, not proof of causation. Validate conclusions with interviews and data-health checks.</p></footer>
+    </div>
   </main>
 }
