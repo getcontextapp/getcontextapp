@@ -628,6 +628,7 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsData }) {
       <ScopeBar data={data} selectedCohort={selectedCohort} setSelectedCohort={setSelectedCohort} selectedMode={selectedMode} setSelectedMode={setSelectedMode} selectedHousehold={selectedHousehold} setSelectedHousehold={setSelectedHousehold} />
       <nav className="admin-tabs" aria-label="Analytics sections">
         {TABS.map(item => <button key={item.key} className={tab === item.key ? 'active' : ''} onClick={() => setTab(item.key)}>{item.label}</button>)}
+        <a className="standalone" href="/admin/analytics/visualizations">Visualizations ↗</a>
         <a className="standalone" href="/admin/pilot-interest">Pilot interest ↗</a>
       </nav>
       {tab === 'health' ? <DyadHealthPanel dyads={dyads} /> : null}
