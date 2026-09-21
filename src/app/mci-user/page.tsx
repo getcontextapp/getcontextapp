@@ -6,7 +6,7 @@ import { getHouseholdMembers } from '@/lib/household-links'
 import { reflectionToClient } from '@/lib/reflections'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import { getCalendarDashboardData } from '@/lib/calendar-sync'
-import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { latestFeatureRolloutEnabled } from '@/lib/feature-rollout'
 import MCIUserClient from './MCIUserClient'
 
 function dashboardSource(value: string | string[] | undefined) {
@@ -80,7 +80,7 @@ export default async function MCIUserPage({
   // Fetch household join code
   const { data: household } = await supabase
     .from('households')
-    .select('join_code, name')
+    .select('join_code, name, created_at')
     .eq('id', profile.household_id)
     .single()
 
@@ -93,6 +93,14 @@ export default async function MCIUserPage({
     .eq('household_id', profile.household_id)
     .eq('feature_key', 'unified_today_view')
     .maybeSingle()
+
+  const householdOnboardingAt = household?.created_at && profile.created_at
+    ? new Date(Math.min(new Date(household.created_at).getTime(), new Date(profile.created_at).getTime())).toISOString()
+    : household?.created_at ?? profile.created_at
+  const latestFeaturesEnabled = latestFeatureRolloutEnabled(
+    household?.name ?? '',
+    householdOnboardingAt,
+  )
 
   return (
     <MCIUserClient
@@ -107,8 +115,8 @@ export default async function MCIUserPage({
       dashboardSource={dashboardSource(params?.source)}
       initialNotificationTaskId={firstParam(params?.notificationTask)}
       initialNotificationEventId={firstParam(params?.notificationEvent)}
-      unifiedTodayEnabled={unifiedTodayFlag?.enabled === true || cohortForHouseholdName(household?.name ?? '').cohort === 'internal'}
-      featureDiscoveryEnabled={cohortForHouseholdName(household?.name ?? '').cohort === 'internal'}
+      unifiedTodayEnabled={unifiedTodayFlag?.enabled === true || latestFeaturesEnabled}
+      featureDiscoveryEnabled={latestFeaturesEnabled}
     />
   )
 }

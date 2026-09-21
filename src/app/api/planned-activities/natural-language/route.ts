@@ -20,7 +20,7 @@ import {
 } from '@/lib/natural-language-input'
 import type { ActivityCategory, ExpectedPeriod, PlannedActivity, RepeatRule } from '@/types'
 import { isLikelyDuplicate, type DuplicateCandidate } from '@/lib/duplicate-detection'
-import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { latestFeatureRolloutEnabled } from '@/lib/feature-rollout'
 
 const VALID_CATEGORIES = new Set(ACTIVITY_TILES.map(tile => tile.category))
 const VALID_PERIODS = new Set<ExpectedPeriod>(['morning', 'afternoon', 'evening', 'anytime'])
@@ -405,9 +405,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Keep at least one plan before saving.' }, { status: 400 })
     }
 
-    const { data: household } = await supabase.from('households').select('name').eq('id', profile.household_id).maybeSingle()
+    const { data: household } = await supabase.from('households').select('name,created_at').eq('id', profile.household_id).maybeSingle()
     const householdName = household?.name ?? ''
-    const duplicateCheckEnabled = cohortForHouseholdName(householdName).cohort === 'internal' || /bilau|baru|davies|odu|my\s+home/i.test(householdName)
+    const onboardingAt = household?.created_at && profile.created_at
+      ? new Date(Math.min(new Date(household.created_at).getTime(), new Date(profile.created_at).getTime())).toISOString()
+      : household?.created_at ?? profile.created_at
+    const duplicateCheckEnabled = latestFeatureRolloutEnabled(householdName, onboardingAt)
     if (duplicateCheckEnabled && !body.confirm_duplicates) {
       const dates = Array.from(new Set(items.map(item => item.planned_for)))
       const { data: existingTasks } = await supabase.from('planned_activities')

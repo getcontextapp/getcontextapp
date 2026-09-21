@@ -9,7 +9,7 @@ import { getLinkedMciProfile } from '@/lib/household-links'
 import { APP_URL, logSmsMessage } from '@/lib/sms'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import { runWeeklySummaryNotifications } from '@/lib/weekly-summary-notifications'
-import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { latestFeatureRolloutEnabled } from '@/lib/feature-rollout'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
@@ -214,9 +214,12 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
       day: 'numeric',
       timeZone: mciProfile.timezone || undefined,
     })
-    const { data: householdRow } = await supabase.from('households').select('name').eq('id', householdId).maybeSingle()
-    const internal = cohortForHouseholdName(householdRow?.name ?? '').cohort === 'internal'
-    const mciBody = internal
+    const { data: householdRow } = await supabase.from('households').select('name,created_at').eq('id', householdId).maybeSingle()
+    const onboardingAt = householdRow?.created_at && mciProfile.created_at
+      ? new Date(Math.min(new Date(householdRow.created_at).getTime(), new Date(mciProfile.created_at).getTime())).toISOString()
+      : householdRow?.created_at ?? mciProfile.created_at
+    const latestFeaturesEnabled = latestFeatureRolloutEnabled(householdRow?.name ?? '', onboardingAt)
+    const mciBody = latestFeaturesEnabled
       ? buildInternalPersonalDailySummaryMessage(
           mciProfile.display_name,
           mciDateStr,
@@ -249,8 +252,8 @@ async function sendDailySummary(householdId: string, careProfile: any, profileSu
         pending_count: pendingItems?.length ?? 0,
         recipient_role: 'mci_user',
         reflection_prompt: true,
-        combined_evening_prompt: internal,
-        prompt_item_ids: internal ? (pendingItems ?? []).slice(0, 3).map(item => item.id) : undefined,
+        combined_evening_prompt: latestFeaturesEnabled,
+        prompt_item_ids: latestFeaturesEnabled ? (pendingItems ?? []).slice(0, 3).map(item => item.id) : undefined,
       },
     })
 

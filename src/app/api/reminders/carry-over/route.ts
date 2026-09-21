@@ -5,7 +5,7 @@ import { getMciProfilesForSms } from '@/lib/household-links'
 import { logSmsMessage } from '@/lib/sms'
 import { ensureRepeatOccurrencesForDate } from '@/lib/task-scheduling-server'
 import { sendSMS } from '@/lib/twilio'
-import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { latestFeatureRolloutEnabled } from '@/lib/feature-rollout'
 
 const CRON_SECRET = process.env.CRON_SECRET
 
@@ -20,8 +20,11 @@ export async function GET(request: NextRequest) {
     const hour = Number(new Date().toLocaleString('en-US', { timeZone: profile.timezone, hour: 'numeric', hour12: false }))
     if (hour !== 20 || !profile.phone_e164) continue
     const todayKey = getLocalDateKey(new Date(), profile.timezone)
-    const { data: household } = await supabase.from('households').select('name').eq('id', profile.household_id).maybeSingle()
-    const internal = cohortForHouseholdName(household?.name ?? '').cohort === 'internal'
+    const { data: household } = await supabase.from('households').select('name,created_at').eq('id', profile.household_id).maybeSingle()
+    const onboardingAt = household?.created_at && profile.created_at
+      ? new Date(Math.min(new Date(household.created_at).getTime(), new Date(profile.created_at).getTime())).toISOString()
+      : household?.created_at ?? profile.created_at
+    const latestFeaturesEnabled = latestFeatureRolloutEnabled(household?.name ?? '', onboardingAt)
     await ensureRepeatOccurrencesForDate(supabase, profile.household_id, todayKey)
     const { data: items, error: itemError } = await supabase.from('planned_activities').select('*')
       .eq('household_id', profile.household_id).eq('planned_for', todayKey)
@@ -32,7 +35,7 @@ export async function GET(request: NextRequest) {
     }
     if (!items?.length) continue
     const range = getUtcRangeForLocalDay(new Date(), profile.timezone)
-    if (internal) {
+    if (latestFeaturesEnabled) {
       const { data: combined } = await supabase.from('sms_messages').select('id')
         .eq('profile_id', profile.id).eq('purpose', 'daily_summary')
         .contains('metadata', { combined_evening_prompt: true })

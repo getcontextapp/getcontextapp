@@ -5,7 +5,7 @@ import { calendarPlanExistingMessage, calendarPlanTiming } from '@/lib/calendar-
 import { getCalendarDashboardData, resolveCalendarOwnerProfile } from '@/lib/calendar-sync'
 import { createServerClient } from '@/lib/supabase-server'
 import { isLikelyDuplicate, type DuplicateCandidate } from '@/lib/duplicate-detection'
-import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { latestFeatureRolloutEnabled } from '@/lib/feature-rollout'
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -57,9 +57,12 @@ export async function POST(request: NextRequest) {
     .in('status', ['planned', 'not_now', 'confirmed'])
     .limit(50)
 
-  const { data: household } = await supabase.from('households').select('name').eq('id', ownerProfile.household_id).maybeSingle()
+  const { data: household } = await supabase.from('households').select('name,created_at').eq('id', ownerProfile.household_id).maybeSingle()
   const householdName = household?.name ?? ''
-  const duplicateCheckEnabled = cohortForHouseholdName(householdName).cohort === 'internal' || /bilau|baru|davies|odu|my\s+home/i.test(householdName)
+  const onboardingAt = household?.created_at && ownerProfile.created_at
+    ? new Date(Math.min(new Date(household.created_at).getTime(), new Date(ownerProfile.created_at).getTime())).toISOString()
+    : household?.created_at ?? ownerProfile.created_at
+  const duplicateCheckEnabled = latestFeatureRolloutEnabled(householdName, onboardingAt)
   const candidate: DuplicateCandidate = {
     id: event.id,
     title: event.title,
