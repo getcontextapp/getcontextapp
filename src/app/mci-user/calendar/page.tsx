@@ -3,6 +3,7 @@ import { getLocalDateKey, getUtcRangeForLocalDateKey } from '@/lib/dates'
 import { getCalendarRangeData } from '@/lib/calendar-sync'
 import { createServerClient } from '@/lib/supabase-server'
 import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { ensureRepeatOccurrencesForRange } from '@/lib/task-scheduling-server'
 import type { PlannedActivity } from '@/types'
 import CalendarView from './CalendarView'
 
@@ -28,6 +29,7 @@ export default async function CalendarPage() {
   const endKey = dateOffset(todayKey, futureDays)
   const start = getUtcRangeForLocalDateKey(startKey, profile.timezone).start
   const end = getUtcRangeForLocalDateKey(endKey, profile.timezone).start
+  await ensureRepeatOccurrencesForRange(supabase, profile.household_id, startKey, endKey)
   const [calendar, planResult] = await Promise.all([
     getCalendarRangeData(supabase, profile, start, end, futureDays),
     supabase

@@ -4,6 +4,7 @@ import { getCalendarRangeData } from '@/lib/calendar-sync'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import { createServerClient } from '@/lib/supabase-server'
 import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { ensureRepeatOccurrencesForRange } from '@/lib/task-scheduling-server'
 import type { PlannedActivity } from '@/types'
 import CalendarView from '@/app/mci-user/calendar/CalendarView'
 
@@ -21,7 +22,7 @@ export default async function CarePartnerCalendarPage() {
   const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
   if (!profile || profile.role !== 'care_partner') redirect('/')
   const participant = await getLinkedMciProfile(supabase, profile.household_id, profile.id)
-  if (!participant) redirect('/care-partner')
+  if (!participant?.household_id) redirect('/care-partner')
 
   const todayKey = getLocalDateKey(new Date(), participant.timezone)
   const { data: household } = await supabase.from('households').select('name').eq('id', participant.household_id).single()
@@ -31,6 +32,7 @@ export default async function CarePartnerCalendarPage() {
   const endKey = dateOffset(todayKey, futureDays)
   const start = getUtcRangeForLocalDateKey(startKey, participant.timezone).start
   const end = getUtcRangeForLocalDateKey(endKey, participant.timezone).start
+  await ensureRepeatOccurrencesForRange(supabase, participant.household_id, startKey, endKey)
   const [calendar, planResult] = await Promise.all([
     getCalendarRangeData(supabase, participant, start, end, futureDays),
     supabase.from('planned_activities').select('*')

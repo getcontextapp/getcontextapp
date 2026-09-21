@@ -275,3 +275,82 @@ export async function ensureRepeatOccurrencesForDate(
 
   return created
 }
+
+/**
+ * Materialize recurring tasks across a calendar range before the calendar reads
+ * it. The home page only needs today's occurrence, but a week/month calendar
+ * must have real occurrences for every future date so they can be edited or
+ * removed like any other Context task.
+ */
+export async function ensureRepeatOccurrencesForRange(
+  supabase: SupabaseClient,
+  householdId: string,
+  startKey: string,
+  endKey: string,
+) {
+  const { data: repeatItems, error } = await supabase
+    .from('planned_activities')
+    .select('*')
+    .eq('household_id', householdId)
+    .neq('repeat_rule', 'none')
+    .not('status', 'in', '(skipped,abandoned)')
+    .lte('planned_for', endKey)
+    .order('planned_for', { ascending: true })
+
+  if (error) throw error
+  if (!repeatItems?.length) return []
+
+  const series = new Map<string, PlannedActivity[]>()
+  for (const item of repeatItems as PlannedActivity[]) {
+    const key = repeatTaskKey(item)
+    const group = series.get(key) ?? []
+    group.push(item)
+    series.set(key, group)
+  }
+
+  const created: PlannedActivity[] = []
+  for (const items of series.values()) {
+    const anchor = items[0]
+    if (!anchor) continue
+    const repeatRule = anchor.repeat_rule as RepeatRule
+    const seriesId = anchor.series_id ?? anchor.id
+    const existingDates = new Set(items.map(item => item.planned_for))
+    let dateKey = anchor.planned_for > startKey ? anchor.planned_for : startKey
+
+    while (dateKey <= endKey) {
+      if (repeatRuleIncludesDate(anchor.planned_for, dateKey, repeatRule) && !existingDates.has(dateKey)) {
+        const template = templateForDate(items, dateKey)
+        if (template) {
+          const { data: inserted, error: insertError } = await supabase
+            .from('planned_activities')
+            .insert({
+              household_id: template.household_id,
+              created_by: template.created_by,
+              assigned_to: template.assigned_to,
+              category: template.category,
+              label: template.label,
+              note: template.note,
+              expected_period: template.expected_period,
+              expected_time: template.expected_time,
+              planned_for: dateKey,
+              repeat_rule: repeatRule,
+              series_id: seriesId,
+              source: template.source,
+            })
+            .select()
+            .single()
+
+          if (insertError) {
+            if (insertError.code !== '23505') throw insertError
+          } else if (inserted) {
+            created.push(inserted as PlannedActivity)
+            existingDates.add(dateKey)
+          }
+        }
+      }
+      dateKey = nextOccurrenceDate(dateKey, 'daily')
+    }
+  }
+
+  return created
+}

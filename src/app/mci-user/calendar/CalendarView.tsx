@@ -114,6 +114,12 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
     window.location.reload()
   }
 
+  function refreshCalendar() {
+    setConnectionBusy(true)
+    setError(null)
+    window.location.reload()
+  }
+
   return (
     <main className="min-h-svh bg-cream-50 pb-10 safe-bottom">
       <header className="border-b border-cream-200 bg-cream-100 safe-top">
@@ -128,7 +134,12 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
               <p className="mt-1 text-sm text-warm-500">Context and linked calendars, together.</p>
               <p className="mt-2 text-xs font-medium text-sage-700">{futureCalendarEnabled ? 'Showing plans and linked events up to one year ahead.' : 'Showing plans and linked events for the current study window.'}</p>
             </div>
-            <span className="text-3xl" aria-hidden="true">📅</span>
+            <div className="flex flex-col items-end gap-2">
+              <span className="text-3xl" aria-hidden="true">📅</span>
+              <button type="button" onClick={refreshCalendar} disabled={connectionBusy} className="min-h-10 rounded-xl border border-cream-300 bg-white px-3 text-sm font-semibold text-warm-600 active:scale-[0.99] transition-transform disabled:opacity-60">
+                {connectionBusy ? 'Refreshing…' : 'Refresh calendar'}
+              </button>
+            </div>
           </div>
           {canManage && <button type="button" onClick={() => { setShowAdd(current => !current); setError(null) }} className="mt-4 min-h-12 w-full rounded-xl bg-warm-700 px-4 text-base font-semibold text-white active:scale-[0.99] transition-transform">{showAdd ? 'Close add form' : '+ Add to Context calendar'}</button>}
         </div>
