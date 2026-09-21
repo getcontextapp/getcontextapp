@@ -57,7 +57,9 @@ export default async function CarePartnerPage({
     .eq('planned_for', todayKey)
     .in('status', ['planned', 'not_now', 'confirmed'])
     .order('created_at', { ascending: true })
-  const calendar = await getCalendarDashboardData(supabase, linkedProfile)
+  // Keep navigation fast: the calendar page performs a non-blocking refresh
+  // after it renders, while the home page uses the latest cached events.
+  const calendar = await getCalendarDashboardData(supabase, linkedProfile, 70, false)
   const reflectionDate = linkedProfile
     ? getLocalDateKey(new Date(), linkedProfile.timezone)
     : todayKey

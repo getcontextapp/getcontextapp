@@ -86,7 +86,9 @@ export default async function MCIUserPage({
 
   const members = await getHouseholdMembers(supabase, profile.household_id, profile.id)
   const carePartner = members.carePartners.find(member => member.phone_e164) ?? members.carePartners[0] ?? null
-  const calendar = await getCalendarDashboardData(supabase, profile)
+  // Keep navigation fast: the calendar page performs a non-blocking refresh
+  // after it renders, while the home page uses the latest cached events.
+  const calendar = await getCalendarDashboardData(supabase, profile, 70, false)
   const { data: unifiedTodayFlag } = await supabase
     .from('household_feature_flags')
     .select('enabled')

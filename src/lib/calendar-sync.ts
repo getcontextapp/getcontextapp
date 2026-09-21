@@ -535,10 +535,22 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
   const window = calendarSyncWindowForProfile(ownerProfile, futureDays)
   const rows: Array<Record<string, string | boolean | null>> = []
   const activeProviderIds = new Set<string>()
+  let syncHadErrors = false
 
   const calendars = await googleCalendarList(token.accessToken)
-  for (const calendar of calendars) {
-    const items = await googleCalendarEvents(token.accessToken, calendar.id, window)
+  const calendarResults = await Promise.all(calendars.map(async calendar => {
+    try {
+      return await googleCalendarEvents(token.accessToken, calendar.id, window)
+    } catch (error) {
+      // One inaccessible/expired secondary calendar should not prevent the
+      // primary calendar (and its events) from syncing.
+      console.error('[Calendar] Could not sync Google calendar:', calendar.summary || calendar.id, error instanceof Error ? error.message : error)
+      syncHadErrors = true
+      return []
+    }
+  }))
+  calendars.forEach((calendar, calendarIndex) => {
+    const items = calendarResults[calendarIndex] ?? []
     for (const item of items) {
       if (!item.id || item.status === 'cancelled') continue
       const allDay = Boolean(item.start?.date)
@@ -564,7 +576,7 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
         updated_at: new Date().toISOString(),
       })
     }
-  }
+  })
 
   if (rows.length > 0) {
     const { data: syncedEvents, error } = await service
@@ -575,13 +587,18 @@ export async function syncGoogleCalendarConnection(ownerProfile: Profile, connec
     await syncCalendarLinkedPlans(service, ownerProfile, syncedEvents ?? [])
   }
 
-  await markMissingCalendarEventsCancelled({
-    service,
-    connection,
-    ownerProfile,
-    window,
-    activeProviderIds,
-  })
+  // Do not cancel cached events when one calendar failed. Keeping a stale
+  // event is safer than deleting a valid appointment because of a transient
+  // Google/ACL error; the next background refresh will reconcile it.
+  if (!syncHadErrors) {
+    await markMissingCalendarEventsCancelled({
+      service,
+      connection,
+      ownerProfile,
+      window,
+      activeProviderIds,
+    })
+  }
 
   await service
     .from('calendar_connections')

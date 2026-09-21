@@ -215,7 +215,7 @@ export async function ensureRepeatOccurrencesForDate(
 ) {
   const { data: repeatItems, error } = await supabase
     .from('planned_activities')
-    .select('*')
+    .select('id,household_id,created_by,assigned_to,category,label,note,expected_period,expected_time,planned_for,repeat_rule,series_id,source,status,created_at,updated_at')
     .eq('household_id', householdId)
     .neq('repeat_rule', 'none')
     .not('status', 'in', '(skipped,abandoned)')
