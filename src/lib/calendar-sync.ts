@@ -577,6 +577,7 @@ export async function getCalendarDashboardData(
   supabase: SupabaseClient,
   ownerProfile: Profile | null,
   futureDays = 70,
+  sync = true,
 ): Promise<CalendarDashboardData> {
   if (!ownerProfile?.household_id) return { enabled: false, connection: null, events: [] }
   const enabled = await isCalendarEnabledForHousehold(supabase, ownerProfile.household_id)
@@ -596,7 +597,7 @@ export async function getCalendarDashboardData(
     return { enabled, connection: null, events: [] }
   }
 
-  if (connection && googleCalendarConfigured()) {
+  if (sync && connection && googleCalendarConfigured()) {
     try {
       await syncGoogleCalendarConnection(ownerProfile, connection as CalendarConnectionSummary, futureDays)
     } catch (error) {
@@ -634,8 +635,9 @@ export async function getCalendarRangeData(
   start: string,
   end: string,
   futureDays = 70,
+  sync = true,
 ): Promise<CalendarRangeData> {
-  const dashboard = await getCalendarDashboardData(supabase, ownerProfile, futureDays)
+  const dashboard = await getCalendarDashboardData(supabase, ownerProfile, futureDays, sync)
   if (!dashboard.enabled || !dashboard.connection) {
     return { ...dashboard, linkedPlanIds: dashboard.linkedPlanIds ?? [] }
   }

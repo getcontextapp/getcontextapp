@@ -117,7 +117,20 @@ export default function CalendarView({ firstName, todayKey, timeZone, events, pl
   function refreshCalendar() {
     setConnectionBusy(true)
     setError(null)
-    window.location.reload()
+    void fetch('/api/calendar/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner_profile_id: ownerProfileId, future_days: futureCalendarEnabled ? 365 : 70 }),
+    }).then(async response => {
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({})) as { error?: string }
+        throw new Error(result.error || 'Could not refresh calendar.')
+      }
+      window.location.reload()
+    }).catch(error => {
+      setConnectionBusy(false)
+      setError(error instanceof Error ? error.message : 'Could not refresh calendar.')
+    })
   }
 
   return (

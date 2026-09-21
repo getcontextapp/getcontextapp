@@ -31,7 +31,7 @@ export default async function CalendarPage() {
   const end = getUtcRangeForLocalDateKey(endKey, profile.timezone).start
   await ensureRepeatOccurrencesForRange(supabase, profile.household_id, startKey, endKey)
   const [calendar, planResult] = await Promise.all([
-    getCalendarRangeData(supabase, profile, start, end, futureDays),
+    getCalendarRangeData(supabase, profile, start, end, futureDays, false),
     supabase
       .from('planned_activities')
       .select('*')

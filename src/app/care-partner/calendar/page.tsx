@@ -34,7 +34,7 @@ export default async function CarePartnerCalendarPage() {
   const end = getUtcRangeForLocalDateKey(endKey, participant.timezone).start
   await ensureRepeatOccurrencesForRange(supabase, participant.household_id, startKey, endKey)
   const [calendar, planResult] = await Promise.all([
-    getCalendarRangeData(supabase, participant, start, end, futureDays),
+    getCalendarRangeData(supabase, participant, start, end, futureDays, false),
     supabase.from('planned_activities').select('*')
       .eq('household_id', participant.household_id)
       .eq('assigned_to', participant.id)

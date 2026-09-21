@@ -308,7 +308,7 @@ export async function ensureRepeatOccurrencesForRange(
     series.set(key, group)
   }
 
-  const created: PlannedActivity[] = []
+  const pendingRows: Array<Record<string, string | null>> = []
   for (const items of series.values()) {
     const anchor = items[0]
     if (!anchor) continue
@@ -321,9 +321,7 @@ export async function ensureRepeatOccurrencesForRange(
       if (repeatRuleIncludesDate(anchor.planned_for, dateKey, repeatRule) && !existingDates.has(dateKey)) {
         const template = templateForDate(items, dateKey)
         if (template) {
-          const { data: inserted, error: insertError } = await supabase
-            .from('planned_activities')
-            .insert({
+          pendingRows.push({
               household_id: template.household_id,
               created_by: template.created_by,
               assigned_to: template.assigned_to,
@@ -336,21 +334,22 @@ export async function ensureRepeatOccurrencesForRange(
               repeat_rule: repeatRule,
               series_id: seriesId,
               source: template.source,
-            })
-            .select()
-            .single()
-
-          if (insertError) {
-            if (insertError.code !== '23505') throw insertError
-          } else if (inserted) {
-            created.push(inserted as PlannedActivity)
-            existingDates.add(dateKey)
-          }
+          })
+          existingDates.add(dateKey)
         }
       }
       dateKey = nextOccurrenceDate(dateKey, 'daily')
     }
   }
 
-  return created
+  if (pendingRows.length === 0) return []
+  const { data: inserted, error: insertError } = await supabase
+    .from('planned_activities')
+    .insert(pendingRows)
+    .select()
+  if (insertError) {
+    if (insertError.code === '23505') return []
+    throw insertError
+  }
+  return (inserted ?? []) as PlannedActivity[]
 }

@@ -19,13 +19,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Household setup is needed first.' }, { status: 403 })
   }
 
-  const body = await request.json().catch(() => ({})) as { owner_profile_id?: string }
+  const body = await request.json().catch(() => ({})) as { owner_profile_id?: string; future_days?: number }
   const ownerProfile = await resolveCalendarOwnerProfile(supabase, profile, body.owner_profile_id)
   if (!ownerProfile?.household_id || ownerProfile.household_id !== profile.household_id) {
     return NextResponse.json({ error: 'Calendar owner was not found.' }, { status: 403 })
   }
 
-  const calendar = await getCalendarDashboardData(supabase, ownerProfile)
+  const futureDays = body.future_days === 365 ? 365 : 70
+  const calendar = await getCalendarDashboardData(supabase, ownerProfile, futureDays, true)
   await trackEvent(supabase, {
     eventName: 'calendar_synced',
     profile,
