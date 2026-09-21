@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import { trackEvent } from '@/lib/analytics'
-import { getCalendarDashboardData, resolveCalendarOwnerProfile } from '@/lib/calendar-sync'
+import { getCalendarRangeData, resolveCalendarOwnerProfile } from '@/lib/calendar-sync'
+import { getLocalDateKey, getUtcRangeForLocalDateKey } from '@/lib/dates'
+
+function dateOffset(dateKey: string, amount: number) {
+  const date = new Date(`${dateKey}T12:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() + amount)
+  return date.toISOString().slice(0, 10)
+}
 
 export async function POST(request: NextRequest) {
   const supabase = await createServerClient()
@@ -26,7 +33,13 @@ export async function POST(request: NextRequest) {
   }
 
   const futureDays = body.future_days === 365 ? 365 : 70
-  const calendar = await getCalendarDashboardData(supabase, ownerProfile, futureDays, true)
+  // Return the same full range the calendar page displays. Returning only the
+  // dashboard's today/tomorrow slice would overwrite and hide future events
+  // after a successful refresh.
+  const todayKey = getLocalDateKey(new Date(), ownerProfile.timezone)
+  const start = getUtcRangeForLocalDateKey(dateOffset(todayKey, -35), ownerProfile.timezone).start
+  const end = getUtcRangeForLocalDateKey(dateOffset(todayKey, futureDays), ownerProfile.timezone).start
+  const calendar = await getCalendarRangeData(supabase, ownerProfile, start, end, futureDays, true)
   await trackEvent(supabase, {
     eventName: 'calendar_synced',
     profile,
