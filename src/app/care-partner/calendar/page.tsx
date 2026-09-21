@@ -3,7 +3,7 @@ import { getLocalDateKey, getUtcRangeForLocalDateKey } from '@/lib/dates'
 import { getCalendarRangeData } from '@/lib/calendar-sync'
 import { getLinkedMciProfile } from '@/lib/household-links'
 import { createServerClient } from '@/lib/supabase-server'
-import { latestFeatureRolloutEnabled } from '@/lib/feature-rollout'
+import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
 import type { PlannedActivity } from '@/types'
 import CalendarView from '@/app/mci-user/calendar/CalendarView'
 
@@ -24,11 +24,8 @@ export default async function CarePartnerCalendarPage() {
   if (!participant) redirect('/care-partner')
 
   const todayKey = getLocalDateKey(new Date(), participant.timezone)
-  const { data: household } = await supabase.from('households').select('name,created_at').eq('id', participant.household_id).single()
-  const householdOnboardingAt = household?.created_at && participant.created_at
-    ? new Date(Math.min(new Date(household.created_at).getTime(), new Date(participant.created_at).getTime())).toISOString()
-    : household?.created_at ?? participant.created_at
-  const futureCalendarEnabled = latestFeatureRolloutEnabled(household?.name ?? '', householdOnboardingAt)
+  const { data: household } = await supabase.from('households').select('name').eq('id', participant.household_id).single()
+  const futureCalendarEnabled = cohortForHouseholdName(household?.name ?? '').cohort === 'internal'
   const futureDays = futureCalendarEnabled ? 365 : 70
   const startKey = dateOffset(todayKey, -35)
   const endKey = dateOffset(todayKey, futureDays)
