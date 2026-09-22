@@ -1006,7 +1006,7 @@ export async function POST(request: NextRequest) {
     return xmlResponse('Context SMS is paused. Reply START to receive messages again.')
   }
 
-  if (['START', 'UNSTOP', 'YES'].includes(smsCommand)) {
+  if (['START', 'UNSTOP'].includes(smsCommand)) {
     const { error } = await supabase.from('notification_preferences').upsert({
       profile_id: profile.id,
       user_id: profile.user_id,
