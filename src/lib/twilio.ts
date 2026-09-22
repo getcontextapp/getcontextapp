@@ -6,6 +6,15 @@ const accountSid = process.env.TWILIO_ACCOUNT_SID!
 const authToken  = process.env.TWILIO_AUTH_TOKEN!
 const fromNumber = process.env.TWILIO_PHONE_NUMBER!  // E.164, e.g. +18005550100
 
+/** Keep opt-out instructions visible without sending a separate extra message. */
+export const SMS_COMPLIANCE_FOOTER = 'Reply STOP to stop messages. START to resume.'
+
+export function withSmsComplianceFooter(body: string) {
+  const trimmed = body.trim()
+  if (!trimmed || /\bSTOP\b[\s\S]*\bSTART\b/i.test(trimmed)) return trimmed
+  return `${trimmed}\n\n${SMS_COMPLIANCE_FOOTER}`
+}
+
 let _client: ReturnType<typeof twilio> | null = null
 
 function sourcedDashboardUrl(appUrl: string, path: '/mci-user' | '/care-partner') {
@@ -30,7 +39,7 @@ export async function sendSMS(to: string, body: string) {
     const message = await client.messages.create({
       to,
       from: fromNumber,
-      body,
+      body: withSmsComplianceFooter(body),
       statusCallback: `${getAppUrl()}/api/twilio/status`,
     })
     return { sid: message.sid, status: message.status, error: null }

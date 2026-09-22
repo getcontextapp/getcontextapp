@@ -993,6 +993,31 @@ export async function POST(request: NextRequest) {
     } : undefined,
   })
 
+  const smsCommand = body.trim().toUpperCase().replace(/\s+/g, ' ')
+  if (['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'].includes(smsCommand)) {
+    const { error } = await supabase.from('notification_preferences').upsert({
+      profile_id: profile.id,
+      user_id: profile.user_id,
+      household_id: profile.household_id,
+      sms_enabled: false,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'profile_id' })
+    if (error) console.error('[SMS] Could not save SMS opt-out:', error.message)
+    return xmlResponse('Context SMS is paused. Reply START to receive messages again.')
+  }
+
+  if (['START', 'UNSTOP', 'YES'].includes(smsCommand)) {
+    const { error } = await supabase.from('notification_preferences').upsert({
+      profile_id: profile.id,
+      user_id: profile.user_id,
+      household_id: profile.household_id,
+      sms_enabled: true,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'profile_id' })
+    if (error) console.error('[SMS] Could not save SMS opt-in:', error.message)
+    return xmlResponse('Context SMS is on again. You will receive messages as usual.')
+  }
+
   if (profile.role !== 'mci_user') {
     if (recentResearchFollowup) return emptyXmlResponse()
 
