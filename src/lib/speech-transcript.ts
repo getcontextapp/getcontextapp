@@ -20,6 +20,22 @@ function removeAdjacentDuplicateSegments(segments: string[]) {
   return result
 }
 
+function collapseSpeechRepeats(value: string) {
+  const words = value.split(/(\s+)/)
+  const output: string[] = []
+  for (let index = 0; index < words.length; index += 1) {
+    const token = words[index]
+    if (/^\s+$/.test(token) || !token) {
+      output.push(token)
+      continue
+    }
+    const previous = output.filter(part => !/^\s+$/.test(part)).at(-1) ?? ''
+    if (token.length > 2 && normalizeSegment(token) === normalizeSegment(previous)) continue
+    output.push(token)
+  }
+  return output.join('').replace(/\s+/g, ' ').trim()
+}
+
 export function mergeSpeechResults(
   finalSegments: Record<number, string>,
   results: SpeechResultSegment[],
@@ -44,9 +60,10 @@ export function mergeSpeechResults(
   const deduplicatedFinalParts = removeAdjacentDuplicateSegments(finalParts)
   const interim = interimSegments.join(' ')
 
+  const transcript = [...deduplicatedFinalParts, interim].filter(Boolean).join(' ').trim()
   return {
     finalSegments: nextFinalSegments,
-    transcript: [...deduplicatedFinalParts, interim].filter(Boolean).join(' ').trim(),
+    transcript: collapseSpeechRepeats(transcript),
     duplicateSuppressed: deduplicatedFinalParts.length < finalParts.length,
   }
 }

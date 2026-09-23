@@ -16,3 +16,11 @@ test('suppresses Android-style repeated final segments', () => {
   assert.equal(result.transcript, 'connect with Bill')
   assert.equal(result.duplicateSuppressed, true)
 })
+
+test('cleans repeated words inside one Android transcript', () => {
+  const result = mergeSpeechResults({}, [{
+    isFinal: true,
+    transcript: 'connect with with Bill purchase purchase confirm confirm',
+  }], 0)
+  assert.equal(result.transcript, 'connect with Bill purchase confirm')
+})
