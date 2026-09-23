@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { mergeSpeechResults } from '@/lib/speech-transcript'
 
 type SpeechRecognitionAlternative = { transcript: string }
 type SpeechRecognitionResult = {
@@ -72,6 +73,7 @@ export default function WebSpeechMicButton({
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const baseTextRef = useRef('')
   const sessionTranscriptRef = useRef('')
+  const finalSegmentsRef = useRef<Record<number, string>>({})
   const latestValueRef = useRef(value)
   const startedAtRef = useRef<number | null>(null)
   const resultEventCountRef = useRef(0)
@@ -114,21 +116,24 @@ export default function WebSpeechMicButton({
     recognitionRef.current = recognition
     baseTextRef.current = baseText
     sessionTranscriptRef.current = ''
+    finalSegmentsRef.current = {}
     recognition.continuous = true
     recognition.interimResults = true
     recognition.lang = 'en-US'
 
     recognition.onresult = event => {
       resultEventCountRef.current += 1
-      // Safari can resend earlier result indexes as its interpretation improves.
-      // Rebuild the session transcript instead of repeatedly appending them.
-      const transcriptParts: string[] = []
-      for (let index = 0; index < event.results.length; index++) {
-        const result = event.results[index]
-        const transcript = result[0]?.transcript ?? ''
-        if (transcript.trim()) transcriptParts.push(transcript.trim())
-      }
-      sessionTranscriptRef.current = transcriptParts.join(' ')
+      const merged = mergeSpeechResults(
+        finalSegmentsRef.current,
+        Array.from({ length: event.results.length - event.resultIndex }, (_, offset) => ({
+          isFinal: event.results[event.resultIndex + offset].isFinal,
+          transcript: event.results[event.resultIndex + offset][0]?.transcript ?? '',
+        })),
+        event.resultIndex,
+      )
+      finalSegmentsRef.current = merged.finalSegments
+      sessionTranscriptRef.current = merged.transcript
+      if (merged.duplicateSuppressed) trackVoiceEvent('voice_duplicate_result_suppressed')
       onChange(joinSpeech(baseTextRef.current, sessionTranscriptRef.current))
     }
 
