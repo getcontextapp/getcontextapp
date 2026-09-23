@@ -152,6 +152,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   const refreshDashboardData = useCallback(async () => {
     const todayRange = getUtcRangeForLocalDay(new Date(), profile.timezone)
+    const currentTodayKey = getLocalDateKey(new Date(), profile.timezone)
     const [activityResult, plannedResult, timelineResult] = await Promise.all([
       supabase
         .from('activity_logs')
@@ -165,7 +166,7 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
         .from('planned_activities')
         .select('*')
         .eq('household_id', profile.household_id)
-        .eq('planned_for', getLocalDateKey(new Date(), profile.timezone))
+        .eq('planned_for', currentTodayKey)
         .in('status', ['planned', 'not_now', 'confirmed'])
         .order('created_at', { ascending: true }),
       supabase
@@ -498,23 +499,34 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
     setNotificationEventId(null)
   }
 
-  async function handleMoveConfirmed() {
-    if (!moveCandidate || !moveDate) return
+  async function movePlanToDate(task: PlannedActivity, plannedFor: string) {
     setMoveError(null)
     const response = await fetch('/api/planned-activities', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: moveCandidate.id, action: 'move', planned_for: moveDate }),
+      body: JSON.stringify({ id: task.id, action: 'move', planned_for: plannedFor }),
     })
     const result = await response.json()
     if (!response.ok) {
       setMoveError(result.error ?? 'Could not move this task. Please try again.')
-      return
+      return false
     }
-    setPlannedActivities(current => current.map(item => item.id === moveCandidate.id ? result.plannedActivity : item))
+    setPlannedActivities(current => {
+      const withoutOriginal = current.filter(item => item.id !== task.id)
+      return result.movedActivity?.planned_for === todayKey
+        ? [...withoutOriginal, result.movedActivity]
+        : withoutOriginal
+    })
+    scheduleContextCardRefresh()
+    return true
+  }
+
+  async function handleMoveConfirmed() {
+    if (!moveCandidate || !moveDate) return
+    const moved = await movePlanToDate(moveCandidate, moveDate)
+    if (!moved) return
     setMoveCandidate(null)
     setMoveDate('')
-    scheduleContextCardRefresh()
   }
 
   const handleDeleteConfirmed = useCallback(async () => {
@@ -535,9 +547,10 @@ export default function MCIUserClient({ profile, initialActivities, initialPlann
 
   const todayActivities = activities
     .filter(activity => getLocalDateKey(new Date(activity.occurred_at), profile.timezone) === todayKey)
-  const displayActivities = suppressNearbyDuplicateActivities(todayActivities, plannedActivities)
+  const todayPlannedActivities = plannedActivities.filter(item => item.planned_for === todayKey)
+  const displayActivities = suppressNearbyDuplicateActivities(todayActivities, todayPlannedActivities)
 
-  const sortedPlannedActivities = [...plannedActivities].sort((a, b) => {
+  const sortedPlannedActivities = [...todayPlannedActivities].sort((a, b) => {
     const periodDiff = (PERIOD_ORDER[a.expected_period] ?? 9) - (PERIOD_ORDER[b.expected_period] ?? 9)
     if (periodDiff !== 0) return periodDiff
     if (a.expected_time && b.expected_time && a.expected_time !== b.expected_time) {
