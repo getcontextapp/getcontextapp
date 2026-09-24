@@ -471,6 +471,15 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const activities = (activitiesResult.data ?? []) as ActivityRow[]
   const outcomes = (outcomesUnavailable ? [] : outcomesResult.data ?? []) as OutcomeRow[]
 
+  const householdCohorts = new Map<string, ReturnType<typeof cohortForHouseholdName> & { sequence: number }>()
+  const cohortSequences = new Map<string, number>()
+  for (const household of households) {
+    const cohortInfo = cohortForHouseholdName(household.name)
+    const sequence = (cohortSequences.get(cohortInfo.cohort) ?? 0) + 1
+    cohortSequences.set(cohortInfo.cohort, sequence)
+    householdCohorts.set(household.id, { ...cohortInfo, sequence })
+  }
+
   const includedHouseholds = households.filter(household =>
     !isHouseholdExcludedFromPilotAnalytics(household.name) &&
     (!filters.householdId || household.id === filters.householdId)
@@ -514,7 +523,6 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     ...recoveryMoments.filter(moment => moment.profile_id === profile.id).map(moment => moment.created_at),
   ]
 
-  const cohortSequences = new Map<string, number>()
   const dyads = includedHouseholds.map((household) => {
     const members = profilesByHousehold.get(household.id) ?? []
     const mci = members.find(member => member.role === 'mci_user') ?? null
@@ -524,9 +532,7 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     const days = daysSince(onboardingAt, now)
     const phase = studyPhase(days)
     const householdFeatureFlags = filteredFeatureFlags.filter(flag => flag.household_id === household.id)
-    const cohortInfo = cohortForHouseholdName(household.name)
-    const nextSequence = (cohortSequences.get(cohortInfo.cohort) ?? 0) + 1
-    cohortSequences.set(cohortInfo.cohort, nextSequence)
+    const cohortInfo = householdCohorts.get(household.id)!
     const householdCalendarConnections = filteredCalendarConnections.filter(connection => connection.household_id === household.id)
     const householdCalendarEvents = filteredCalendarEvents.filter(event => event.household_id === household.id)
     const upcomingCalendarEvents = householdCalendarEvents
@@ -551,9 +557,9 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
     return {
       id: household.id,
       cohort: cohortInfo.cohort,
-      code: `${cohortInfo.prefix}${String(nextSequence).padStart(2, '0')}`,
+      code: `${cohortInfo.prefix}${String(cohortInfo.sequence).padStart(2, '0')}`,
       label: household.name,
-      displayLabel: `${cohortInfo.prefix}${String(nextSequence).padStart(2, '0')} · ${household.name}`,
+      displayLabel: `${cohortInfo.prefix}${String(cohortInfo.sequence).padStart(2, '0')} · ${household.name}`,
       name: household.name,
       householdCreatedAt: household.created_at,
       timezone: mci?.timezone ?? cp?.timezone ?? 'America/New_York',
