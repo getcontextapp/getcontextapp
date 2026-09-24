@@ -4,8 +4,17 @@ const INTERNAL_PREVIEW_HOUSEHOLDS = new Set([
   'baru home',
 ])
 
+const ANALYTICS_EXCLUDED_HOUSEHOLDS = new Set([
+  'go stroh',
+  'google oauth review',
+])
+
 function normalizedHouseholdName(name: string) {
   return name.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+export function isHouseholdExcludedFromPilotAnalytics(name: string) {
+  return ANALYTICS_EXCLUDED_HOUSEHOLDS.has(normalizedHouseholdName(name))
 }
 
 export function cohortForHouseholdName(name: string) {

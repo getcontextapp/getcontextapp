@@ -1,5 +1,5 @@
 import { createServiceClient } from '@/lib/supabase-server'
-import { cohortForHouseholdName } from '@/lib/pilot-cohorts'
+import { cohortForHouseholdName, isHouseholdExcludedFromPilotAnalytics } from '@/lib/pilot-cohorts'
 import { accountModeForMembers } from '@/lib/account-mode'
 import { chooseResearchFollowupRecipient } from '@/lib/research-followup'
 import { getLocalDateKey } from '@/lib/dates'
@@ -471,7 +471,10 @@ export async function loadPilotAnalytics(filters: AnalyticsFilters) {
   const activities = (activitiesResult.data ?? []) as ActivityRow[]
   const outcomes = (outcomesUnavailable ? [] : outcomesResult.data ?? []) as OutcomeRow[]
 
-  const includedHouseholds = households.filter(household => !filters.householdId || household.id === filters.householdId)
+  const includedHouseholds = households.filter(household =>
+    !isHouseholdExcludedFromPilotAnalytics(household.name) &&
+    (!filters.householdId || household.id === filters.householdId)
+  )
   const householdIds = new Set(includedHouseholds.map(household => household.id))
   const includedProfiles = profiles.filter(profile => profile.household_id && householdIds.has(profile.household_id))
   const householdNames = new Map(households.map(household => [household.id, household.name]))
